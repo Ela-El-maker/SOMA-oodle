@@ -54,10 +54,10 @@ const FloatingChat = ({ isServerRunning, isBusy, onSendMessage, activeModule }) 
         sender: 'system',
         autonomous: true
       }]);
-      // Auto-open chat so SOMA's message isn't invisible
+      // Just show the badge — don't force-open the chat
       setIsOpen(prev => {
         if (!prev) setUnreadCount(c => c + 1);
-        return true;
+        return prev;
       });
     };
 
@@ -73,6 +73,10 @@ const FloatingChat = ({ isServerRunning, isBusy, onSendMessage, activeModule }) 
         sender: 'system',
         autonomous: true
       }]);
+      setIsOpen(prev => {
+        if (!prev) setUnreadCount(c => c + 1);
+        return prev;
+      });
     };
 
     somaBackend.on('soma_proactive', handleProactive);

@@ -183,6 +183,7 @@ ehthumbs.db
 # ── Markdown (keep only README.md) ───────────────────────────────────────────
 *.md
 !README.md
+!CLAUDE.md
 !KNOWN_ISSUES.md
 !core/personas/*.md
 !server/pulse-workers/directives/*.md

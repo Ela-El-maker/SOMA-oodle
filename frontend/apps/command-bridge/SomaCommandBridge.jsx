@@ -4,7 +4,7 @@ import {
   Archive, Workflow, Database, Play, Pause, RotateCw, Trash2,
   Plus, Network, Home, MessageSquare, Settings, Palette,
   Shield, User, Users, Lightbulb, ThermometerSun, ChevronLeft,
-  ChevronRight, Sparkles, Terminal, Circle, BarChart3, Search, X, Clock,
+  ChevronRight, Terminal, Circle, BarChart3, Search, X, Clock,
   Download, TrendingUp, TrendingDown, Target, Server, Gauge, Mail,
   Box, Share2, DollarSign, CircleDollarSign
 } from 'lucide-react';
@@ -69,8 +69,6 @@ import './styles/soma-ui-control.css';
 import './styles/emotes.css';
 import SettingsModule from './components/SettingsModule';
 import CommandPalette from './components/CommandPalette';
-import CharacterCard from './components/CharacterCard';
-import CharacterGacha from './components/CharacterGacha';
 
 // ==========================================
 // Process Monitor Modal (Task Manager)
@@ -391,7 +389,6 @@ const SomaCommandBridge = () => {
   
   // Command Palette State
   const [isCommandPaletteOpen, setIsCommandPaletteOpen] = useState(false);
-  const [isCharacterLabOpen, setIsCharacterLabOpen] = useState(false);
 
   // Command Palette Shortcut
   useEffect(() => {
@@ -1509,7 +1506,6 @@ const SomaCommandBridge = () => {
             { id: 'workflow', label: 'Workflow', icon: Workflow, color: 'lime' },
             { id: 'settings', label: 'Settings', icon: Settings, color: 'stone' },
             { id: 'arbiterium', label: 'Arbiterium', icon: Zap, color: 'fuchsia' },
-            { id: 'characters', label: 'Character Lab', icon: Sparkles, color: 'amber' },
           ].map(module => (
             <button
               key={module.id}
@@ -2515,8 +2511,6 @@ const SomaCommandBridge = () => {
         />
       )}
 
-      {/* Character Lab Modal */}
-      <CharacterGacha isOpen={isCharacterLabOpen || activeModule === 'characters'} onClose={() => { setIsCharacterLabOpen(false); if (activeModule === 'characters') setActiveModule('core'); }} />
     </div>
   );
 };

@@ -895,6 +895,21 @@ ${personaContext}${characterContext}`.trim()
                     }).catch(() => {}));
                 }
 
+                // 9. Project Context — append decisions/context to SOMA/project_context.md
+                // Only fires when the exchange contains something worth remembering about the project.
+                const contextSignals = /\b(decided|decision|deferred|removed|added|fixed|changed|moving|won't|will|should|defer|keep|save for|because|reason|instead)\b/i;
+                if (contextSignals.test(message) || contextSignals.test(responseText)) {
+                    postOps.push((async () => {
+                        try {
+                            const ctxPath = path.join(process.cwd(), 'SOMA', 'project_context.md');
+                            const date = new Date().toISOString().split('T')[0];
+                            const time = new Date().toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' });
+                            const entry = `\n## ${date} ${time}\n**You:** ${message.substring(0, 300)}\n**SOMA:** ${responseText.substring(0, 400)}\n`;
+                            await fs.promises.appendFile(ctxPath, entry, 'utf8');
+                        } catch { /* never block */ }
+                    })());
+                }
+
                 if (postOps.length > 0) await Promise.all(postOps);
             } catch (postErr) {
                 // Post-processing errors must never affect the user

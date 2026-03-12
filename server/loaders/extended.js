@@ -1004,7 +1004,11 @@ export async function loadExtendedSystems(system) {
     if (system.quadBrain) {
         if (ext.goalPlanner) system.quadBrain.goalPlanner = ext.goalPlanner;
         if (ext.codeObserver) system.quadBrain.codeObserver = ext.codeObserver;
-        if (ext.curiosityEngine) system.quadBrain.curiosityEngine = ext.curiosityEngine;
+        if (ext.curiosityEngine) {
+            system.quadBrain.curiosityEngine = ext.curiosityEngine;
+            // Give CuriosityEngine brain access so it can enrich search queries
+            ext.curiosityEngine.brain = system.quadBrain;
+        }
         // Wire complexity classifier so QuadBrain can route SIMPLE → local, COMPLEX → Gemini
         if (ext.queryClassifier) system.quadBrain.queryClassifier = ext.queryClassifier;
         console.log(`    🔗 QuadBrain ← GoalPlanner, CodeObserver, CuriosityEngine${ext.queryClassifier ? ', QueryComplexityClassifier' : ''}`);

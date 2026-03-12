@@ -43,6 +43,7 @@ export class CuriosityEngine extends EventEmitter {
     this.messageBroker = opts.messageBroker;
     this.simulationArbiter = opts.simulationArbiter; // 🎮 Physics Engine Link
     this.worldModel = opts.worldModel; // 🌍 World Model for Epistemic Curiosity
+    this.brain = opts.brain || null; // QuadBrain for enriching search queries
 
     // Curiosity state
     this.curiosityQueue = []; // Questions/explorations to pursue
@@ -525,22 +526,62 @@ export class CuriosityEngine extends EventEmitter {
   }
 
   /**
+   * Use the brain to turn a curiosity question into a sharp, searchable query.
+   * Falls back to the raw question if brain is unavailable or too slow.
+   */
+  async _enrichQuestionForSearch(question, item) {
+    if (!this.brain) return question;
+    try {
+      const prompt = `You are SOMA's search query optimizer. Convert this internal curiosity question into a sharp, specific web search query (max 12 words, no filler).
+
+Curiosity: "${question}"
+Type: ${item.type || 'exploration'}
+
+Return ONLY the search query, nothing else.`;
+
+      const result = await Promise.race([
+        this.brain.reason(prompt, { quickResponse: true, preferredBrain: 'LOGOS', systemOverride: 'search_optimizer' }),
+        new Promise((_, reject) => setTimeout(() => reject(new Error('timeout')), 5000))
+      ]);
+
+      const enriched = result?.text?.trim().replace(/^["']|["']$/g, '');
+      if (enriched && enriched.length > 5 && enriched.length < 150) {
+        console.log(`[${this.name}] ✨ Enriched query: "${enriched}"`);
+        return enriched;
+      }
+    } catch { /* fall through to raw question */ }
+    return question;
+  }
+
+  /**
+   * Humanize a snake_case/internal identifier into readable text
+   */
+  _humanize(str) {
+    return String(str)
+      .replace(/_/g, ' ')
+      .replace(/([a-z])([A-Z])/g, '$1 $2')
+      .toLowerCase()
+      .trim();
+  }
+
+  /**
    * Convert a knowledge gap to a question
    */
   _gapToQuestion(gap) {
+    const label = this._humanize(gap.gap);
     switch (gap.type) {
       case 'capability_gap':
-        return `What do I need to learn to improve my ${gap.gap} capability?`;
+        return `Best techniques for improving ${label} in AI systems`;
       case 'limitation':
-        return `How can I overcome my limitation in ${gap.gap}?`;
+        return `How to implement ${label} effectively in modern software`;
       case 'fragment_expertise_gap':
-        return `How can the ${gap.gap} fragment gain more expertise?`;
+        return `Advanced concepts and practical applications of ${label}`;
       case 'graph_sparsity':
-        return `What connections am I missing between different knowledge domains?`;
+        return `Connections between ${label} and related knowledge domains`;
       case 'unexplored_domain':
-        return `What should I know about ${gap.gap}?`;
+        return `Overview and key concepts of ${label}`;
       default:
-        return `What don't I know about ${gap.gap}?`;
+        return `Latest developments and best practices in ${label}`;
     }
   }
 
@@ -613,14 +654,17 @@ export class CuriosityEngine extends EventEmitter {
 
     // REAL EXPLORATION: Dispatch to EdgeWorkerOrchestrator
     if (this.messageBroker && item.type !== 'physical_experiment') {
+      // Enrich the raw question into a focused, searchable query using the brain
+      const searchQuery = await this._enrichQuestionForSearch(item.question, item);
+
       this.messageBroker.publish('curiosity:exploring', {
-        question: item.question,
+        question: searchQuery,
         type: item.type,
         priority: item.finalPriority,
         timestamp: Date.now()
       });
 
-      // Dispatch real research task
+      // Dispatch real research task via EdgeWorkers + dendrites
       await this.messageBroker.sendMessage({
         from: this.name,
         to: 'EdgeWorkerOrchestrator',
@@ -632,14 +676,17 @@ export class CuriosityEngine extends EventEmitter {
             crawlTarget: {
               name: 'curiosity_research',
               type: 'general',
-              queries: [item.question],
-              maxPages: 3
+              queries: [searchQuery],
+              maxPages: 3,
+              useDendrites: true,
+              useMcp: true
             },
-            source: 'curiosity_engine'
+            source: 'curiosity_engine',
+            originalQuestion: item.question
           }
         }
       });
-      console.log(`[${this.name}] 🚀 Dispatched research task to EdgeWorkers: "${item.question}"`);
+      console.log(`[${this.name}] 🚀 Dispatched research: "${searchQuery}"`);
     }
 
     // Return exploration state

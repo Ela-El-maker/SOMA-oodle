@@ -1014,13 +1014,20 @@ export async function loadExtendedSystems(system) {
         console.log(`    🔗 QuadBrain ← GoalPlanner, CodeObserver, CuriosityEngine${ext.queryClassifier ? ', QueryComplexityClassifier' : ''}`);
     }
 
-    // BraveSearch → QuadBrain (live web search for time-sensitive queries)
+    // BraveSearch → QuadBrain + CuriosityEngine (live web search)
     if (ext.braveSearch) {
         system.braveSearch = ext.braveSearch;
-        // system.quadBrain may be a BrainBridge wrapper — set on both wrapper and underlying brain
         if (system.quadBrain) system.quadBrain.braveSearch = ext.braveSearch;
         if (system.quadBrain?._direct) system.quadBrain._direct.braveSearch = ext.braveSearch;
-        console.log('    🔗 BraveSearchAdapter → QuadBrain (live web search ON)');
+        // Wire into CuriosityEngine so it can search directly (bypasses EdgeWorker HTML scraper)
+        if (ext.curiosityEngine) ext.curiosityEngine.braveSearch = ext.braveSearch;
+        console.log('    🔗 BraveSearchAdapter → QuadBrain + CuriosityEngine (live web search ON)');
+    }
+
+    // CuriosityWebAccessConnector → CuriosityEngine (Brave + Puppeteer dendrite pipeline)
+    if (ext.webResearcher && ext.curiosityEngine) {
+        ext.curiosityEngine.webResearcher = ext.webResearcher;
+        console.log('    🔗 CuriosityWebAccessConnector → CuriosityEngine (Tier 1 research pipeline)');
     }
 
     // Hybrid search availability for tools + learning systems

@@ -106,6 +106,9 @@ function killPortOwner(port) {
         if (!pidStr) return false;
 
         for (const pid of pidStr.split(',').map(s => s.trim()).filter(Boolean)) {
+            // Skip PID 0 — Windows system process, cannot and should not be killed
+            if (pid === '0') continue;
+
             let cmdline = '';
             try {
                 cmdline = execSync(`wmic process where ProcessId=${pid} get CommandLine /value`, { encoding: 'utf8', timeout: 2000 });
@@ -145,12 +148,9 @@ async function main() {
     try {
         cLog('ULTRA', '🟢 Initializing SOMA System...');
 
-        // 1. Kill Zombies
+        // 1. Kill Zombies on main port only (cluster port 7777 has Windows system PIDs that cause loop)
         const PORT = 3001; // FIXED PORT
-        const CLUSTER_PORT = parseInt(process.env.SOMA_CLUSTER_PORT || '7777');
-        
         killPortOwner(PORT);
-        killPortOwner(CLUSTER_PORT);
 
         // 2. Pre-Flight
         await SystemValidator.runPreFlightChecks();

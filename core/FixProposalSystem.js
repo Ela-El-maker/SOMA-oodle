@@ -34,6 +34,7 @@ export class FixProposalSystem extends EventEmitter {
     this.codeObserver = config.codeObserver || null;
     this.thalamusGuardian = config.thalamusGuardian || null; // For safety review
     this.selfModificationArbiter = config.selfModificationArbiter || null; // For execution
+    this.messageBroker = config.messageBroker || null; // New: Message Broker for broadcasting
 
     // Proposal storage
     this.proposals = new Map(); // proposalId -> proposal
@@ -512,6 +513,17 @@ ${prometheus.strategy?.substring(0, 300) || 'No strategy'}`;
       });
 
       this.emit('proposal-generated', proposal);
+
+      // Broadcast fix_proposed event via MessageBroker for wider system awareness
+      if (this.messageBroker) {
+        await this.messageBroker.sendMessage({
+          from: this.name,
+          to: 'broadcast', // Or specific arbiter if needed, e.g., GoalPlannerArbiter
+          type: 'fix_proposed',
+          payload: { proposal }
+        });
+        console.log(`[${this.name}] 📢 Broadcasted fix_proposed for ${proposal.id.slice(0,8)}`);
+      }
 
     } catch (error) {
       console.error(`[${this.name}] ❌ Failed to save proposal:`, error);

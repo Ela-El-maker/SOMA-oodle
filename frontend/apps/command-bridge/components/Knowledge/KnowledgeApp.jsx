@@ -70,11 +70,19 @@ const KnowledgeApp = ({ brainStats }) => {
     // Cognitive Trace collapse state
     const [isTraceCollapsed, setIsTraceCollapsed] = useState(false);
 
-    // Initial Fetch of Real Fragments
+    // Initial Fetch of Real Fragments — retries until server is ready, then again at 100s for ThoughtNetwork/FragmentRegistry
     useEffect(() => {
+        let retryTimer = null;
+        let extendedTimer = null;
+
         const fetchFragments = async () => {
             try {
                 const res = await fetch('/api/knowledge/fragments');
+                if (!res.ok) {
+                    // Server not ready yet (503) — retry in 5s
+                    retryTimer = setTimeout(fetchFragments, 5000);
+                    return;
+                }
                 const data = await res.json();
                 if (data.success) {
                     if (data.fragments && data.fragments.length > 0) {
@@ -85,7 +93,6 @@ const KnowledgeApp = ({ brainStats }) => {
                         setFragments(MOCK_FRAGMENTS);
                         addLog(`Initializing procedural neural map (${MOCK_FRAGMENTS.length} nodes).`, BrainType.LOGOS);
                     }
-                    
                     if (data.links && data.links.length > 0) {
                         setLinks(data.links);
                     } else if (!data.fragments || data.fragments.length === 0) {
@@ -94,14 +101,25 @@ const KnowledgeApp = ({ brainStats }) => {
                 }
             } catch (err) {
                 console.warn("Failed to fetch real fragments:", err);
+                retryTimer = setTimeout(fetchFragments, 5000);
             }
         };
 
         fetchFragments();
+        // ThoughtNetwork + FragmentRegistry load at 90s — refresh after they're up
+        extendedTimer = setTimeout(fetchFragments, 100000);
+
+        return () => {
+            clearTimeout(retryTimer);
+            clearTimeout(extendedTimer);
+        };
     }, []);
 
-    // Fetch personas for persona view
+    // Fetch personas — retries and refreshes after IdentityArbiter loads at 90s
     useEffect(() => {
+        let retryTimer = null;
+        let extendedTimer = null;
+
         const fetchPersonas = async () => {
             try {
                 const res = await fetch('/api/identity/personas');
@@ -111,9 +129,18 @@ const KnowledgeApp = ({ brainStats }) => {
                 }
             } catch (err) {
                 console.warn("Failed to fetch personas:", err);
+                retryTimer = setTimeout(fetchPersonas, 5000);
             }
         };
+
         fetchPersonas();
+        // IdentityArbiter (464 personas from agents_repo) loads at 90s
+        extendedTimer = setTimeout(fetchPersonas, 100000);
+
+        return () => {
+            clearTimeout(retryTimer);
+            clearTimeout(extendedTimer);
+        };
     }, []);
 
     const personaFragments = useMemo(() => {

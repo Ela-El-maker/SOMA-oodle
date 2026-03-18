@@ -1,0 +1,61 @@
+{
+  "email": "",
+  "password": "",
+  "check_interval": 30,
+  "thresholds": {
+    "spam": 0.15,
+    "phishing": 0.235
+  },
+  "blacklist": [],
+  "soma": {
+    "enabled": true,
+    "coordinator_url": "http://localhost:3001"
+  },
+  "categories": {
+    "Work": [
+      "meeting",
+      "project",
+      "deadline",
+      "presentation",
+      "report"
+    ],
+    "Personal": [
+      "birthday",
+      "dinner",
+      "weekend",
+      "family",
+      "friend"
+    ],
+    "Bills": [
+      "invoice",
+      "payment",
+      "statement",
+      "due",
+      "bill"
+    ],
+    "Shopping": [
+      "order",
+      "shipped",
+      "delivery",
+      "tracking",
+      "deal"
+    ],
+    "Newsletters": [
+      "unsubscribe",
+      "newsletter",
+      "update",
+      "weekly"
+    ]
+  },
+  "monitored_accounts": [],
+  "protocols": {
+    "heuristics": true,
+    "zeroTrust": true,
+    "toneAnalysis": true,
+    "linkDetonation": false,
+    "autoDraft": false,
+    "smartPriority": false,
+    "actionExtract": false,
+    "styleLearn": false
+  }
+}

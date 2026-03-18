@@ -1,0 +1,65 @@
+{
+  "traceId": "rc_97f8e5175b3e",
+  "ts": "2025-12-17T22:00:47.465Z",
+  "query": "Can you hear me?",
+  "meta": {},
+  "candidates": [
+    {
+      "source": "PROMETHEUS",
+      "text": "Yes. I hear you.\n",
+      "confidence": 0.85,
+      "role": "prometheus"
+    },
+    {
+      "source": "LOGOS",
+      "text": "As a large language model, I don't have the capacity to \"hear\" in the way a human or an animal does. I don't possess auditory organs or a biological nervous system to process sound waves.\n\nInstead, I receive your input as text. Your query, \"Can you hear me?\", is processed as a string of characters. I then analyze this string based on my training data and internal algorithms to understand its meaning and generate a relevant response.\n\nTherefore, the accurate answer is: **No, I cannot \"hear\" you in the literal sense. I process your text input.**\n",
+      "confidence": 0.85,
+      "role": "logos"
+    },
+    {
+      "source": "AURORA",
+      "text": "Yes, I can hear you. How can I help you today?\n",
+      "confidence": 0.85,
+      "role": "aurora"
+    }
+  ],
+  "fused": {
+    "text": "As a large language model, I don't have the capacity to \"hear\" in the way a human or an animal does. I don't possess auditory organs or a biological nervous system to process sound waves.\n\nInstead, I receive your input as text. Your query, \"Can you hear me?\", is processed as a string of characters. I then analyze this string based on my training data and internal algorithms to understand its meaning and generate a relevant response.\n\nTherefore, the accurate answer is: **No, I cannot \"hear\" you in the literal sense. I process your text input.**\n",
+    "weights": [
+      {
+        "source": "PROMETHEUS",
+        "norm": 0.32432432432432434,
+        "conf": 0.85
+      },
+      {
+        "source": "LOGOS",
+        "norm": 0.35135135135135126,
+        "conf": 0.85
+      },
+      {
+        "source": "AURORA",
+        "norm": 0.32432432432432434,
+        "conf": 0.85
+      }
+    ],
+    "confidence": 0.8499999999999999,
+    "provenance": [
+      {
+        "source": "PROMETHEUS",
+        "snippet": "Yes. I hear you.\n",
+        "confidence": 0.85
+      },
+      {
+        "source": "LOGOS",
+        "snippet": "As a large language model, I don't have the capacity to \"hear\" in the way a human or an animal does. I don't possess auditory organs or a biological nervous system to process sound waves.\n\nInstead, I ",
+        "confidence": 0.85
+      },
+      {
+        "source": "AURORA",
+        "snippet": "Yes, I can hear you. How can I help you today?\n",
+        "confidence": 0.85
+      }
+    ]
+  },
+  "iter": 0
+}

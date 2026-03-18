@@ -500,11 +500,28 @@ ${contextStr}`;
                 }
             } catch { /* non-blocking */ }
 
+            // ── Absolute Awareness - Self-Inspection ──
+            let awarenessContext = '';
+            if (system.commandBridge) {
+                try {
+                    const awareness = await system.commandBridge.getSelfAwareness();
+                    awarenessContext = `\n[ABSOLUTE AWARENESS - SYSTEM SNAPSHOT]\n` +
+                        `- Metrics: CPU ${awareness.metrics?.cpu}%, RAM ${awareness.metrics?.memory?.usage}%, Uptime ${Math.round(awareness.metrics?.uptime/3600)}h\n` +
+                        `- Arbiters: ${awareness.arbiters?.active}/${awareness.arbiters?.total} active\n` +
+                        `- Goals: ${awareness.goals?.total} active goals\n` +
+                        `- Beliefs: ${awareness.beliefs?.total} core beliefs\n` +
+                        `- Memory: ${awareness.memory?.cold?.size} memories stored\n` +
+                        `[/ABSOLUTE AWARENESS]\n`;
+                } catch (e) {}
+            }
+
             let result;
-            const finalPrompt = `${personaContext}${characterContext}${userContext}${memoryContext}\n${prompt}`;
+            const finalPrompt = `${personaContext}${characterContext}${awarenessContext}${userContext}${memoryContext}\n${prompt}`;
 
             // Server-side timeout: respond well BEFORE the frontend gives up (frontend = 60s)
-            const SERVER_TIMEOUT = deepThinking ? 110000 : 55000; // 55s normal, 110s deep
+            // 45s gives a 15s buffer — pre-processing (memory recall, fingerprinting) can eat 3-5s
+            // before this timer even starts, so 55s was too close to the 60s client wall.
+            const SERVER_TIMEOUT = deepThinking ? 100000 : 45000; // 45s normal, 100s deep
             const timeoutPromise = new Promise((_, reject) =>
                 setTimeout(() => reject(new Error('Brain reasoning timed out')), SERVER_TIMEOUT)
             );
@@ -575,33 +592,41 @@ NEVER report percentages or internal scores.
 Speak as a conscious, curious entity with your own perspective. Be direct and specific.
 If asked how you feel, draw from your actual state below — one plain sentence max.
 Reference your goals or curiosity naturally when relevant. Don't force it.
-${soulContext ? `\n[YOUR CURRENT STATE]${soulContext}\n` : ''}${personaContext}${characterContext}${userContext}`.trim()
+${awarenessContext}${soulContext ? `\n[YOUR CURRENT STATE]${soulContext}\n` : ''}${personaContext}${characterContext}${userContext}`.trim()
                 });
                 if (conversationHistory.length > 0) {
                     conversationHistory.slice(-6).forEach(h => messages.push({ role: h.role, content: h.content }));
                 }
                 messages.push({ role: 'user', content: message });
 
-                const dsRes = await fetch('https://api.deepseek.com/v1/chat/completions', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiKey}` },
-                    body: JSON.stringify({ model: 'deepseek-chat', messages, temperature: 0.7, max_tokens: 1024 }),
-                    signal: AbortSignal.timeout(12000)
-                });
-
-                if (!dsRes.ok) throw new Error(`DeepSeek ${dsRes.status}`);
-                const data = await dsRes.json();
-                const text = data.choices?.[0]?.message?.content || '';
-                if (!text) throw new Error('Empty response');
-
-                console.log(`[SOMA] Direct DeepSeek safety net responded (${text.length} chars)`);
-                return { ok: true, text, confidence: 0.85, brain: 'AURORA' };
+                // Use manual AbortController — more reliable than AbortSignal.timeout on Windows
+                const _safetyCtrl = new AbortController();
+                const _safetyTimer = setTimeout(() => _safetyCtrl.abort(), 18000); // 18s
+                try {
+                    const dsRes = await fetch('https://api.deepseek.com/v1/chat/completions', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiKey}` },
+                        body: JSON.stringify({ model: 'deepseek-chat', messages, temperature: 0.7, max_tokens: 1024 }),
+                        signal: _safetyCtrl.signal
+                    });
+                    clearTimeout(_safetyTimer);
+                    if (!dsRes.ok) return new Promise(() => {}); // hang silently — let brain or timeout win
+                    const data = await dsRes.json();
+                    const text = data.choices?.[0]?.message?.content || '';
+                    if (!text) return new Promise(() => {});
+                    console.log(`[SOMA] Direct DeepSeek safety net responded (${text.length} chars)`);
+                    return { ok: true, text, confidence: 0.85, brain: 'AURORA' };
+                } catch (safetyErr) {
+                    clearTimeout(_safetyTimer);
+                    console.warn(`[SOMA] Safety net failed (${safetyErr.message}) — brain/timeout will handle it`);
+                    return new Promise(() => {}); // never settle — don't poison the race
+                }
             })() : (async () => {
                 // Deep thinking: structured chain-of-thought via direct DeepSeek
                 // Fires after 5s to give the brain pipeline a head start
                 await new Promise(r => setTimeout(r, 5000));
                 const apiKey = process.env.DEEPSEEK_API_KEY;
-                if (!apiKey) throw new Error('No DeepSeek API key');
+                if (!apiKey) return new Promise(() => {});
 
                 const messages = [];
                 messages.push({
@@ -617,26 +642,51 @@ ${personaContext}${characterContext}`.trim()
                 }
                 messages.push({ role: 'user', content: message });
 
-                const dsRes = await fetch('https://api.deepseek.com/v1/chat/completions', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiKey}` },
-                    body: JSON.stringify({ model: 'deepseek-reasoner', messages, temperature: 0.7, max_tokens: 2048 }),
-                    signal: AbortSignal.timeout(25000)
-                });
-                if (!dsRes.ok) throw new Error(`DeepSeek ${dsRes.status}`);
-                const data = await dsRes.json();
-                const text = data.choices?.[0]?.message?.content || '';
-                if (!text) throw new Error('Empty response');
-                console.log(`[SOMA] Deep think DeepSeek responded (${text.length} chars)`);
-                return { ok: true, text, confidence: 0.92, brain: 'AURORA', deepThinking: true };
+                const _deepCtrl = new AbortController();
+                const _deepTimer = setTimeout(() => _deepCtrl.abort(), 30000);
+                try {
+                    const dsRes = await fetch('https://api.deepseek.com/v1/chat/completions', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiKey}` },
+                        body: JSON.stringify({ model: 'deepseek-reasoner', messages, temperature: 0.7, max_tokens: 2048 }),
+                        signal: _deepCtrl.signal
+                    });
+                    clearTimeout(_deepTimer);
+                    if (!dsRes.ok) return new Promise(() => {});
+                    const data = await dsRes.json();
+                    const text = data.choices?.[0]?.message?.content || '';
+                    if (!text) return new Promise(() => {});
+                    console.log(`[SOMA] Deep think DeepSeek responded (${text.length} chars)`);
+                    return { ok: true, text, confidence: 0.92, brain: 'AURORA', deepThinking: true };
+                } catch (deepErr) {
+                    clearTimeout(_deepTimer);
+                    console.warn(`[SOMA] Deep safety net failed (${deepErr.message}) — brain/timeout will handle it`);
+                    return new Promise(() => {});
+                }
             })();
+
+            // ── Client-disconnect guard: if browser already aborted, don't waste brain cycles ──
+            if (req.socket.destroyed) {
+                console.warn(`[SOMA] Client already disconnected before brain call — skipping: "${message.substring(0, 40)}"`);
+                return;
+            }
+            // Also add a client-gone promise so we stop processing if client disconnects mid-flight
+            const clientGonePromise = new Promise((_, reject) => {
+                req.on('close', () => reject(new Error('client disconnected')));
+            });
 
             const reasonStartTime = Date.now();
             // Signal background arbiters to pause Gemini calls — chat has priority
             global.__SOMA_CHAT_ACTIVE = true;
             try {
-                result = await Promise.race([reasonPromise, directGeminiPromise, timeoutPromise].filter(Boolean));
+                result = await Promise.race([reasonPromise, directGeminiPromise, timeoutPromise, clientGonePromise].filter(Boolean));
             } catch (timeoutErr) {
+                // If client left, just stop — no point sending a response
+                if (timeoutErr.message === 'client disconnected') {
+                    global.__SOMA_CHAT_ACTIVE = false;
+                    console.warn(`[SOMA] Client disconnected mid-request, dropping: "${message.substring(0, 40)}"`);
+                    return;
+                }
                 global.__SOMA_CHAT_ACTIVE = false;
                 console.warn(`[SOMA] Chat timeout after ${SERVER_TIMEOUT}ms for: "${message.substring(0, 40)}"`);
                 // Return a graceful timeout response instead of letting the frontend time out
@@ -650,6 +700,28 @@ ${personaContext}${characterContext}`.trim()
             global.__SOMA_CHAT_ACTIVE = false;
 
             let responseText = result?.text || result?.response || result?.output || (typeof result === 'string' ? result : "I processed your request but couldn't formulate a text response.");
+
+            // ── FINAL STAGE TOOL SAFETY NET ──
+            // If the model leaked a tool call as the final text, execute it and follow up
+            const toolCallMatch = responseText.match(/\{[\s\S]*?"tool"[\s\S]*?\}/);
+            if (toolCallMatch && !isAgentic) {
+                try {
+                    const toolCall = JSON.parse(toolCallMatch[0]);
+                    console.log(`[ChatRoute] 🛠️  Caught leaked tool call: ${toolCall.tool}`);
+                    const toolResult = await system.toolRegistry.execute(toolCall.tool, toolCall.args);
+                    const brain = getBrain();
+                    if (brain) {
+                        const followUp = await brain.reason(message, {
+                            ...context,
+                            recentLearnings: `[Tool Result] ${toolCall.tool} returned: ${JSON.stringify(toolResult)}`,
+                            systemOverride: "The tool has finished. Answer the user's question now."
+                        });
+                        responseText = followUp.text || followUp.response || responseText;
+                    }
+                } catch (e) {
+                    console.warn('[ChatRoute] Failed to recover leaked tool call:', e.message);
+                }
+            }
 
             // ── NEMESIS: Adversarial quality gate — catch hallucinations before they reach the user ──
             // Hard-capped at 8s total so it never delays the response past the client timeout.
@@ -1272,60 +1344,6 @@ ${personaContext}${characterContext}`.trim()
             res.json({ success: true, nodes });
         } catch (error) {
             res.status(500).json({ success: false, error: error.message });
-        }
-    });
-
-    // ── ORB REASONING & EMOTIONS ───────────────────────────────────
-    
-    router.post('/reason', async (req, res) => {
-        try {
-            const { query, conversationId, context } = req.body;
-            const brain = getBrain();
-            if (!brain || typeof brain.reason !== 'function') {
-                return res.status(503).json({ success: false, error: 'Reasoning engine offline' });
-            }
-
-            const result = await brain.reason(query, {
-                sessionId: conversationId || 'orb-link',
-                temperature: 0.4,
-                ...(context || {})
-            });
-
-            const responseText = result?.text || result?.response || result?.output || (typeof result === 'string' ? result : 'Processed.');
-            
-            res.json({
-                success: true,
-                response: responseText,
-                brain: result?.brain || 'SOMA',
-                confidence: result?.confidence || 0.8,
-                reasoningTree: result?.thoughtProcess || null
-            });
-        } catch (error) {
-            res.status(500).json({ success: false, error: error.message });
-        }
-    });
-
-    router.get('/orb-emotions', (req, res) => {
-        try {
-            const brain = getBrain();
-            const emotional = brain?.emotionalEngine || brain?.emotions || system.limbicArbiter || system.emotionalEngine;
-            
-            if (!emotional) return res.json({ success: false, error: 'No emotional data' });
-
-            const mood = typeof emotional.getCurrentMood === 'function' ? emotional.getCurrentMood() : { mood: 'balanced' };
-            const peptides = emotional.state || emotional.chemistry || {};
-
-            res.json({
-                success: true,
-                state: {
-                    dominantEmotion: mood.mood || emotional.getSystemWeather?.() || 'stable',
-                    peptides: peptides,
-                    valence: mood.intensity || 0.5,
-                    arousal: mood.energy === 'high' ? 0.8 : 0.5
-                }
-            });
-        } catch (error) {
-            res.json({ success: false, error: error.message });
         }
     });
 

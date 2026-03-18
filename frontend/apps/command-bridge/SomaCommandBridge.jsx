@@ -5,7 +5,7 @@ import {
   Plus, Network, Home, MessageSquare, Settings, Palette,
   Shield, User, Users, Lightbulb, ThermometerSun, ChevronLeft,
   ChevronRight, Sparkles, Terminal, Circle, BarChart3, Search, X, Clock,
-  Download, TrendingUp, TrendingDown, Target, Server, Gauge, Mail,
+  Download, TrendingUp, TrendingDown, Target, Server, Gauge, Mail, Mic,
   Box, Share2, DollarSign, CircleDollarSign
 } from 'lucide-react';
 import {
@@ -13,6 +13,7 @@ import {
   PolarAngleAxis, PolarRadiusAxis, XAxis, YAxis,
   CartesianGrid, Tooltip, Legend, ResponsiveContainer, AreaChart, Area
 } from 'recharts';
+import { motion, AnimatePresence } from 'framer-motion';
 import { ToastContainer, toast } from 'react-toastify';
 import 'react-toastify/dist/ReactToastify.css';
 
@@ -39,6 +40,8 @@ import SomaStatusStrip from './components/SomaStatusStrip';
 import ProposedGoalModal from './components/ProposedGoalModal';
 import SomaPlanViewer from './components/SomaPlanViewer';
 import OnboardingWizard from './components/OnboardingWizard';
+import ReasoningTree from './components/ReasoningTree';
+import EmotionIndicator from './components/EmotionIndicator';
 // import EnhancedKnowledgeSystem from './components/EnhancedKnowledgeSystem';
 
 // STEVE & Workflow Integration
@@ -511,6 +514,11 @@ const SomaCommandBridge = () => {
   const [auditLogs, setAuditLogs] = useState([]);
   const [emergencyStop, setEmergencyStop] = useState(false);
 
+  // Orb Module State
+  const [orbConversation, setOrbConversation] = useState([]);
+  const [activeReasoningTree, setActiveReasoningTree] = useState(null);
+  const [orbSidebarCollapsed, setOrbSidebarCollapsed] = useState(false);
+
   // ------------------------------------------
   // RESTORED STATES (Cognitive & SLC)
   // ------------------------------------------
@@ -595,6 +603,18 @@ const SomaCommandBridge = () => {
   // Hooks Integration
   // ------------------------------------------
 
+  const handleOrbResponse = useCallback((response) => {
+    setOrbConversation(prev => [...prev, {
+      role: response.role,
+      text: response.text,
+      timestamp: response.timestamp || Date.now()
+    }]);
+    
+    if (response.reasoningTree) {
+      setActiveReasoningTree(response.reasoningTree);
+    }
+  }, []);
+
   // 1. Audio Interaction
   const {
     isConnected: isOrbConnected,
@@ -605,8 +625,10 @@ const SomaCommandBridge = () => {
     isListening,
     isThinking,
     systemStatus: orbSystemStatus,
-    sendTextQuery
-  } = useSomaAudio();
+    sendTextQuery,
+    somaHealthy,
+    inputVolume
+  } = useSomaAudio(handleOrbResponse);
 
   // Expose text query globally for manual input
   useEffect(() => {
@@ -1637,10 +1659,157 @@ const SomaCommandBridge = () => {
 
         {/* ORB MODULE */}
         {activeModule === 'orb' && (
-          <div className="flex flex-col items-center justify-center h-full w-full bg-black relative overflow-hidden">
-            <div className="absolute inset-0 bg-[radial-gradient(circle_at_center,_var(--tw-gradient-stops))] from-indigo-900/20 via-black to-black pointer-events-none" />
-            <h2 className="absolute top-8 text-xl font-light text-white/50 tracking-widest z-10 uppercase">SOMA Voice Interface</h2>
-            <div className="absolute top-8 right-8 z-20 flex flex-col items-end space-y-2">
+          <div className="flex h-full w-full bg-black relative overflow-hidden">
+            {/* Background Effect */}
+            <div className="absolute inset-0 bg-[radial-gradient(circle_at_center,_var(--tw-gradient-stops))] from-indigo-900/10 via-black to-black pointer-events-none" />
+            
+            {/* Left Sidebar: Conversation & Emotions */}
+            <motion.div 
+              initial={false}
+              animate={{ width: orbSidebarCollapsed ? 0 : 320, opacity: orbSidebarCollapsed ? 0 : 1 }}
+              transition={{ duration: 0.4, ease: "easeInOut" }}
+              className="border-r border-white/5 flex flex-col bg-zinc-900/20 backdrop-blur-sm relative z-20 overflow-hidden"
+            >
+              <div className="w-80 flex flex-col h-full">
+                <div className="p-6 border-b border-white/5">
+                  <h3 className="text-xs font-bold text-zinc-500 uppercase tracking-[0.2em] mb-4">Neural Session</h3>
+                  <EmotionIndicator 
+                    isTalking={isTalking} 
+                    isThinking={isThinking} 
+                    isConnected={isOrbConnected} 
+                  />
+                </div>
+                
+                <div className="flex-1 overflow-y-auto p-4 custom-scrollbar space-y-4">
+                  {orbConversation.length === 0 ? (
+                    <div className="h-full flex flex-col items-center justify-center text-zinc-600 opacity-50 px-4 text-center">
+                      <MessageSquare className="w-8 h-8 mb-3" />
+                      <p className="text-xs">No active transmission logs. Establish link to begin.</p>
+                    </div>
+                  ) : (
+                    orbConversation.map((msg, idx) => (
+                      <div key={idx} className={`flex flex-col ${msg.role === 'user' ? 'items-end' : 'items-start'}`}>
+                        <div className={`max-w-[90%] p-3 rounded-2xl text-sm ${
+                          msg.role === 'user' 
+                            ? 'bg-blue-500/10 border border-blue-500/20 text-blue-100 rounded-tr-none' 
+                            : 'bg-purple-500/10 border border-purple-500/20 text-purple-100 rounded-tl-none'
+                        }`}>
+                          {msg.text}
+                        </div>
+                        <span className="text-[8px] text-zinc-600 mt-1 uppercase font-mono tracking-tighter">
+                          {msg.role === 'user' ? 'Human' : 'SOMA'} • {new Date(msg.timestamp).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}
+                        </span>
+                      </div>
+                    ))
+                  )}
+                </div>
+
+                {orbConversation.length > 0 && (
+                  <div className="p-4 border-t border-white/5">
+                    <button 
+                      onClick={() => setOrbConversation([])}
+                      className="w-full py-2 text-[10px] text-zinc-500 hover:text-zinc-300 uppercase tracking-widest transition-colors"
+                    >
+                      Clear Session Logs
+                    </button>
+                  </div>
+                )}
+              </div>
+            </motion.div>
+
+            {/* Collapse Toggle Button (Cute SOMA Logo Style) */}
+            <div className="absolute top-8 left-8 z-30">
+              <button 
+                onClick={() => setOrbSidebarCollapsed(!orbSidebarCollapsed)}
+                className={`p-2.5 rounded-full border transition-all duration-500 group relative ${
+                  orbSidebarCollapsed 
+                    ? 'bg-purple-500/10 border-purple-500/30 text-purple-400 hover:bg-purple-500/20' 
+                    : 'bg-white/5 border-white/10 text-zinc-500 hover:text-white'
+                }`}
+                title={orbSidebarCollapsed ? "Expand Neural Session" : "Collapse Neural Session"}
+              >
+                <div className={`absolute inset-0 rounded-full bg-purple-500/20 blur-md transition-opacity duration-500 ${orbSidebarCollapsed ? 'opacity-100 animate-pulse' : 'opacity-0'}`} />
+                <Brain className={`w-5 h-5 relative z-10 transition-transform duration-500 ${orbSidebarCollapsed ? 'scale-110 rotate-[360deg]' : 'group-hover:rotate-12'}`} />
+                {orbSidebarCollapsed && (
+                  <span className="absolute left-full ml-3 px-2 py-1 bg-black/80 border border-white/10 rounded text-[9px] text-purple-300 uppercase tracking-widest whitespace-nowrap opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none">
+                    Session Logs
+                  </span>
+                )}
+              </button>
+            </div>
+
+            {/* Center: The Orb */}
+            <div className="flex-1 flex flex-col items-center justify-center relative z-10">
+              <div className="h-[400px] w-full flex items-center justify-center">
+                <Orb volume={volume} isActive={isOrbConnected} isTalking={isTalking} isListening={isListening} isThinking={isThinking} />
+              </div>
+
+              <div className="mt-8 flex flex-col items-center gap-4 w-full max-w-xl px-10">
+                {/* Neural Link Button */}
+                <button
+                  className={`px-10 py-3 rounded-full font-bold uppercase tracking-[0.2em] text-xs transition-all shadow-lg ${isOrbConnected 
+                    ? 'bg-rose-500/20 text-rose-400 border border-rose-500/50 hover:bg-rose-500/30' 
+                    : 'bg-fuchsia-500/20 text-fuchsia-400 border border-fuchsia-500/30 hover:bg-fuchsia-500/30'
+                  }`}
+                  onClick={() => isOrbConnected ? disconnectOrb() : connectOrb()}
+                >
+                  {isOrbConnected ? '● Disengage Neural Link' : '○ Establish Neural Link'}
+                </button>
+
+                {/* Manual Input Field */}
+                {isOrbConnected && (
+                  <div className="w-full bg-white/5 border border-white/10 rounded-2xl p-2 flex items-center gap-2 focus-within:border-purple-500/50 transition-all">
+                    <input
+                      type="text"
+                      placeholder="Transmit manual command..."
+                      className="flex-1 bg-transparent border-none outline-none px-4 py-2 text-sm text-zinc-200 placeholder-zinc-600"
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter' && e.target.value.trim()) {
+                          const query = e.target.value.trim();
+                          e.target.value = '';
+                          if (window.somaTextQuery) window.somaTextQuery(query);
+                        }
+                      }}
+                    />
+                    <button
+                      onClick={(e) => {
+                        const input = e.target.closest('div').querySelector('input');
+                        const query = input.value.trim();
+                        if (query) {
+                          input.value = '';
+                          if (window.somaTextQuery) window.somaTextQuery(query);
+                        }
+                      }}
+                      className="p-2 bg-purple-500/20 hover:bg-purple-500/40 text-purple-400 rounded-xl transition-all"
+                    >
+                      <Zap className="w-4 h-4" />
+                    </button>
+                  </div>
+                )}
+                
+                <p className="text-[9px] text-zinc-600 uppercase tracking-widest">
+                  {isListening ? 'SOMA is listening...' : isThinking ? 'Processing neural patterns...' : isTalking ? 'SOMA is responding...' : 'Neural interface standby'}
+                </p>
+              </div>
+            </div>
+
+            {/* Far Right: Status Indicators */}
+            <div className="absolute top-8 right-8 z-50 flex flex-col items-end space-y-3 pointer-events-none">
+              <div className="flex items-center space-x-3 mb-2 pointer-events-auto">
+                <div className="flex flex-col items-end">
+                  <span className="text-[10px] text-zinc-500 uppercase font-bold tracking-wider">User Mic</span>
+                  <div className="h-1 w-24 bg-white/5 rounded-full mt-1 overflow-hidden border border-white/5">
+                    <div 
+                      className="h-full bg-gradient-to-r from-blue-500 to-fuchsia-500 transition-all duration-75"
+                      style={{ width: `${Math.max(2, inputVolume * 100)}%`, opacity: isOrbConnected ? 1 : 0.2 }}
+                    />
+                  </div>
+                </div>
+                <div className={`p-2 rounded-full border ${inputVolume > 0.2 ? 'border-fuchsia-500/50 bg-fuchsia-500/10' : 'border-white/5 bg-white/5'} transition-all`}>
+                  <Mic className={`w-4 h-4 ${inputVolume > 0.2 ? 'text-fuchsia-400' : 'text-zinc-600'}`} />
+                </div>
+              </div>
+
               {[
                 { label: 'Backend', status: orbSystemStatus.somaBackend, required: true },
                 { label: 'Whisper', status: orbSystemStatus.whisperServer, required: true },
@@ -1653,84 +1822,34 @@ const SomaCommandBridge = () => {
                       s.status === 'initializing' ? 'bg-blue-500 animate-pulse' :
                         'bg-rose-500 shadow-[0_0_8px_rgba(239,68,68,0.5)]'
                     }`} />
-                  {/* Status tooltip */}
-                  {(s.status === 'error' || s.status === 'fallback' || s.status === 'initializing') && (
-                    <div className="absolute right-full mr-2 px-2 py-1 bg-black/90 border border-white/10 rounded text-[9px] text-zinc-300 whitespace-nowrap opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none">
-                      {s.status === 'error' && s.label === 'Whisper' && 'Run: python whisper_flask_server.py'}
-                      {s.status === 'error' && s.label === 'Backend' && 'Start SOMA backend on port 3001'}
-                      {s.status === 'fallback' && 'Using browser speech (lower quality)'}
-                      {s.status === 'initializing' && 'Starting up...'}
-                    </div>
-                  )}
                 </div>
               ))}
             </div>
-            <div className="relative z-10 h-[500px] w-full flex items-center justify-center">
-              <Orb volume={volume} isActive={isOrbConnected} isTalking={isTalking} isListening={isListening} isThinking={isThinking} />
-            </div>
-            <div className="relative z-10 mt-8 flex flex-col items-center gap-3">
-              {/* Neural Link Button */}
-              <div className="flex gap-4 bg-black/50 p-4 rounded-full border border-white/10 backdrop-blur-md">
-                <button
-                  className={`px-8 py-3 rounded-full font-bold uppercase tracking-widest text-xs transition-all ${isOrbConnected ? 'bg-rose-500/20 text-rose-400 border border-rose-500/50' : 'bg-fuchsia-500/20 text-fuchsia-400 border border-fuchsia-500/20'
-                    }`}
-                  onClick={() => isOrbConnected ? disconnectOrb() : connectOrb()}
+
+            {/* Right Sidebar: Reasoning Tree (Absolute overlay) */}
+            <AnimatePresence>
+              {activeReasoningTree && (
+                <motion.div 
+                  initial={{ x: '100%', opacity: 0 }}
+                  animate={{ x: 0, opacity: 1 }}
+                  exit={{ x: '100%', opacity: 0 }}
+                  transition={{ duration: 0.5, ease: "anticipate" }}
+                  className="absolute top-0 right-0 bottom-0 w-[400px] border-l border-white/5 flex flex-col bg-zinc-950/90 backdrop-blur-xl z-40 shadow-2xl"
                 >
-                  {isOrbConnected ? '● Disengage Link' : '○ Establish Neural Link'}
-                </button>
-              </div>
-
-              {/* Collapsible Text Input */}
-              {isOrbConnected && (
-                <div className="group relative">
-                  {/* Collapsed hint */}
-                  <div className="text-[9px] uppercase tracking-widest text-zinc-600 group-hover:text-zinc-400 transition-colors cursor-pointer text-center mb-1">
-                    Manual Input
-                  </div>
-
-                  {/* Expandable Input Panel */}
-                  <div className="max-h-0 group-hover:max-h-24 overflow-hidden transition-all duration-300 ease-in-out">
-                    <div className="bg-black/70 backdrop-blur-xl border border-white/10 rounded-2xl p-3 min-w-[400px]">
-                      <div className="flex gap-2">
-                        <input
-                          type="text"
-                          placeholder="Type your message to SOMA..."
-                          className="flex-1 bg-white/5 border border-white/10 rounded-xl px-4 py-2 text-sm text-zinc-200 placeholder-zinc-600 focus:outline-none focus:border-purple-500/50 focus:bg-white/10 transition-all"
-                          onKeyDown={(e) => {
-                            if (e.key === 'Enter' && e.target.value.trim()) {
-                              const query = e.target.value.trim();
-                              e.target.value = '';
-                              // Send to SOMA via voice interface
-                              if (window.somaTextQuery) {
-                                window.somaTextQuery(query);
-                              }
-                            }
-                          }}
-                        />
-                        <button
-                          onClick={(e) => {
-                            const input = e.target.closest('.flex').querySelector('input');
-                            const query = input.value.trim();
-                            if (query) {
-                              input.value = '';
-                              if (window.somaTextQuery) {
-                                window.somaTextQuery(query);
-                              }
-                            }
-                          }}
-                          className="px-4 py-2 bg-purple-500/20 hover:bg-purple-500/30 border border-purple-500/30 rounded-xl text-purple-300 text-xs font-bold uppercase tracking-wider transition-all"
-                        >
-                          Send
-                        </button>
-                      </div>
-                      <div className="text-[8px] text-zinc-600 mt-2 text-center">
-                        SOMA will respond via voice • Press Enter to send
-                      </div>
+                  <div className="p-6 flex-1 overflow-hidden flex flex-col">
+                    <div className="flex items-center justify-between mb-4">
+                      <h3 className="text-xs font-bold text-zinc-500 uppercase tracking-[0.2em]">Metacognitive Path</h3>
+                      <button onClick={() => setActiveReasoningTree(null)} className="text-zinc-600 hover:text-white p-1 hover:bg-white/5 rounded-full transition-colors">
+                        <X className="w-4 h-4" />
+                      </button>
+                    </div>
+                    <div className="flex-1 overflow-y-auto custom-scrollbar pr-2">
+                      <ReasoningTree tree={activeReasoningTree} />
                     </div>
                   </div>
-                </div>
+                </motion.div>
               )}
-            </div>
+            </AnimatePresence>
           </div>
         )}
 
@@ -1909,7 +2028,7 @@ const SomaCommandBridge = () => {
 
         {/* PLAN MODULE */}
         {activeModule === 'plan' && (
-          <div className="h-full -m-6">
+          <div className="h-full">
             <SomaPlanViewer isConnected={isConnected} />
           </div>
         )}
@@ -2485,7 +2604,7 @@ const SomaCommandBridge = () => {
         )}
 
         {/* DEFAULT FALLBACK */}
-        {!['terminal', 'orb', 'kevin', 'simulation', 'core', 'arbiters', 'knowledge', 'analytics', 'storage', 'workflow', 'command', 'settings', 'mission_control', 'forecaster', 'marketplace', 'finance', 'arbiterium'].includes(activeModule) && (
+        {!['terminal', 'orb', 'kevin', 'simulation', 'core', 'arbiters', 'knowledge', 'analytics', 'storage', 'workflow', 'command', 'settings', 'mission_control', 'forecaster', 'marketplace', 'finance', 'arbiterium', 'plan'].includes(activeModule) && (
           <div className="flex items-center justify-center h-full text-zinc-600 italic">
             Integration for Module "{activeModule}" is ongoing...
           </div>

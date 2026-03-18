@@ -16,7 +16,7 @@ export async function reasonWithSoma(
   try {
     console.log('🧠 Sending to SOMA:', query.substring(0, 50) + '...');
 
-    const response = await fetch(`${SOMA_API_BASE}/api/reason`, {
+    const response = await fetch(`${SOMA_API_BASE}/api/soma/reason`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',

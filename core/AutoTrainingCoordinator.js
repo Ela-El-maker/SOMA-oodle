@@ -381,10 +381,7 @@ export class AutoTrainingCoordinator extends EventEmitter {
       // Step 1: Train on experiences
       console.log(`[${this.name}]    Step 1/3: Training on accumulated experiences...`);
 
-      // Use the configured SOMA model if available, otherwise default to soma-1t
-      const targetModel = this.localModelServer?.defaultModel?.includes('soma') 
-          ? this.localModelServer.defaultModel 
-          : 'soma-1t';
+      const targetModel = process.env.OLLAMA_MODEL || this.localModelServer?.defaultModel || 'gemma3:4b';
 
       const trainingResult = await this.gpuTraining.trainOnExperiences({
         modelName: targetModel,

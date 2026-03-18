@@ -1,0 +1,49 @@
+{
+  "traceId": "rc_96ebb843fe34",
+  "ts": "2025-11-24T17:55:58.280Z",
+  "query": "What is 2+2?",
+  "meta": {},
+  "candidates": [
+    {
+      "source": "PROMETHEUS",
+      "text": "4\n",
+      "confidence": 0.75,
+      "role": "prometheus"
+    },
+    {
+      "source": "LOGOS",
+      "text": "The expression \\( 2 + 2 \\) is a basic arithmetic operation.  \n\n- In base 10 (the decimal system), \\( 2 + 2 = 4 \\).  \n- This result holds in any integer base greater than 4.  \n- In modulo arithmetic, for example modulo 3, \\( 2 + 2 = 1 \\) (since \\( 4 \\mod 3 = 1 \\)).  \n\nThus, the answer depends on the assumed number system, but in standard arithmetic, **\\( 2 + 2 = 4 \\)**.",
+      "confidence": 0.85,
+      "role": "logos"
+    }
+  ],
+  "fused": {
+    "text": "The expression \\( 2 + 2 \\) is a basic arithmetic operation.  \n\n- In base 10 (the decimal system), \\( 2 + 2 = 4 \\).  \n- This result holds in any integer base greater than 4.  \n- In modulo arithmetic, for example modulo 3, \\( 2 + 2 = 1 \\) (since \\( 4 \\mod 3 = 1 \\)).  \n\nThus, the answer depends on the assumed number system, but in standard arithmetic, **\\( 2 + 2 = 4 \\)**.",
+    "weights": [
+      {
+        "source": "PROMETHEUS",
+        "norm": 0.44887780548628425,
+        "conf": 0.75
+      },
+      {
+        "source": "LOGOS",
+        "norm": 0.5511221945137156,
+        "conf": 0.85
+      }
+    ],
+    "confidence": 0.8051122194513713,
+    "provenance": [
+      {
+        "source": "PROMETHEUS",
+        "snippet": "4\n",
+        "confidence": 0.75
+      },
+      {
+        "source": "LOGOS",
+        "snippet": "The expression \\( 2 + 2 \\) is a basic arithmetic operation.  \n\n- In base 10 (the decimal system), \\( 2 + 2 = 4 \\).  \n- This result holds in any integer base greater than 4.  \n- In modulo arithmetic, f",
+        "confidence": 0.85
+      }
+    ]
+  },
+  "iter": 0
+}

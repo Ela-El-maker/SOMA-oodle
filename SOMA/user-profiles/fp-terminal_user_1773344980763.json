@@ -1,0 +1,24 @@
+{
+  "userId": "terminal_user_1773344980763",
+  "sessions": 1,
+  "totalMessages": 5,
+  "avgMsgLength": 12,
+  "questionRatio": 0.2,
+  "vocabRichness": 0.933,
+  "avgWordLength": 4.4,
+  "typicalStyle": "declarative-articulate",
+  "hourHistogram": {
+    "15": 5
+  },
+  "topicFreq": {
+    "architecture": 1,
+    "creative": 1
+  },
+  "recentTopics": [
+    "creative",
+    "architecture"
+  ],
+  "lastSeen": 1773344986152,
+  "lastUpdated": 1773345439434,
+  "createdAt": 1773344986153
+}

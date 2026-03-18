@@ -23,6 +23,7 @@ import { EconomicCalendar } from '../../arbiters/EconomicCalendar.js';
 import { MarketRegimeDetector } from '../../arbiters/MarketRegimeDetector.js';
 import { FragmentRegistry } from '../../arbiters/FragmentRegistry.js';
 import MnemonicIndexerArbiter from '../../arbiters/MnemonicIndexerArbiter.js';
+import CapabilityRegistry from '../../core/CapabilityRegistry.js';
 const HybridSearchArbiter = require('../../arbiters/HybridSearchArbiter.cjs');
 const TimekeeperArbiter = require('../../arbiters/TimekeeperArbiter.cjs');
 const GoalPlannerArbiter = require('../../arbiters/GoalPlannerArbiter.cjs');
@@ -107,11 +108,6 @@ import { SelfEvolvingGoalEngine } from '../../core/SelfEvolvingGoalEngine.js';
 import { SomaAgenticExecutor } from '../../core/SomaAgenticExecutor.js';
 import { OllamaAutoTrainer } from '../../core/OllamaAutoTrainer.js';
 import { ReportingArbiter } from '../../arbiters/ReportingArbiter.js';
-
-// ──────────────────────────────────────────
-// STEVE'S HANDS: EngineeringSwarm
-// ──────────────────────────────────────────
-import { EngineeringSwarmArbiter } from '../../arbiters/EngineeringSwarmArbiter.js';
 
 // ──────────────────────────────────────────
 // AGENTIC CONTROL: Eyes, Hands, Browser, Shell
@@ -389,6 +385,37 @@ export async function loadEssentialSystems(system) {
 export async function loadExtendedSystems(system) {
     console.log('\n[Extended] ═══ Activating Remaining Specialist Arbiters ═══');
     const ext = {};
+
+    // ── ComputerControlArbiter + VisionProcessingArbiter (MOVED TO TOP TO AVOID PERSONA DEADLOCK) ──
+    if (process.env.SOMA_LOAD_VISION === 'true') {
+        ext.computerControl = await safeLoad('ComputerControlArbiter', async () => {
+            const { ComputerControlArbiter } = await import(`../../arbiters/ComputerControlArbiter.js?cb=${Date.now()}`);
+            return new ComputerControlArbiter({ name: 'ComputerControl', dryRun: false });
+        });
+        if (ext.computerControl) {
+            system.computerControl = ext.computerControl;
+            if (system.arbiters) system.arbiters.set('computerControl', ext.computerControl);
+        }
+
+        try {
+            ext.visionArbiter = new VisionProcessingArbiter({ name: 'VisionArbiter' });
+            system.visionArbiter = ext.visionArbiter;
+            if (system.arbiters) system.arbiters.set('visionArbiter', ext.visionArbiter);
+            
+            ext.visionArbiter.initialize().then(() => {
+                console.log('    👁️  VisionProcessingArbiter CLIP model ready');
+                if (ext.computerControl) ext.computerControl.visionArbiter = ext.visionArbiter;
+            }).catch(e => console.warn('    ⚠️ VisionArbiter CLIP load failed:', e.message));
+            console.log('    👁️  VisionProcessingArbiter loading CLIP in background...');
+        } catch (e) {
+            console.warn(`    ⚠️ VisionProcessingArbiter skipped: ${e.message}`);
+            ext.visionArbiter = null;
+        }
+    } else {
+        console.log('    ⏭️ ComputerControlArbiter + VisionProcessingArbiter deferred (set SOMA_LOAD_VISION=true to enable)');
+        ext.computerControl = null;
+        ext.visionArbiter = null;
+    }
 
     // ═══════════════════════════════════════════
     // PHASE A: Infrastructure (reuse essential tier where available)
@@ -1381,15 +1408,21 @@ export async function loadExtendedSystems(system) {
     // ── ComputerControlArbiter + VisionProcessingArbiter ──
     // SOMA_LOAD_VISION=true: load both (CLIP WASM compilation blocks ~30-90s — opt-in only)
     if (process.env.SOMA_LOAD_VISION === 'true') {
-        ext.computerControl = await safeLoad('ComputerControlArbiter', () =>
-            new ComputerControlArbiter({ name: 'ComputerControl', dryRun: false })
-        );
-        if (ext.computerControl) system.computerControl = ext.computerControl;
+        ext.computerControl = await safeLoad('ComputerControlArbiter', async () => {
+            const { ComputerControlArbiter } = await import(`../../arbiters/ComputerControlArbiter.js?cb=${Date.now()}`);
+            return new ComputerControlArbiter({ name: 'ComputerControl', dryRun: false });
+        });
+        if (ext.computerControl) {
+            system.computerControl = ext.computerControl;
+            if (system.arbiters) system.arbiters.set('computerControl', ext.computerControl);
+        }
 
         // VisionProcessingArbiter: CLIP model loads ONNX/WASM synchronously — run in background
         try {
             ext.visionArbiter = new VisionProcessingArbiter({ name: 'VisionArbiter' });
             system.visionArbiter = ext.visionArbiter;
+            if (system.arbiters) system.arbiters.set('visionArbiter', ext.visionArbiter);
+            
             ext.visionArbiter.initialize().then(() => {
                 console.log('    👁️  VisionProcessingArbiter CLIP model ready');
                 if (ext.computerControl) ext.computerControl.visionArbiter = ext.visionArbiter;
@@ -1421,6 +1454,36 @@ export async function loadExtendedSystems(system) {
         new EngineeringSwarmArbiter({ name: 'EngineeringSwarm', quadBrain: system.quadBrain, rootPath })
     );
     if (ext.engineeringSwarm) system.engineeringSwarm = ext.engineeringSwarm;
+
+    // ── SwarmOptimizer: Self-improvement loop for the swarm ──
+    ext.swarmOptimizer = await safeLoad('SwarmOptimizer', () =>
+        new SwarmOptimizer({ name: 'SwarmOptimizer', swarm: ext.engineeringSwarm, quadBrain: system.quadBrain })
+    );
+    if (ext.swarmOptimizer) {
+        system.swarmOptimizer = ext.swarmOptimizer;
+        // Inject optimizer into swarm
+        if (ext.engineeringSwarm) ext.engineeringSwarm.setOptimizer(ext.swarmOptimizer);
+    }
+
+    // ── DiscoverySwarm: Autonomous capability expansion ──
+    ext.discoverySwarm = await safeLoad('DiscoverySwarm', () =>
+        new DiscoverySwarm({ name: 'DiscoverySwarm', engineering: ext.engineeringSwarm, quadBrain: system.quadBrain })
+    );
+    if (ext.discoverySwarm) system.discoverySwarm = ext.discoverySwarm;
+
+    // ── Register Operational Daemons ──
+    if (system.daemonManager) {
+        if (ext.swarmOptimizer) {
+            const optDaemon = new OptimizationDaemon({ name: 'SwarmOptimizationDaemon', optimizer: ext.swarmOptimizer });
+            system.daemonManager.register(optDaemon);
+            system.daemonManager.start('SwarmOptimizationDaemon').catch(() => {});
+        }
+        if (ext.discoverySwarm) {
+            const discDaemon = new DiscoveryDaemon({ name: 'SwarmDiscoveryDaemon', discovery: ext.discoverySwarm });
+            system.daemonManager.register(discDaemon);
+            system.daemonManager.start('SwarmDiscoveryDaemon').catch(() => {});
+        }
+    }
 
     // ── STEVE (ExecutiveCortex): Inject specialist arbiters ──
     const steve = system.steveArbiter || system.executiveCortex;

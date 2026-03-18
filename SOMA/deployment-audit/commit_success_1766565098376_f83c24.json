@@ -1,0 +1,13 @@
+{
+  "event": "commit_success",
+  "ts": 1766565098376,
+  "data": {
+    "packageId": "pkg_1766565098366",
+    "deployResult": {
+      "success": true,
+      "packageId": "pkg_1766565098366",
+      "deploymentFile": "C:\\Users\\barry\\Desktop\\SOMA\\SOMA\\deployment-audit\\deployments\\pkg_1766565098366.json",
+      "timestamp": 1766565098375
+    }
+  }
+}

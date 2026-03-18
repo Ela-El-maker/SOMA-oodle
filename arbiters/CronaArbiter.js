@@ -96,10 +96,10 @@ export class CronaArbiter extends EventEmitter {
             console.log('[CronaArbiter] Using QuadBrain + Local Engine for Merovingian adapters');
             return {
                 gema: async (q, opts) => {
-                    // Call the brain's internal SOMA-1T (local Ollama) implementation
+                    // Call the brain's internal GEMMA-3 (local Ollama) implementation
                     if (typeof this.brain._callSoma1T === 'function') {
                         const res = await this.brain._callSoma1T(q, opts.temperature || 0.7, opts.maxTokens || 1024);
-                        return { text: res.text, confidence: 0.75, meta: { brain: 'SOMA-1T', provider: 'ollama' } };
+                        return { text: res.text, confidence: 0.75, meta: { brain: 'GEMMA-3', provider: 'ollama' } };
                     }
                     // Fallback to LOGOS if method missing
                     const res = await this.brain.callBrain('LOGOS', q, opts);

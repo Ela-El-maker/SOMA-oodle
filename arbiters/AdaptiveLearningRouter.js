@@ -354,7 +354,7 @@ class AdaptiveLearningRouter extends EventEmitter {
     const q = queryStr.toLowerCase();
 
     // Strong signals
-    if (new RegExp('\\b(why|how|prove|verify|demonstrate|explain|analyze)\\b').test(q)) {
+    if (new RegExp('\\b(why|how|prove|verify|demonstrate|explain|analyze|time|clock|date|weather)\\b').test(q)) {
       score += 0.35;
     }
     if (new RegExp('\\b(calculate|compute|solve|equation|formula|algorithm)\\b').test(q)) {

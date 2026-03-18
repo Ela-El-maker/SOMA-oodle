@@ -75,7 +75,7 @@ export class BrainBridge extends EventEmitter {
                 }
             }, 120_000);
 
-            this._worker.on('message', (msg) => {
+            this._worker.on('message', async (msg) => {
                 // ── Worker-ready signal ──
                 if (msg.type === 'ready') {
                     clearTimeout(startupTimeout);
@@ -84,6 +84,19 @@ export class BrainBridge extends EventEmitter {
                     console.log('[BrainBridge] ✅ Phase 2 active — inference is now non-blocking');
                     this.emit('worker_ready');
                     resolve();
+                    return;
+                }
+
+                // ── Tool Execution Request from Worker ──
+                if (msg.type === 'execute_tool') {
+                    console.log(`[BrainBridge] 🛠️ Worker requested tool: ${msg.tool}`);
+                    try {
+                        const result = await this._direct.toolRegistry.execute(msg.tool, msg.args);
+                        this._worker.postMessage({ type: 'tool_result', callId: msg.callId, result });
+                    } catch (err) {
+                        console.error(`[BrainBridge] Worker tool execution failed (${msg.tool}):`, err.message);
+                        this._worker.postMessage({ type: 'tool_result', callId: msg.callId, error: err.message });
+                    }
                     return;
                 }
 
@@ -145,35 +158,88 @@ export class BrainBridge extends EventEmitter {
         this._stats.totalCalls++;
         const startTime = Date.now();
 
+        let result;
         if (!this._useWorker) {
             // Phase 1: direct call on main thread
             this._stats.directCalls++;
             try {
-                const result = await this._direct.reason(query, context);
-                this._updateLatency(Date.now() - startTime);
-                return result;
+                result = await this._direct.reason(query, context);
             } catch (err) {
                 this._stats.errors++;
                 throw err;
             }
+        } else {
+            // Phase 2: route to worker thread
+            this._stats.workerCalls++;
+            const id = ++this._msgId;
+
+            result = await new Promise((resolve, reject) => {
+                // Safety: if pending map grows huge, fall back to direct
+                if (this._pending.size > 50) {
+                    console.warn('[BrainBridge] Worker queue full — falling back to direct for this call');
+                    this._stats.directCalls++;
+                    this._direct.reason(query, context).then(resolve).catch(reject);
+                    return;
+                }
+
+                this._pending.set(id, { resolve, reject, startTime });
+                this._worker.postMessage({ id, type: 'reason', query, context });
+            });
         }
 
-        // Phase 2: route to worker thread
-        this._stats.workerCalls++;
-        const id = ++this._msgId;
+        // 🛠️ MAIN THREAD TOOL EXECUTION LOOP (Handles worker tool results)
+        if (result && result.toolCall && !context.isAgenticTask && this._direct.toolRegistry) {
+            const toolCall = result.toolCall;
+            console.log(`[BrainBridge] 🛠️ Tool execution triggered: ${toolCall.tool} (ID: ${this._msgId})`);
+            
+            try {
+                const toolOutput = await this._direct.toolRegistry.execute(toolCall.tool, toolCall.args);
+                const outputStr = JSON.stringify(toolOutput);
+                
+                console.log(`[BrainBridge] ✅ Tool result for ${toolCall.tool}: ${outputStr.substring(0, 50)}...`);
+                
+                // Track usage
+                result.toolsUsed = result.toolsUsed || [];
+                result.toolsUsed.push({ tool: toolCall.tool, args: toolCall.args, output: toolOutput, timestamp: Date.now() });
 
-        return new Promise((resolve, reject) => {
-            // Safety: if pending map grows huge, fall back to direct
-            if (this._pending.size > 50) {
-                console.warn('[BrainBridge] Worker queue full — falling back to direct for this call');
-                this._stats.directCalls++;
-                this._direct.reason(query, context).then(resolve).catch(reject);
-                return;
+                // Follow-up reasoning with tool result
+                const followupContext = {
+                    ...context,
+                    history: [...(context.history || [])],
+                    recentLearnings: (context.recentLearnings || '') + `\n\nTOOL OUTPUT (${toolCall.tool}):\n${outputStr}`,
+                    // FORCE natural language for the follow-up
+                    systemOverride: "The requested tool has executed. Use the result provided in the history to answer the user's original question in natural language. DO NOT return any JSON."
+                };
+                
+                // User-facing history injection
+                followupContext.history.push({
+                    role: 'user',
+                    content: `System: Tool ${toolCall.tool} returned: ${outputStr}`
+                });
+
+                // RECURSIVE CALL: Re-run reasoning with result
+                console.log(`[BrainBridge] 🔄 Re-reasoning with tool output...`);
+                const followUp = await this.reason(query, followupContext);
+                
+                // Ensure the follow-up response text is clean
+                if (followUp && followUp.text) {
+                    followUp.text = followUp.text
+                        .replace(/```json[\s\S]*?```/g, '')
+                        .replace(/\{[\s\S]*?"tool"[\s\S]*?\}/g, '')
+                        .replace(/^\s*\}\s*$/, '')
+                        .trim();
+                }
+                return followUp;
+
+            } catch (err) {
+                console.error(`[BrainBridge] Tool execution failed:`, err.message);
+                result.text = (result.text || '') + `\n\n[Tool Error] I tried to use my ${toolCall.tool} tool, but hit a snag: ${err.message}`;
+                return result;
             }
+        }
 
-            this._pending.set(id, { resolve, reject, startTime });
-            this._worker.postMessage({ id, type: 'reason', query, context });
-        });
+        this._updateLatency(Date.now() - startTime);
+        return result;
     }
 
     // ── Proxy other QuadBrain methods ──────────────────────────

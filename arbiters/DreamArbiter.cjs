@@ -96,7 +96,7 @@ class DreamArbiter extends BaseArbiter {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({
-                        model: 'soma-1t-v1:latest',
+                        model: process.env.OLLAMA_MODEL || 'gemma3:4b',
                         prompt,
                         stream: false,
                         options: { temperature: 0.85, num_predict: 256 }

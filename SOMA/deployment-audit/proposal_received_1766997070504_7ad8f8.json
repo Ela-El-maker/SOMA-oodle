@@ -1,0 +1,36 @@
+{
+  "event": "proposal_received",
+  "ts": 1766997070504,
+  "data": {
+    "proposalData": {
+      "payload": {
+        "packageId": "pkg_1766997070500",
+        "name": "Memory efficiency optimization",
+        "description": "Optimize learning algorithm based on recent performance analysis",
+        "type": "code_update",
+        "payload": {
+          "improvements": [
+            "Memory efficiency optimization",
+            "Pattern recognition enhancement",
+            "Error handling improvement"
+          ],
+          "rationale": "Default improvements - no performance data available yet",
+          "timestamp": 1766997070500,
+          "dataSource": "default"
+        },
+        "ts": 1766997070500,
+        "ttlMs": 900000
+      },
+      "signatures": [
+        {
+          "pubKeyPem": "-----BEGIN PUBLIC KEY-----\nMIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAqk+k7HOJUnCmYb1buN6V\nqKeFQQSafawdpLS/XFpy3K5fKnodXonKpScRWyvtjnX/Khz/KpmGjiXgW7ocG325\nbnKUK/yw3vJCPlc1bacoUGFDtDXqggld+GkgFVGOhpkiVN1ulL4cF/2GrJCGnggx\n+fxTmRhjabM/NNwu6QnWuH/9+8fgsYwngLn2dFdHjc+081GwIaY2wGX+o/rW1/Eb\nqBu5ojWc52K0oGoatJPlsjiq/eSwMZKhEsfs3tABN+F/7rPJUrdSNdaQvL2/ymhq\n4RDOylILzOeU66PkeR4HVGzfVFlXWa+KxbyX7xTjeMXyEVSaR1fNVaKR52C11ezI\nHwIDAQAB\n-----END PUBLIC KEY-----\n",
+          "signature": "e7CBu+KVz+c84BccRuO9GW0tgqDNdaFDY/+jMFH7Maxiu3MfzEr71+ZPvMH01KXY3NY6iosvQ55sytvloEHLCGK7G55HYNgU/UmtawPOZ9Uh77jEJIqy3SkI38JYJ8DRGzcznrj5qRGgsCD4t4g9sqLwBqymTbLGwXLEhaqgSq4rX5/QDLJdS38iw05xOuxBKbIq8bdYWurLR6OW+Q3ja1aGFkN01Ze3NAeqmBo/+yVnUcZfVEQsY+jG7wYN9cF3I0Bls+WgqNRvf7mZTAC3wiDoGj07A3HfjCBqCUs+Qh1oc0OZPKWeUG8wRuX1mWeOQa56bo/3rBfJ+tDbefiVbQ=="
+        }
+      ],
+      "meta": {
+        "proposer": "SOMA_Autonomous",
+        "autonomous": true
+      }
+    }
+  }
+}

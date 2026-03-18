@@ -1,0 +1,65 @@
+{
+  "traceId": "rc_88f9f95c8bfb",
+  "ts": "2025-12-21T15:55:59.824Z",
+  "query": "What is 2+2?",
+  "meta": {},
+  "candidates": [
+    {
+      "source": "PROMETHEUS",
+      "text": "4.\n",
+      "confidence": 0.85,
+      "role": "prometheus"
+    },
+    {
+      "source": "LOGOS",
+      "text": "2 + 2 = 4.\n",
+      "confidence": 0.85,
+      "role": "logos"
+    },
+    {
+      "source": "AURORA",
+      "text": "2 + 2 = 4. It's a basic math fact.\n",
+      "confidence": 0.85,
+      "role": "aurora"
+    }
+  ],
+  "fused": {
+    "text": "2 + 2 = 4.\n",
+    "weights": [
+      {
+        "source": "PROMETHEUS",
+        "norm": 0.32432432432432434,
+        "conf": 0.85
+      },
+      {
+        "source": "LOGOS",
+        "norm": 0.35135135135135126,
+        "conf": 0.85
+      },
+      {
+        "source": "AURORA",
+        "norm": 0.32432432432432434,
+        "conf": 0.85
+      }
+    ],
+    "confidence": 0.8499999999999999,
+    "provenance": [
+      {
+        "source": "PROMETHEUS",
+        "snippet": "4.\n",
+        "confidence": 0.85
+      },
+      {
+        "source": "LOGOS",
+        "snippet": "2 + 2 = 4.\n",
+        "confidence": 0.85
+      },
+      {
+        "source": "AURORA",
+        "snippet": "2 + 2 = 4. It's a basic math fact.\n",
+        "confidence": 0.85
+      }
+    ]
+  },
+  "iter": 0
+}

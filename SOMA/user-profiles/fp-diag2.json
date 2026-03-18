@@ -1,0 +1,18 @@
+{
+  "userId": "diag2",
+  "sessions": 1,
+  "totalMessages": 1,
+  "avgMsgLength": 6,
+  "questionRatio": 0,
+  "vocabRichness": 1,
+  "avgWordLength": 3.33,
+  "typicalStyle": "declarative-articulate",
+  "hourHistogram": {
+    "14": 1
+  },
+  "topicFreq": {},
+  "recentTopics": [],
+  "lastSeen": 1773425045500,
+  "lastUpdated": 1773425045500,
+  "createdAt": 1773425045501
+}

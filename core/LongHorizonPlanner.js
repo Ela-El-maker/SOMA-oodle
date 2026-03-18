@@ -268,6 +268,19 @@ Return ONLY JSON: {"complete": true/false, "progress": 0-100, "reasoning": "brie
                     metadata:    { milestoneId: milestone.id, source: 'LongHorizonPlanner' },
                 }).catch(() => {});
                 console.log(`[LongHorizonPlanner] 🔗 Aligned GoalEngine to milestone: "${milestone.description.slice(0, 60)}"`);
+
+                // Fire execution — GoalPlannerArbiter only plans, so also route to SOMA's
+                // execution brain (QuadBrain ReAct loop) to actually work toward the milestone.
+                const executor = this.system?.quadBrain || this.brain;
+                if (executor) {
+                    const execPrompt = `You are executing a strategic milestone as an autonomous agent. Use available tools to make concrete progress.\n\nMILESTONE: ${milestone.description}${milestone.success_criteria ? `\n\nSUCCESS CRITERIA: ${milestone.success_criteria}` : ''}\n\nBreak this into actionable steps and execute them now using your tools.`;
+                    executor.reason(execPrompt, {
+                        isAgenticTask:   true,
+                        forceComplexity: true,
+                        source:          'LongHorizonPlanner',
+                        milestoneId:     milestone.id,
+                    }).catch(err => console.warn('[LongHorizonPlanner] ⚠️  Execution trigger failed:', err.message));
+                }
             }
         } catch {}
     }

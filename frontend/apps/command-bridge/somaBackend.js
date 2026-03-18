@@ -10,6 +10,7 @@ class SomaBackend {
     this.reconnectDelay = 3000;
     this.isConnecting = false;
     this.connectionState = 'disconnected'; // disconnected, health_check, connecting, connected, error
+    this.pendingRequests = {}; // To store promises for sendMessage responses
     const httpProtocol = window.location.protocol === 'https:' ? 'https:' : 'http:';
     const httpHost = import.meta.env?.VITE_HTTP_HOST || window.location.hostname || 'localhost';
     const httpPort = import.meta.env?.VITE_HTTP_PORT || '3001';
@@ -144,8 +145,22 @@ class SomaBackend {
 
   // Handle incoming WebSocket messages
   handleMessage(data) {
-    const { type, payload } = data;
+    const { type, payload, messageId, responseToId } = data;
 
+    // If this is a response to a pending request
+    if (responseToId && this.pendingRequests[responseToId]) {
+      const { resolve, reject } = this.pendingRequests[responseToId];
+      delete this.pendingRequests[responseToId]; // Clean up
+      
+      if (data.success === false) {
+        reject(new Error(data.error || 'Backend request failed'));
+      } else {
+        resolve(data);
+      }
+      return; // Handled as a response, do not process as a broadcast event
+    }
+
+    // Otherwise, process as a general broadcast message
     switch (type) {
       case 'init':
         // Initial connection message with agents, brainStats, memory
@@ -219,9 +234,52 @@ class SomaBackend {
       case 'trace':
         this.emit('trace', payload);
         break;
+      // Add a case for `plan_updated` messages from the backend
+      case 'plan:updated': // This event name matches what backend emits
+        this.emit('plan_updated', payload); // Emit as 'plan_updated' for existing frontend listeners
+        break;
       default:
         console.log('[SomaBackend] Unknown message type:', type);
     }
+  }
+
+  // Send message to backend and wait for a specific response
+  async sendMessage(message, timeout = 10000) { // Default timeout of 10 seconds
+    if (!this.ws || this.ws.readyState !== WebSocket.OPEN) {
+      throw new Error('WebSocket is not connected.');
+    }
+
+    const messageId = `msg-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+    const fullMessage = { ...message, messageId };
+
+    return new Promise((resolve, reject) => {
+      // Store the resolve/reject functions for this messageId
+      this.pendingRequests[messageId] = { resolve, reject };
+
+      // Set a timeout for the request
+      const timer = setTimeout(() => {
+        delete this.pendingRequests[messageId];
+        reject(new Error(`Message with ID ${messageId} timed out after ${timeout}ms`));
+      }, timeout);
+
+      // Override the reject function to clear the timer
+      this.pendingRequests[messageId].reject = (reason) => {
+        clearTimeout(timer);
+        reject(reason);
+      };
+      this.pendingRequests[messageId].resolve = (value) => {
+        clearTimeout(timer);
+        resolve(value);
+      };
+
+      try {
+        this.ws.send(JSON.stringify(fullMessage));
+      } catch (error) {
+        clearTimeout(timer);
+        delete this.pendingRequests[messageId];
+        reject(new Error(`Failed to send message: ${error.message}`));
+      }
+    });
   }
 
   async fetchAgents() {

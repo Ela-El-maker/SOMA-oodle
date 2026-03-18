@@ -8,6 +8,8 @@
 const EventEmitter = require('events');
 const fs = require('fs').promises;
 const path = require('path');
+const SignalCompressor = require('./SignalCompressor.cjs');
+const SignalRegistry = require('./SignalSchema.cjs').default;
 
 class MessageBroker extends EventEmitter {
   constructor() {
@@ -16,9 +18,19 @@ class MessageBroker extends EventEmitter {
     // Registered arbiters
     this.arbiters = new Map();
 
+    // CNS: Impulse Compression & Validation
+    this.signalRegistry = SignalRegistry;
+    this.compressor = new SignalCompressor({
+      windowMs: 1000,
+      onCompressed: (signal) => this._deliverSignal(signal)
+    });
+
     // Neural Indices
     this.lobeIndex = new Map(); // lobe -> Set(names)
     this.classificationIndex = new Map(); // classification -> Set(names)
+
+    // CNS: Attention & Focus Gate
+    this.attentionEngine = null;
 
     // Discovery (Unused list)
     this.discoveryIndex = new Map(); // filename -> metadata
@@ -418,6 +430,51 @@ class MessageBroker extends EventEmitter {
       messagesFailed: 0,
       startTime: Date.now()
     };
+  }
+
+  // ===========================
+  // CNS: Structured Signals
+  // ===========================
+
+  /**
+   * Emit a structured COS Signal.
+   * Signals are buffered and compressed before delivery.
+   */
+  emitSignal(type, payload, priority = 'normal') {
+    const signal = {
+      id: this._generateMessageId(),
+      type,
+      payload,
+      priority,
+      timestamp: Date.now(),
+      source: 'MessageBroker' // Source is set by the emitter, but we default here
+    };
+
+    // CNS: Impulse Compression
+    const swallowed = this.compressor.process(signal);
+    if (!swallowed) {
+      this._deliverSignal(signal);
+    }
+  }
+
+  /**
+   * Internal method to deliver signals to subscribers.
+   */
+  async _deliverSignal(signal) {
+    // CNS: Attention & Focus Gate (The Amygdala)
+    if (this.attentionEngine && typeof this.attentionEngine.shouldNotice === 'function') {
+      if (!this.attentionEngine.shouldNotice(signal)) {
+        console.log(`[MessageBroker] 🙈 Attention Gate suppressed signal: ${signal.type}`);
+        return 0;
+      }
+    }
+
+    this.metrics.messagesSent++;
+    this._addToHistory(signal);
+
+    // Signals are published to topics matching their type
+    // e.g. signal 'repo.file.changed' -> topic 'repo.file.changed'
+    return await this.publish(signal.type, signal);
   }
 
   // ===========================

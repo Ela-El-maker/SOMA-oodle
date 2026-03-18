@@ -1,0 +1,24 @@
+{
+  "userId": "9f46456ddc0e2866",
+  "sessions": 1,
+  "totalMessages": 2,
+  "avgMsgLength": 15,
+  "questionRatio": 0,
+  "vocabRichness": 0.957,
+  "avgWordLength": 4.26,
+  "typicalStyle": "declarative-articulate",
+  "hourHistogram": {
+    "12": 2
+  },
+  "topicFreq": {
+    "consciousness": 1,
+    "architecture": 1
+  },
+  "recentTopics": [
+    "consciousness",
+    "architecture"
+  ],
+  "lastSeen": 1773420854504,
+  "lastUpdated": 1773420971162,
+  "createdAt": 1773420854504
+}

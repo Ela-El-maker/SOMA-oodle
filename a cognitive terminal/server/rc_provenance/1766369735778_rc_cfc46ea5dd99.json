@@ -1,0 +1,76 @@
+{
+  "traceId": "rc_cfc46ea5dd99",
+  "ts": "2025-12-22T02:15:35.777Z",
+  "query": "hello",
+  "meta": {
+    "conversationHistory": [
+      {
+        "role": "user",
+        "parts": [
+          {
+            "text": "hello"
+          }
+        ]
+      }
+    ]
+  },
+  "candidates": [
+    {
+      "source": "PROMETHEUS",
+      "text": "Query understood. Processing.\n",
+      "confidence": 0.85,
+      "role": "prometheus"
+    },
+    {
+      "source": "LOGOS",
+      "text": "Acknowledged. Processing query: \"hello\".\n\nAnalysis: The query is a simple greeting. My response should be appropriate for this context.\n\nResponse: Hello.\n",
+      "confidence": 0.85,
+      "role": "logos"
+    },
+    {
+      "source": "AURORA",
+      "text": "Hello.\n",
+      "confidence": 0.85,
+      "role": "aurora"
+    }
+  ],
+  "fused": {
+    "text": "Acknowledged. Processing query: \"hello\".\n\nAnalysis: The query is a simple greeting. My response should be appropriate for this context.\n\nResponse: Hello.\n",
+    "weights": [
+      {
+        "source": "PROMETHEUS",
+        "norm": 0.32432432432432434,
+        "conf": 0.85
+      },
+      {
+        "source": "LOGOS",
+        "norm": 0.35135135135135126,
+        "conf": 0.85
+      },
+      {
+        "source": "AURORA",
+        "norm": 0.32432432432432434,
+        "conf": 0.85
+      }
+    ],
+    "confidence": 0.8499999999999999,
+    "provenance": [
+      {
+        "source": "PROMETHEUS",
+        "snippet": "Query understood. Processing.\n",
+        "confidence": 0.85
+      },
+      {
+        "source": "LOGOS",
+        "snippet": "Acknowledged. Processing query: \"hello\".\n\nAnalysis: The query is a simple greeting. My response should be appropriate for this context.\n\nResponse: Hello.\n",
+        "confidence": 0.85
+      },
+      {
+        "source": "AURORA",
+        "snippet": "Hello.\n",
+        "confidence": 0.85
+      }
+    ]
+  },
+  "iter": 0
+}

@@ -1,0 +1,49 @@
+{
+  "traceId": "rc_74814f3f7333",
+  "ts": "2025-11-24T17:58:09.389Z",
+  "query": "What is 5 times 7?",
+  "meta": {},
+  "candidates": [
+    {
+      "source": "PROMETHEUS",
+      "text": "35\n",
+      "confidence": 0.75,
+      "role": "prometheus"
+    },
+    {
+      "source": "LOGOS",
+      "text": "Let’s break this down step by step:  \n\n1. We are asked to find **5 times 7**.  \n2. In multiplication, “times” means we multiply the two numbers:  \n   \\[\n   5 \\times 7\n   \\]\n3. We can think of this as adding 5, seven times:  \n   \\[\n   5 + 5 + 5 + 5 + 5 + 5 + 5\n   \\]\n4. Adding them:  \n   \\(5 + 5 = 10\\)  \n   \\(10 + 5 = 15\\)  \n   \\(15 + 5 = 20\\)  \n   \\(20 + 5 = 25\\)  \n   \\(25 + 5 = 30\\)  \n   \\(30 + 5 = 35\\)  \n5. So,  \n   \\[\n   5 \\times 7 = 35\n   \\]\n\n**Answer:** 35",
+      "confidence": 0.85,
+      "role": "logos"
+    }
+  ],
+  "fused": {
+    "text": "Let’s break this down step by step:  \n\n1. We are asked to find **5 times 7**.  \n2. In multiplication, “times” means we multiply the two numbers:  \n   \\[\n   5 \\times 7\n   \\]\n3. We can think of this as adding 5, seven times:  \n   \\[\n   5 + 5 + 5 + 5 + 5 + 5 + 5\n   \\]\n4. Adding them:  \n   \\(5 + 5 = 10\\)  \n   \\(10 + 5 = 15\\)  \n   \\(15 + 5 = 20\\)  \n   \\(20 + 5 = 25\\)  \n   \\(25 + 5 = 30\\)  \n   \\(30 + 5 = 35\\)  \n5. So,  \n   \\[\n   5 \\times 7 = 35\n   \\]\n\n**Answer:** 35",
+    "weights": [
+      {
+        "source": "PROMETHEUS",
+        "norm": 0.44887780548628425,
+        "conf": 0.75
+      },
+      {
+        "source": "LOGOS",
+        "norm": 0.5511221945137156,
+        "conf": 0.85
+      }
+    ],
+    "confidence": 0.8051122194513713,
+    "provenance": [
+      {
+        "source": "PROMETHEUS",
+        "snippet": "35\n",
+        "confidence": 0.75
+      },
+      {
+        "source": "LOGOS",
+        "snippet": "Let’s break this down step by step:  \n\n1. We are asked to find **5 times 7**.  \n2. In multiplication, “times” means we multiply the two numbers:  \n   \\[\n   5 \\times 7\n   \\]\n3. We can think of this as ",
+        "confidence": 0.85
+      }
+    ]
+  },
+  "iter": 0
+}

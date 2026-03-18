@@ -1,0 +1,65 @@
+{
+  "traceId": "rc_df1e72a10845",
+  "ts": "2025-12-23T13:54:14.393Z",
+  "query": "Thank you.",
+  "meta": {},
+  "candidates": [
+    {
+      "source": "PROMETHEUS",
+      "text": "Acknowledged. Awaiting further instructions.\n",
+      "confidence": 0.85,
+      "role": "prometheus"
+    },
+    {
+      "source": "LOGOS",
+      "text": "Acknowledged. How may I assist you further?\n",
+      "confidence": 0.85,
+      "role": "logos"
+    },
+    {
+      "source": "AURORA",
+      "text": "You're welcome.\n",
+      "confidence": 0.85,
+      "role": "aurora"
+    }
+  ],
+  "fused": {
+    "text": "Acknowledged. How may I assist you further?\n",
+    "weights": [
+      {
+        "source": "PROMETHEUS",
+        "norm": 0.32432432432432434,
+        "conf": 0.85
+      },
+      {
+        "source": "LOGOS",
+        "norm": 0.35135135135135126,
+        "conf": 0.85
+      },
+      {
+        "source": "AURORA",
+        "norm": 0.32432432432432434,
+        "conf": 0.85
+      }
+    ],
+    "confidence": 0.8499999999999999,
+    "provenance": [
+      {
+        "source": "PROMETHEUS",
+        "snippet": "Acknowledged. Awaiting further instructions.\n",
+        "confidence": 0.85
+      },
+      {
+        "source": "LOGOS",
+        "snippet": "Acknowledged. How may I assist you further?\n",
+        "confidence": 0.85
+      },
+      {
+        "source": "AURORA",
+        "snippet": "You're welcome.\n",
+        "confidence": 0.85
+      }
+    ]
+  },
+  "iter": 0
+}

@@ -79,15 +79,28 @@ export class ToolCreatorArbiter extends BaseArbiterV4 {
 
     // 4. Register
     if (this.registry) {
-        await this.registry.registerTool({
-            name: toolName,
-            description: spec.description,
-            path: filePath,
-            parameters: spec.parameters
-        });
+        try {
+            // Use createRequire to bypass ESM limitations for dynamically loading CJS tools
+            const dynamicRequire = createRequire(import.meta.url);
+            const toolModule = dynamicRequire(filePath);
+            
+            if (toolModule && toolModule.execute) {
+                await this.registry.registerTool({
+                    name: toolName,
+                    description: spec.description,
+                    parameters: spec.parameters,
+                    execute: toolModule.execute
+                });
+                this.auditLogger.info(`✅ [ToolCreator] Tool '${toolName}' dynamic-loaded and registered.`);
+            } else {
+                this.auditLogger.warn(`[ToolCreator] Tool '${toolName}' module is invalid or missing execute()`);
+            }
+        } catch (regErr) {
+            this.auditLogger.error(`[ToolCreator] Failed to register tool '${toolName}': ${regErr.message}`);
+        }
     }
 
-    this.auditLogger.info(`✅ [ToolCreator] Tool '${toolName}' created and registered.`);
+    this.auditLogger.info(`✅ [ToolCreator] Process for '${toolName}' complete.`);
     
     return {
         success: true,

@@ -9,6 +9,9 @@
 
 import fetch from 'node-fetch';
 import { logger } from './Logger.js';
+import fs from 'fs/promises';
+import path from 'path';
+import CapabilityRegistry from './CapabilityRegistry.js';
 
 export class CommandBridgeInterface {
     constructor(baseUrl = 'http://localhost:3001', messageBroker = null) {
@@ -335,12 +338,34 @@ export class CommandBridgeInterface {
             this.getLearningVelocity()
         ]);
 
+        // Calculate memory health
+        const dbPath = path.join(process.cwd(), 'soma-memory.db');
+        let memoryHealth = 'HEALTHY';
+        let maintenanceSuggestion = null;
+        
+        try {
+            const stats = await fs.stat(dbPath);
+            const sizeGB = stats.size / (1024 * 1024 * 1024);
+            if (sizeGB > 1.0) {
+                memoryHealth = 'BLOATED';
+                maintenanceSuggestion = `Database size is ${sizeGB.toFixed(2)}GB. Trigger deep_memory_cleanup to optimize performance.`;
+            }
+        } catch (e) {}
+
         return {
-            metrics,
+            metrics: {
+                ...metrics,
+                memoryHealth,
+                maintenanceSuggestion
+            },
             arbiters: {
                 total: arbiters.length,
                 active: arbiters.filter(a => a.status === 'active').length,
                 list: arbiters
+            },
+            capabilities: {
+                discovered: CapabilityRegistry.list(),
+                total: CapabilityRegistry.list().length
             },
             shadowClones: clones,
             daemon,

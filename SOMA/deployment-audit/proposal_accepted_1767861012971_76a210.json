@@ -1,0 +1,22 @@
+{
+  "event": "proposal_accepted",
+  "ts": 1767861012971,
+  "data": {
+    "packageId": "pkg_1767861012611",
+    "result": {
+      "ok": true,
+      "staged": true,
+      "autonomous": true,
+      "commitResult": {
+        "ok": true,
+        "status": "active",
+        "deployResult": {
+          "success": true,
+          "packageId": "pkg_1767861012611",
+          "deploymentFile": "C:\\Users\\barry\\Desktop\\SOMA\\SOMA\\deployment-audit\\deployments\\pkg_1767861012611.json",
+          "timestamp": 1767861012955
+        }
+      }
+    }
+  }
+}

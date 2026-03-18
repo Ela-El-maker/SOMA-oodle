@@ -4,13 +4,10 @@ echo   SOMA CLEAN RESTART PROTOCOL
 echo ===================================================
 echo.
 
-echo [1/4] Killing lingering Node.js processes...
-taskkill /F /IM node.exe /T 2>nul
-if %errorlevel% equ 0 (
-    echo    - Killed node.exe processes.
-) else (
-    echo    - No node.exe processes found or access denied.
-)
+echo [1/4] Killing SOMA Node.js processes (sparing Claude Code)...
+powershell -NoProfile -Command "$killed=0; Get-WmiObject Win32_Process -Filter \"name='node.exe'\" | Where-Object { $_.CommandLine -match 'launcher_ULTRA|start-production|soma' -and $_.CommandLine -notmatch 'claude' } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force -EA 0; $killed++ }; Write-Host \"   - Killed $killed SOMA node process(es).\""
+REM Also kill anything on port 3001 just in case
+powershell -NoProfile -Command "$p=(Get-NetTCPConnection -LocalPort 3001 -State Listen -EA 0).OwningProcess; if($p){Stop-Process -Id $p -Force -EA 0; Write-Host '   - Killed port 3001 owner.'}"
 
 echo [2/4] Killing lingering Electron processes...
 taskkill /F /IM electron.exe /T 2>nul

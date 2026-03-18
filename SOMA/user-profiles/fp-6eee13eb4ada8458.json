@@ -1,0 +1,22 @@
+{
+  "userId": "6eee13eb4ada8458",
+  "sessions": 1,
+  "totalMessages": 4,
+  "avgMsgLength": 7,
+  "questionRatio": 0.25,
+  "vocabRichness": 0.983,
+  "avgWordLength": 5.5,
+  "typicalStyle": "declarative-articulate",
+  "hourHistogram": {
+    "12": 4
+  },
+  "topicFreq": {
+    "architecture": 2
+  },
+  "recentTopics": [
+    "architecture"
+  ],
+  "lastSeen": 1773418770389,
+  "lastUpdated": 1773419323388,
+  "createdAt": 1773418770389
+}

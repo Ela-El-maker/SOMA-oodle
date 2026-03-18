@@ -156,31 +156,15 @@ export class ComputerControlArbiter extends BaseArbiter {
         case 'mouse_move':
           // Move cursor using System.Windows.Forms
           if (action.x !== undefined && action.y !== undefined) {
-            psScript = `
-                 Add-Type -AssemblyName System.Windows.Forms
-                 [System.Windows.Forms.Cursor]::Position = New-Object System.Drawing.Point(${parseInt(action.x)}, ${parseInt(action.y)})
-               `;
+            psScript = `Add-Type -AssemblyName System.Windows.Forms; [System.Windows.Forms.Cursor]::Position = New-Object System.Drawing.Point(${parseInt(action.x)}, ${parseInt(action.y)})`;
           }
           break;
 
         case 'click':
           // Left click using user32.dll mouse_event
-          // 0x02 = MOUSEEVENTF_LEFTDOWN, 0x04 = MOUSEEVENTF_LEFTUP
-          // We move first, then click
           const x = action.x !== undefined ? parseInt(action.x) : 0;
           const y = action.y !== undefined ? parseInt(action.y) : 0;
-          const movePart = (action.x && action.y)
-            ? `[System.Windows.Forms.Cursor]::Position = New-Object System.Drawing.Point(${x}, ${y});`
-            : '';
-
-          psScript = `
-              Add-Type -AssemblyName System.Windows.Forms
-              $sig = '[DllImport("user32.dll")] public static extern void mouse_event(uint dwFlags, uint dx, uint dy, uint dwData, int dwExtraInfo);'
-              $mouse = Add-Type -MemberDefinition $sig -Name Win32Mouse -Namespace Win32Utils -PassThru
-              ${movePart}
-              $mouse::mouse_event(0x02, 0, 0, 0, 0) # Down
-              $mouse::mouse_event(0x04, 0, 0, 0, 0) # Up
-            `;
+          psScript = `Add-Type -AssemblyName System.Windows.Forms; $sig = '[DllImport(\"user32.dll\")] public static extern void mouse_event(uint dwFlags, uint dx, uint dy, uint dwData, int dwExtraInfo);'; $mouse = Add-Type -MemberDefinition $sig -Name Win32Mouse -Namespace Win32Utils -PassThru; [System.Windows.Forms.Cursor]::Position = New-Object System.Drawing.Point(${x}, ${y}); $mouse::mouse_event(0x02, 0, 0, 0, 0); $mouse::mouse_event(0x04, 0, 0, 0, 0);`;
           break;
 
         case 'type':

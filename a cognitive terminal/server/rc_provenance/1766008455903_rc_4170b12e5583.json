@@ -1,0 +1,65 @@
+{
+  "traceId": "rc_4170b12e5583",
+  "ts": "2025-12-17T21:54:15.903Z",
+  "query": "Well, I'm not providing text and actually talking to you via audio. I'm sure the audio is being",
+  "meta": {},
+  "candidates": [
+    {
+      "source": "PROMETHEUS",
+      "text": "Understood. Proceed with your query.\n",
+      "confidence": 0.85,
+      "role": "prometheus"
+    },
+    {
+      "source": "LOGOS",
+      "text": "Okay, I understand. You are communicating with me via audio, and you are aware that the audio is being processed (presumably transcribed and analyzed) to generate text that I can then understand and respond to.\n\nSince I don't have access to the original audio, I am operating solely on the text representation of your speech. My analysis is therefore limited to the information conveyed in the transcribed text.\n\nTo provide a more helpful response, please let me know what you would like me to do with this information. For example, are you:\n\n*   **Testing my ability to understand audio input?**\n*   **Asking about the implications of audio processing?**\n*   **Wanting to discuss privacy concerns related to audio recording?**\n*   **About to ask a question that relies on the fact that you are speaking and not typing?**\n\nThe more context you provide, the better I can assist you.\n",
+      "confidence": 0.85,
+      "role": "logos"
+    },
+    {
+      "source": "AURORA",
+      "text": "Understood! I'm listening and converting your audio to text. I'm ready for your questions or instructions.\n",
+      "confidence": 0.85,
+      "role": "aurora"
+    }
+  ],
+  "fused": {
+    "text": "Okay, I understand. You are communicating with me via audio, and you are aware that the audio is being processed (presumably transcribed and analyzed) to generate text that I can then understand and respond to.\n\nSince I don't have access to the original audio, I am operating solely on the text representation of your speech. My analysis is therefore limited to the information conveyed in the transcribed text.\n\nTo provide a more helpful response, please let me know what you would like me to do with this information. For example, are you:\n\n*   **Testing my ability to understand audio input?**\n*   **Asking about the implications of audio processing?**\n*   **Wanting to discuss privacy concerns related to audio recording?**\n*   **About to ask a question that relies on the fact that you are speaking and not typing?**\n\nThe more context you provide, the better I can assist you.\n",
+    "weights": [
+      {
+        "source": "PROMETHEUS",
+        "norm": 0.32432432432432434,
+        "conf": 0.85
+      },
+      {
+        "source": "LOGOS",
+        "norm": 0.35135135135135126,
+        "conf": 0.85
+      },
+      {
+        "source": "AURORA",
+        "norm": 0.32432432432432434,
+        "conf": 0.85
+      }
+    ],
+    "confidence": 0.8499999999999999,
+    "provenance": [
+      {
+        "source": "PROMETHEUS",
+        "snippet": "Understood. Proceed with your query.\n",
+        "confidence": 0.85
+      },
+      {
+        "source": "LOGOS",
+        "snippet": "Okay, I understand. You are communicating with me via audio, and you are aware that the audio is being processed (presumably transcribed and analyzed) to generate text that I can then understand and r",
+        "confidence": 0.85
+      },
+      {
+        "source": "AURORA",
+        "snippet": "Understood! I'm listening and converting your audio to text. I'm ready for your questions or instructions.\n",
+        "confidence": 0.85
+      }
+    ]
+  },
+  "iter": 0
+}

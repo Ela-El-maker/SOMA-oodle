@@ -1,0 +1,8 @@
+{
+  "name": "Synapse: Soma & Pathways",
+  "description": "A decentralized-style AI chat interface featuring Soma, the neural AI, and Pathways for encrypted P2P-style communication via QR codes.",
+  "requestFramePermissions": [
+    "camera",
+    "microphone"
+  ]
+}

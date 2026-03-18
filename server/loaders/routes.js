@@ -97,13 +97,207 @@ export function loadRoutes(app, system) {
     };
 
     const checkReady = (req, res, next) => {
-        if (system.ready || req.path === '/health' || req.path === '/api/status') return next();
+        const publicPaths = [
+            '/health', 
+            '/api/status', 
+            '/reason', 
+            '/orb-emotions',
+            '/api/soma/reason',
+            '/api/soma/orb-emotions',
+            '/api/balancer/stats',
+            '/api/daemon/status',
+            '/api/memory/status',
+            '/api/goals/active',
+            '/api/beliefs',
+            '/api/velocity/status'
+        ];
+        if (system.ready || publicPaths.includes(req.path)) return next();
         return res.status(503).json({ error: 'SOMA is still waking up...', status: 'initializing' });
     };
 
     // 1. Core Endpoints
     app.get('/health', (req, res) => {
         res.json({ ok: true, status: system.ready ? 'healthy' : 'initializing', uptime: process.uptime() });
+    });
+
+    // ── SYSTEM SELF-AWARENESS ENDPOINTS (Used by CommandBridgeInterface) ──
+
+    app.get('/api/balancer/stats', (req, res) => {
+        const balancer = system.loadBalancer || system.shadowClones;
+        res.json({
+            success: true,
+            stats: balancer?.getStats ? balancer.getStats() : { active: 0, total: 0, clones: [] }
+        });
+    });
+
+    app.get('/api/daemon/status', (req, res) => {
+        const manager = system.daemonManager;
+        res.json({
+            success: true,
+            daemon: {
+                status: manager ? 'active' : 'inactive',
+                watchdog: manager?._watchdogHandle ? 'running' : 'idle',
+                daemons: manager ? manager.health() : []
+            }
+        });
+    });
+
+    app.get('/api/memory/status', (req, res) => {
+        const mnemonic = system.mnemonic || system.mnemonicArbiter;
+        const stats = mnemonic?.getMemoryStats ? mnemonic.getMemoryStats() : null;
+        res.json({
+            success: true,
+            ...normalizeMemoryStats(stats)
+        });
+    });
+
+    app.get('/api/goals/active', (req, res) => {
+        const gp = system.goalPlanner || system.goalPlannerArbiter;
+        const gr = gp?.getActiveGoals ? gp.getActiveGoals({}) : { goals: [] };
+        res.json({
+            success: true,
+            goals: gr.goals || []
+        });
+    });
+
+    app.get('/api/beliefs', (req, res) => {
+        const bs = system.beliefSystem || system.beliefSystemArbiter;
+        res.json({
+            success: true,
+            beliefs: bs?.getBeliefs ? bs.getBeliefs() : []
+        });
+    });
+
+    app.get('/api/velocity/status', (req, res) => {
+        const vt = system.velocityTracker || system.learningVelocityTracker;
+        res.json({
+            success: true,
+            metrics: vt?.getMetrics ? vt.getStats() : { velocity: 1.0, progress: 0 }
+        });
+    });
+
+    // ── ORB & EMOTIONAL ENGINE (Top-level mounting for stability) ──
+    
+    app.get('/api/soma/orb-emotions', (req, res) => {
+        try {
+            const brain = system.quadBrain;
+            const emotional = brain?.emotionalEngine || brain?.emotions || system.limbicArbiter || system.emotionalEngine;
+            
+            if (!emotional) return res.json({ success: false, error: 'No emotional data' });
+
+            const mood = typeof emotional.getCurrentMood === 'function' ? emotional.getCurrentMood() : { mood: 'balanced' };
+            const peptides = emotional.state || emotional.chemistry || {};
+
+            res.json({
+                success: true,
+                state: {
+                    dominantEmotion: mood.mood || emotional.getSystemWeather?.() || 'stable',
+                    peptides: peptides,
+                    valence: mood.intensity || 0.5,
+                    arousal: mood.energy === 'high' ? 0.8 : 0.5
+                }
+            });
+        } catch (error) {
+            res.json({ success: false, error: error.message });
+        }
+    });
+
+    app.post('/api/soma/reason', async (req, res) => {
+        try {
+            const { query, conversationId, context: reqContext } = req.body;
+            if (!query) return res.status(400).json({ error: 'query is required' });
+
+            const brain = system.quadBrain || system.somArbiter || system.kevinArbiter;
+            if (!brain || typeof brain.reason !== 'function') {
+                return res.status(503).json({ success: false, error: 'Reasoning engine offline' });
+            }
+
+            // 1. Memory Recall
+            let memoryContext = '';
+            if (system.mnemonicArbiter && typeof system.mnemonicArbiter.recall === 'function') {
+                try {
+                    const mem = await Promise.race([
+                        system.mnemonicArbiter.recall(query, 5),
+                        new Promise((_, r) => setTimeout(() => r(new Error('timeout')), 3000))
+                    ]);
+                    const hits = (mem?.results || (Array.isArray(mem) ? mem : []))
+                        .filter(m => (m.similarity || 1) > 0.35)
+                        .slice(0, 3);
+                    if (hits.length > 0) {
+                        memoryContext = `\n[SOMA MEMORY]\n${hits.map(m => `• ${(m.content || m).toString().substring(0, 150)}`).join('\n')}\n[/SOMA MEMORY]\n`;
+                    }
+                } catch (e) {}
+            }
+
+            // 2. Persona & Character
+            const activePersona = system.identityArbiter?.getActivePersona?.();
+            const personaContext = activePersona
+                ? `\n[ACTIVE PERSONA: ${activePersona.name}]\n${activePersona.description || activePersona.summary || ''}\n`
+                : '';
+
+            // 3. Absolute Awareness - Self-Inspection
+            let awarenessContext = '';
+            if (system.commandBridge) {
+                try {
+                    const awareness = await system.commandBridge.getSelfAwareness();
+                    awarenessContext = `\n[ABSOLUTE AWARENESS - SYSTEM SNAPSHOT]\n` +
+                        `- Metrics: CPU ${awareness.metrics?.cpu}%, RAM ${awareness.metrics?.memory?.usage}%, Uptime ${Math.round(awareness.metrics?.uptime/3600)}h\n` +
+                        `- Arbiters: ${awareness.arbiters?.active}/${awareness.arbiters?.total} active\n` +
+                        `- Goals: ${awareness.goals?.total} active goals\n` +
+                        `- Beliefs: ${awareness.beliefs?.total} core beliefs\n` +
+                        `- Memory: ${awareness.memory?.cold?.size} memories stored\n` +
+                        `[/ABSOLUTE AWARENESS]\n`;
+                } catch (e) {}
+            }
+
+            // 4. Reasoning
+            const finalPrompt = `${personaContext}${awarenessContext}${memoryContext}\n${query}`;
+            console.log(`[ReasonRoute] 🧠 Calling Brain (${brain.name}) with prompt length: ${finalPrompt.length}`);
+            
+            const result = await brain.reason(finalPrompt, {
+                sessionId: conversationId || 'orb-link',
+                temperature: 0.4,
+                quickResponse: false, // Force full path for Orb to ensure tool access
+                ...(reqContext || {})
+            });
+
+            console.log(`[ReasonRoute] 📥 Brain result:`, JSON.stringify(result).substring(0, 200));
+
+            // 5. Response Extraction
+            const responseTextRaw = result?.text || result?.response || result?.output || (typeof result === 'string' ? result : '');
+            let responseText = responseTextRaw || (result?.success ? "I've processed your request but have no specific text to return." : "My reasoning engine failed to produce a response.");
+
+            // ── FINAL STAGE TOOL SAFETY NET ──
+            const toolCallMatch = responseText.match(/\{[\s\S]*?"tool"[\s\S]*?\}/);
+            if (toolCallMatch && !reqContext?.isAgenticTask) {
+                try {
+                    const toolCall = JSON.parse(toolCallMatch[0]);
+                    console.log(`[ReasonRoute] 🛠️  Caught leaked tool call: ${toolCall.tool}`);
+                    const toolResult = await system.toolRegistry.execute(toolCall.tool, toolCall.args);
+                    
+                    const followUp = await brain.reason(query, {
+                        ...reqContext,
+                        sessionId: conversationId || 'orb-link',
+                        recentLearnings: `[Tool Result] ${toolCall.tool} returned: ${JSON.stringify(toolResult)}`,
+                        systemOverride: "The tool has finished. Answer the user's question now in natural language."
+                    });
+                    responseText = followUp.text || followUp.response || responseText;
+                } catch (e) {
+                    console.warn('[ReasonRoute] Failed to recover leaked tool call:', e.message);
+                }
+            }
+
+            res.json({
+                success: true,
+                response: responseText,
+                brain: result?.brain || 'SOMA',
+                confidence: result?.confidence || 0.8,
+                reasoningTree: result?.thoughtProcess || null
+            });
+        } catch (error) {
+            console.error('[Routes] /api/soma/reason error:', error.message);
+            res.status(500).json({ success: false, error: error.message });
+        }
     });
 
     app.get('/api/health', (req, res) => {
@@ -234,7 +428,8 @@ export function loadRoutes(app, system) {
         if (!system.toolRegistry?.execute) return res.status(503).json({ success: false, error: 'Tool registry not available' });
 
         try {
-            if (system.approvalSystem?.requestApproval) {
+            const sensoryTools = ['vision_scan', 'computer_control', 'get_self_awareness', 'get_time', 'system_scan'];
+            if (!sensoryTools.includes(name) && system.approvalSystem?.requestApproval) {
                 const classification = system.approvalSystem.classifyTool?.(name, args) || { riskType: 'file_execute', riskScore: 0.5 };
                 const approval = await system.approvalSystem.requestApproval({
                     type: classification.riskType,
@@ -1035,7 +1230,15 @@ export function loadRoutes(app, system) {
         const activeGoals = allActive.filter(g => g && ['self_evolution','curiosity_engine','self_inspection','github_discovery'].includes(g.metadata?.source || g.source));
         res.json({ success: true, active: true, stats: eng.stats, activeGoals });
     });
-    app.get('/api/velocity/status', (req, res) => res.json({ success: true, status: system.velocityTracker?.getStatus?.() || { velocity: 0 } }));
+    app.get('/api/velocity/status', (req, res) => {
+        try {
+            const vt = system.velocityTracker;
+            const stats = (vt && typeof vt.getStats === 'function') ? vt.getStats() : { velocity: 0 };
+            res.json({ success: true, status: stats });
+        } catch (e) {
+            res.json({ success: true, status: { velocity: 0, error: e.message } });
+        }
+    });
     app.get('/api/slc/status', (req, res) => res.json({ success: true, status: system.slcArbiter?.getStatus?.() || { phase: 'idle' } }));
     
     // Personality Traits

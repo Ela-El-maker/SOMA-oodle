@@ -1,0 +1,14 @@
+{
+  "timestamp": 1767863004502,
+  "category": "llm_training",
+  "session": "nighttime_learning",
+  "metrics": {
+    "totalTrainingSessions": 0,
+    "gpuSessions": 0,
+    "cpuSessions": 0,
+    "averageGPUSpeed": 0,
+    "averageCPUSpeed": 0,
+    "speedupRatio": 0,
+    "totalSamplesProcessed": 0
+  }
+}

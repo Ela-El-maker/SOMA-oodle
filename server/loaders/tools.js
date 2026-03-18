@@ -202,6 +202,7 @@ export async function loadTools(systemContext = {}) {
     // GIT TOOLS
     toolRegistry.registerTool({
         name: 'git_status',
+        dependencies: ['terminal_exec'],
         description: 'Get git repository status',
         parameters: {},
         execute: async () => {
@@ -217,6 +218,7 @@ export async function loadTools(systemContext = {}) {
 
     toolRegistry.registerTool({
         name: 'git_diff',
+        dependencies: ['terminal_exec'],
         description: 'Show git diff of changes',
         parameters: { file: 'string (optional, shows all if not specified)' },
         execute: async ({ file }) => {
@@ -232,6 +234,7 @@ export async function loadTools(systemContext = {}) {
 
     toolRegistry.registerTool({
         name: 'git_log',
+        dependencies: ['terminal_exec'],
         description: 'View recent git commits',
         parameters: { count: 'number (default 10)' },
         execute: async ({ count }) => {
@@ -305,6 +308,7 @@ export async function loadTools(systemContext = {}) {
     // PACKAGE MANAGEMENT
     toolRegistry.registerTool({
         name: 'npm_command',
+        dependencies: ['terminal_exec'],
         description: 'Run npm commands (install, list, etc.)',
         parameters: { command: 'string (e.g., "install express", "list --depth=0")' },
         execute: async ({ command }) => {
@@ -587,6 +591,155 @@ export async function loadTools(systemContext = {}) {
     });
 
     toolRegistry.registerTool({
+        name: 'deep_memory_cleanup',
+        description: 'Perform a deep cognitive cleanup. Purges massive state dumps and optimizes the memory database. Use this if the system feels slow or Constipated.',
+        parameters: {},
+        execute: async () => {
+            const liveSystem = getSystem();
+            const mnemonic = liveSystem.mnemonic || liveSystem.mnemonicArbiter;
+            if (!mnemonic || typeof mnemonic.deepCleanup !== 'function') {
+                return 'MnemonicArbiter deep cleanup not available';
+            }
+            try {
+                const result = await mnemonic.deepCleanup();
+                return {
+                    success: true,
+                    message: `Deep cleanup complete. Purged ${result.purged} garbage entries.`,
+                    stats: result
+                };
+            } catch (e) {
+                return `Cleanup failed: ${e.message}`;
+            }
+        }
+    });
+
+    toolRegistry.registerTool({
+        name: 'reload_tools',
+        description: 'Reload the ToolRegistry from disk. Use this after creating new tools.',
+        parameters: {},
+        execute: async () => {
+            try {
+                await loadTools(getSystem());
+                return "Tools reloaded successfully.";
+            } catch (e) {
+                return `Reload failed: ${e.message}`;
+            }
+        }
+    });
+
+    toolRegistry.registerTool({
+        name: 'create_new_tool',
+        description: 'Synthesize and register a new SOMA tool/skill on the fly. Provide a precise tool name and what it should do.',
+        parameters: { toolName: 'string', description: 'string' },
+        execute: async ({ toolName, description }) => {
+            const liveSystem = getSystem();
+            if (!liveSystem.toolCreator) return 'ToolCreatorArbiter not available';
+            try {
+                const result = await liveSystem.toolCreator.createTool(toolName, description);
+                return result;
+            } catch (e) { return `Tool creation failed: ${e.message}`; }
+        }
+    });
+
+    toolRegistry.registerTool({
+        name: 'vision_scan',
+        dependencies: ['computer_control'],
+        description: 'Analyze an image or the current screen for objects, text, or patterns. Returns labels and pixel coordinates.',
+        parameters: { source: 'string (optional path or "screen")', threshold: 'number (0-1, default 0.7)' },
+        execute: async ({ source, threshold }) => {
+            const liveSystem = getSystem();
+            const vision = liveSystem.visionArbiter || liveSystem.visionProcessing;
+            const control = liveSystem.computerControl;
+            
+            if (!vision) return 'VisionProcessingArbiter not available';
+            
+            try {
+                let target = source;
+                if (!target || target === 'screen') {
+                    if (!control) return 'ComputerControl needed for screen capture';
+                    const cap = await control.captureScreen();
+                    if (!cap.success) return `Capture failed: ${cap.error}`;
+                    target = cap.imagePath;
+                }
+                
+                const result = await vision.detectObjects(target, threshold || 0.7);
+                return {
+                    success: true,
+                    objects: result.objects,
+                    imagePath: target,
+                    summary: `Found ${result.count} objects.`
+                };
+            } catch (e) { return `Vision scan failed: ${e.message}`; }
+        }
+    });
+
+    toolRegistry.registerTool({
+        name: 'computer_control',
+        description: 'Directly control the mouse, keyboard, or browser. Use labels from vision_scan for precise clicking.',
+        parameters: { 
+            actionType: 'string (mouse_move|click|type|browser)', 
+            params: 'object (action-specific parameters e.g. {x, y, text, url, selector})' 
+        },
+        execute: async ({ actionType, params }) => {
+            const liveSystem = getSystem();
+            const control = liveSystem.computerControl;
+            if (!control) return 'ComputerControlArbiter not available';
+            
+            try {
+                if (actionType === 'browser') {
+                    return await control.handleBrowserAction(params);
+                } else {
+                    // mouse_move, click, type
+                    return await control.executeAction({ type: actionType, ...params });
+                }
+            } catch (e) { return `Control action failed: ${e.message}`; }
+        }
+    });
+
+    toolRegistry.registerTool({
+        name: 'autonomous_computer_use',
+        dependencies: ['vision_scan', 'computer_control'],
+        description: 'Advanced: Perform a visual task on the computer. SOMA will scan the screen, identify targets, and interact autonomously. Use for complex UI tasks.',
+        parameters: { taskDescription: 'string' },
+        execute: async ({ taskDescription }) => {
+            const liveSystem = getSystem();
+            const vision = liveSystem.visionArbiter || liveSystem.visionProcessing;
+            const control = liveSystem.computerControl;
+            if (!vision || !control) return 'Vision or Control arbiters missing';
+
+            try {
+                console.log(`[AutonomousControl] Starting task: ${taskDescription}`);
+                // 1. Initial Scan
+                const cap = await control.captureScreen();
+                const scan = await vision.detectObjects(cap.imagePath, 0.6);
+                
+                // 2. Logic (Simplified for tool output - the LLM will drive the loop)
+                return {
+                    success: true,
+                    message: "Initial screen scan complete. I see several UI elements.",
+                    detected: scan.objects.map(o => o.label),
+                    screenshot: cap.imagePath,
+                    instruction: "Use computer_control with these labels to proceed with the task."
+                };
+            } catch (e) { return `Autonomous task failed: ${e.message}`; }
+        }
+    });
+
+    toolRegistry.registerTool({
+        name: 'perform_self_surgery',
+        dependencies: ['edit_file'],
+        description: 'DANGEROUS: Modify SOMA core files by stepping outside the main process. Use for risky self-modifications that might crash the server. Delegates to an independent external MAX instance.',
+        parameters: { filepath: 'string', request: 'string' },
+        execute: async ({ filepath, request }) => {
+            const liveSystem = getSystem();
+            if (!liveSystem.engineeringSwarm) return 'EngineeringSwarmArbiter not available';
+            try {
+                return await liveSystem.engineeringSwarm.performSelfSurgery(filepath, request);
+            } catch (e) { return `Self-surgery failed: ${e.message}`; }
+        }
+    });
+
+    toolRegistry.registerTool({
         name: 'create_goal',
         description: 'Create a multi-step goal with the GoalPlanner',
         parameters: { goal: 'string', steps: 'string (comma-separated steps)' },
@@ -777,7 +930,33 @@ Trust: ${state.trust?.toFixed(3)}, Sadness: ${state.sadness?.toFixed(3)}, Anger:
         }
     });
 
+    toolRegistry.registerTool({
+        name: 'get_self_awareness',
+        description: 'Get a comprehensive snapshot of your own system state (metrics, active arbiters, goals, beliefs, and architecture).',
+        parameters: {},
+        execute: async () => {
+            const liveSystem = getSystem();
+            if (!liveSystem.commandBridge) return 'Command Bridge interface not available';
+            try {
+                const awareness = await liveSystem.commandBridge.getSelfAwareness();
+                return awareness;
+            } catch (e) { return `Self-awareness check failed: ${e.message}`; }
+        }
+    });
+
     const totalTools = toolRegistry.tools ? toolRegistry.tools.size : 0;
-    console.log(`      ✅ ToolRegistry ready (${totalTools} tools loaded - Full SOMA Architecture Connected)`);
+    
+    // Final Validation
+    try {
+        if (toolRegistry.validateDependencies) {
+            toolRegistry.validateDependencies();
+            console.log(`      ✅ ToolRegistry ready (${totalTools} tools loaded - Dependencies Verified)`);
+        } else {
+            console.log(`      ✅ ToolRegistry ready (${totalTools} tools loaded)`);
+        }
+    } catch (e) {
+        console.warn(`      ⚠️  ToolRegistry dependency error: ${e.message}`);
+    }
+
     return toolRegistry;
 }

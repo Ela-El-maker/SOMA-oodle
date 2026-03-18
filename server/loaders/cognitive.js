@@ -169,7 +169,12 @@ export async function loadCognitiveSystems(toolRegistry = null) {
     system.museEngine = new MuseEngine({ name: 'MuseEngine', messageBroker, quadBrain });
     system.analytics = new PerformanceAnalytics({ rootPath: process.cwd() });
     system.velocityTracker = new LearningVelocityTracker(messageBroker, { name: 'VelocityTracker' });
-    system.simulation = new SimulationArbiter({ name: 'Simulation', messageBroker });
+    // Gate physics simulation — it feeds UniversalImpulser which wrote 57k files and spiked to 2GB RAM
+    if (process.env.SOMA_LOAD_SIMULATION === 'true') {
+        system.simulation = new SimulationArbiter({ name: 'Simulation', messageBroker });
+    } else {
+        console.log('      🎮 Physics Simulation: SKIPPED (set SOMA_LOAD_SIMULATION=true to enable)');
+    }
 
     await Promise.all([
         initIfPossible(system.goalPlanner, 'GoalPlanner'),
@@ -177,7 +182,7 @@ export async function loadCognitiveSystems(toolRegistry = null) {
         initIfPossible(system.museEngine, 'MuseEngine'),
         initIfPossible(system.analytics, 'PerformanceAnalytics'),
         initIfPossible(system.velocityTracker, 'VelocityTracker'),
-        initIfPossible(system.simulation, 'Simulation')
+        ...(system.simulation ? [initIfPossible(system.simulation, 'Simulation')] : [])
     ]);
 
     // Wire goalPlanner into the brain so goal state is available inside every reason() call.

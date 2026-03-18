@@ -26,7 +26,7 @@
     "preflight": "node core/PreFlightCheck.js",
     "safe-start": "node core/PreFlightCheck.js && node start-dev.cjs",
     "health": "node health-check.cjs",
-    "kill": "taskkill /F /IM electron.exe /T 2>nul & powershell -NoProfile -Command \"Get-NetTCPConnection -LocalPort 3001,8081 -ErrorAction SilentlyContinue | Select-Object -ExpandProperty OwningProcess | Sort-Object -Unique | ForEach-Object { taskkill /F /PID $_ 2>nul }\"",
+    "kill": "taskkill /F /IM electron.exe /T 2>nul & powershell -NoProfile -Command \"Get-NetTCPConnection -LocalPort 3001,8081 -ErrorAction SilentlyContinue | Select-Object -ExpandProperty OwningProcess | Sort-Object -Unique | ForEach-Object { Stop-Process -Id $_ -Force -ErrorAction SilentlyContinue }\"",
     "restart": "npm run kill && timeout /t 2 /nobreak && npm run start:all",
     "cli": "node cli/soma-cli.mjs"
   },
@@ -84,6 +84,7 @@
     "@react-three/fiber": "8.16.8",
     "@xenova/transformers": "^2.17.2",
     "better-sqlite3": "^12.6.2",
+    "ajv": "^8.12.0",
     "chalk": "^5.6.2",
     "cheerio": "^1.0.0-rc.12",
     "chokidar": "^5.0.0",

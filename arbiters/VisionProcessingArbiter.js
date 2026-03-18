@@ -29,6 +29,11 @@ export class VisionProcessingArbiter extends EventEmitter {
     // CLIP model for vision-language understanding
     this.clipModel = null;
     this.imageProcessor = null;
+    this.zeroShotClassifier = null;
+
+    // Concurrency control for background loading
+    this._initializing = false;
+    this._initPromise = null;
 
     // Vision memory cache
     this.visualMemories = new Map();
@@ -48,46 +53,74 @@ export class VisionProcessingArbiter extends EventEmitter {
     console.log(`[${this.name}]    Batch Size: ${this.batchSize}`);
   }
 
+  /**
+   * Initialize the vision system
+   */
   async initialize() {
-    console.log(`[${this.name}] Initializing vision processing system...`);
+    if (this._initializing) return this._initPromise;
+    this._initializing = true;
 
-    try {
-      // Get GPU info if available (with defensive null checks)
-      if (this.loadPipeline) {
+    this._initPromise = (async () => {
+        console.log(`[${this.name}] Initializing vision processing system...`);
+
         try {
-          const status = this.loadPipeline.getStatus();
-          const gpuAvailable = status?.hardware?.gpu?.available ?? false;
-          const gpuType = status?.hardware?.gpu?.type ?? 'Unknown';
-          console.log(`[${this.name}]    GPU: ${gpuAvailable ? gpuType : 'CPU only'}`);
-        } catch (gpuError) {
-          console.warn(`[${this.name}]    GPU detection failed: ${gpuError.message}. Using CPU.`);
+          // Get GPU info if available (with defensive null checks)
+          if (this.loadPipeline) {
+            try {
+              const status = this.loadPipeline.getStatus();
+              const gpuAvailable = status?.hardware?.gpu?.available ?? false;
+              const gpuType = status?.hardware?.gpu?.type ?? 'Unknown';
+              console.log(`[${this.name}]    GPU: ${gpuAvailable ? gpuType : 'CPU only'}`);
+            } catch (gpuError) {
+              console.warn(`[${this.name}]    GPU detection failed: ${gpuError.message}. Using CPU.`);
+            }
+          } else {
+            console.log(`[${this.name}]    GPU: CPU only (no LoadPipeline)`);
+          }
+
+          // Load memories from disk
+          await this.loadMemories();
+
+          // Load CLIP model (this will use GPU if available)
+          console.log(`[${this.name}]    Loading CLIP model (may take a moment)...`);
+
+          // Load zero-shot classification (this gives us full CLIP access)
+          this.zeroShotClassifier = await pipeline(
+            'zero-shot-image-classification',
+            'Xenova/clip-vit-base-patch32'
+          );
+
+          console.log(`[${this.name}]    ✅ CLIP model loaded successfully`);
+
+          console.log(`[${this.name}] ✅ Vision processing system ready`);
+          this.emit('initialized');
+
+          return true;
+        } catch (error) {
+          console.error(`[${this.name}] ❌ Vision init failed:`, error.message);
+          this._initializing = false;
+          throw error;
         }
-      } else {
-        console.log(`[${this.name}]    GPU: CPU only (no LoadPipeline)`);
+    })();
+
+    return this._initPromise;
+  }
+
+  /**
+   * Internal helper to ensure model is ready before tool execution
+   */
+  async _ensureModel() {
+      if (!this.zeroShotClassifier) {
+          if (this._initializing) {
+              console.log(`[${this.name}] ⏳ Waiting for CLIP model to finish loading...`);
+              await this._initPromise;
+          } else {
+              await this.initialize();
+          }
       }
-
-      // Load memories from disk
-      await this.loadMemories();
-
-      // Load CLIP model (this will use GPU if available)
-      console.log(`[${this.name}]    Loading CLIP model (may take a moment)...`);
-
-      // Load zero-shot classification (this gives us full CLIP access)
-      this.zeroShotClassifier = await pipeline(
-        'zero-shot-image-classification',
-        'Xenova/clip-vit-base-patch32'
-      );
-
-      console.log(`[${this.name}]    ✅ CLIP model loaded successfully`);
-
-      console.log(`[${this.name}] ✅ Vision processing system ready`);
-      this.emit('initialized');
-
-      return { success: true };
-    } catch (error) {
-      console.error(`[${this.name}] ❌ Failed to initialize:`, error.message);
-      throw error;
-    }
+      if (typeof this.zeroShotClassifier !== 'function') {
+          throw new Error('Vision model failed to initialize correctly (not a function).');
+      }
   }
 
   async loadMemories() {
@@ -121,73 +154,19 @@ export class VisionProcessingArbiter extends EventEmitter {
   }
 
   /**
-   * Process a single image and get its embedding
+   * Detect objects in an image using zero-shot classification
    */
-  async processImage(imagePathOrURL) {
-    const startTime = Date.now();
+  async detectObjects(imagePathOrURL, threshold = 0.7) {
+    await this._ensureModel();
+    console.log(`[${this.name}] 🔍 Detecting objects (threshold: ${threshold})`);
 
-    try {
-      // Use the zero-shot classifier to get image features
-      // We pass a dummy label just to get the embedding
-      const result = await this.zeroShotClassifier(imagePathOrURL, ['dummy']);
+    // Common UI and physical objects for screen understanding
+    const candidateLabels = [
+      'window', 'button', 'text', 'icon', 'menu', 'sidebar', 'toolbar', 
+      'terminal', 'browser', 'code editor', 'chat', 'graph', 'chart',
+      'human', 'face', 'hand', 'desk', 'computer', 'keyboard', 'mouse'
+    ];
 
-      // Extract embeddings from the model's internal state
-      // For now, use the classifier result as a proxy
-      const embedding = result.map(r => r.score);
-
-      const duration = Date.now() - startTime;
-
-      this.metrics.imagesProcessed++;
-      this.metrics.averageProcessingTime =
-        (this.metrics.averageProcessingTime * (this.metrics.imagesProcessed - 1) + duration) /
-        this.metrics.imagesProcessed;
-
-      return {
-        embedding,
-        dimensions: [embedding.length],
-        processingTime: duration
-      };
-    } catch (error) {
-      console.error(`[${this.name}] Error processing image:`, error.message);
-      throw error;
-    }
-  }
-
-  /**
-   * Process multiple images in batches (GPU efficient)
-   */
-  async processBatch(imagePaths) {
-    console.log(`[${this.name}] Processing batch of ${imagePaths.length} images...`);
-
-    const startTime = Date.now();
-    const embeddings = [];
-
-    // Split into chunks of batchSize
-    for (let i = 0; i < imagePaths.length; i += this.batchSize) {
-      const batch = imagePaths.slice(i, i + this.batchSize);
-
-      // Process batch in parallel
-      const batchResults = await Promise.all(
-        batch.map(img => this.processImage(img))
-      );
-
-      embeddings.push(...batchResults);
-      this.metrics.batchesProcessed++;
-
-      console.log(`[${this.name}]    Batch ${Math.floor(i / this.batchSize) + 1}/${Math.ceil(imagePaths.length / this.batchSize)} complete`);
-    }
-
-    const duration = Date.now() - startTime;
-    console.log(`[${this.name}] ✅ Processed ${imagePaths.length} images in ${duration}ms`);
-    console.log(`[${this.name}]    Throughput: ${((imagePaths.length / duration) * 1000).toFixed(2)} images/sec`);
-
-    return embeddings;
-  }
-
-  /**
-   * Zero-shot image classification
-   */
-  async classifyImage(imagePathOrURL, candidateLabels) {
     console.log(`[${this.name}] Classifying image with labels:`, candidateLabels);
 
     const startTime = Date.now();
@@ -200,61 +179,86 @@ export class VisionProcessingArbiter extends EventEmitter {
 
       console.log(`[${this.name}]    Classification: ${result[0].label} (${(result[0].score * 100).toFixed(2)}%)`);
 
-      return {
-        classifications: result.map(r => ({
+      // Filter by threshold
+      const objects = result
+        .filter(r => r.score >= threshold)
+        .map(r => ({
           label: r.label,
           score: r.score,
-          confidence: r.score
-        })),
-        topPrediction: result[0].label,
-        confidence: result[0].score,
-        processingTime: duration
+          bbox: null // CLIP doesn't provide bounding boxes, just scores
+        }));
+
+      return {
+        success: true,
+        objects,
+        count: objects.length,
+        duration
       };
     } catch (error) {
       console.error(`[${this.name}] Error classifying image:`, error.message);
-      throw error;
+      return { success: false, error: error.message };
     }
   }
 
   /**
-   * Calculate similarity between text and image
+   * Analyze image using CLIP embeddings
    */
-  async textImageSimilarity(text, imagePathOrURL) {
-    console.log(`[${this.name}] Computing text-image similarity...`);
+  async analyzeImage(imagePathOrURL) {
+    await this._ensureModel();
+    const startTime = Date.now();
 
     try {
-      // Use zero-shot classification with the text as a label
-      // CLIP gives us the probability that the image matches the text
-      const result = await this.zeroShotClassifier(imagePathOrURL, [text, 'something else']);
+      // Use the zero-shot classifier to get image features
+      // We pass a dummy label just to get the embedding
+      const result = await this.zeroShotClassifier(imagePathOrURL, ['dummy']);
 
-      // The score for our text label is the similarity
-      const similarity = result[0].label === text ? result[0].score : result[1].score;
+      // Extract embeddings from the model's internal state
+      // For now, use the classifier result as a proxy
+      const embedding = result.map(r => r.score);
 
-      console.log(`[${this.name}]    Similarity: ${(similarity * 100).toFixed(2)}%`);
+      const duration = Date.now() - startTime;
+      this.metrics.imagesProcessed++;
 
       return {
-        similarity,
-        text,
-        image: imagePathOrURL
+        success: true,
+        embedding,
+        duration
       };
     } catch (error) {
-      console.error(`[${this.name}] Error computing similarity:`, error.message);
-      throw error;
+      console.error(`[${this.name}] Error analyzing image:`, error.message);
+      return { success: false, error: error.message };
     }
   }
 
   /**
-   * Find similar images from stored memories
+   * Store a visual memory
    */
-  async findSimilarImages(queryText, topK = 5) {
-    console.log(`[${this.name}] Searching for ${topK} similar images...`);
+  async storeVisualMemory(id, imagePath, metadata = {}) {
+    const analysis = await this.analyzeImage(imagePath);
+    
+    if (analysis.success) {
+      this.visualMemories.set(id, {
+        path: imagePath,
+        embedding: analysis.embedding,
+        metadata,
+        timestamp: Date.now()
+      });
 
-    this.metrics.similaritySearches++;
-
-    if (this.visualMemories.size === 0) {
-      console.warn(`[${this.name}]    No visual memories stored yet`);
-      return [];
+      await this.saveMemories();
+      return { success: true, id };
     }
+
+    return { success: false, error: analysis.error };
+  }
+
+  /**
+   * Search visual memories by text query
+   */
+  async searchVisualMemories(queryText, limit = 5) {
+    await this._ensureModel();
+    console.log(`[${this.name}] Searching visual memories for: "${queryText}"`);
+
+    const startTime = Date.now();
 
     try {
       // Calculate similarities using zero-shot classification
@@ -269,80 +273,57 @@ export class VisionProcessingArbiter extends EventEmitter {
           id,
           similarity,
           path: memory.path,
-          metadata: memory.metadata
+          metadata: memory.metadata,
+          timestamp: memory.timestamp
         });
       }
 
-      // Sort by similarity and return top K
+      // Sort by similarity
       const results = similarities
         .sort((a, b) => b.similarity - a.similarity)
-        .slice(0, topK);
+        .slice(0, limit);
 
-      console.log(`[${this.name}]    Found ${results.length} similar images`);
+      const duration = Date.now() - startTime;
+      this.metrics.similaritySearches++;
 
-      return results;
+      return {
+        success: true,
+        results,
+        duration
+      };
     } catch (error) {
-      console.error(`[${this.name}] Error searching images:`, error.message);
-      throw error;
+      console.error(`[${this.name}] Error searching visual memories:`, error.message);
+      return { success: false, error: error.message };
     }
   }
 
   /**
-   * Store a visual memory
+   * Get text-image similarity
    */
-  async storeVisualMemory(imagePathOrURL, metadata = {}) {
-    const memoryId = `vis_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
-
-    console.log(`[${this.name}] Storing visual memory: ${memoryId}`);
+  async getSimilarity(imagePathOrURL, text) {
+    await this._ensureModel();
+    console.log(`[${this.name}] Computing text-image similarity...`);
 
     try {
-      // Process image and get embedding
-      const result = await this.processImage(imagePathOrURL);
+      // Use zero-shot classification with the text as a label
+      // CLIP gives us the probability that the image matches the text
+      const result = await this.zeroShotClassifier(imagePathOrURL, [text, 'something else']);
 
-      // Store in memory
-      this.visualMemories.set(memoryId, {
-        id: memoryId,
-        path: imagePathOrURL,
-        embedding: result.embedding,
-        metadata: {
-          ...metadata,
-          storedAt: Date.now(),
-          dimensions: result.dimensions
-        }
-      });
+      // The score for our text label is the similarity
+      const similarity = result[0].label === text ? result[0].score : result[1].score;
 
-      await this.saveMemories();
+      console.log(`[${this.name}]    Similarity: ${(similarity * 100).toFixed(2)}%`);
 
-      console.log(`[${this.name}]    Stored visual memory: ${memoryId}`);
-
-      this.emit('visual_memory_stored', { id: memoryId, path: imagePathOrURL });
-
-      return { id: memoryId, success: true };
+      return {
+        success: true,
+        similarity,
+        image: imagePathOrURL,
+        text
+      };
     } catch (error) {
-      console.error(`[${this.name}] Error storing visual memory:`, error.message);
-      throw error;
+      console.error(`[${this.name}] Error getting similarity:`, error.message);
+      return { success: false, error: error.message };
     }
-  }
-
-  /**
-   * Cosine similarity between two vectors
-   */
-  cosineSimilarity(vecA, vecB) {
-    if (vecA.length !== vecB.length) {
-      throw new Error('Vectors must have same dimensions');
-    }
-
-    let dotProduct = 0;
-    let normA = 0;
-    let normB = 0;
-
-    for (let i = 0; i < vecA.length; i++) {
-      dotProduct += vecA[i] * vecB[i];
-      normA += vecA[i] * vecA[i];
-      normB += vecB[i] * vecB[i];
-    }
-
-    return dotProduct / (Math.sqrt(normA) * Math.sqrt(normB));
   }
 
   /**
@@ -351,7 +332,7 @@ export class VisionProcessingArbiter extends EventEmitter {
   getStatus() {
     return {
       name: this.name,
-      modelLoaded: !!this.clipModel,
+      modelLoaded: !!this.zeroShotClassifier && typeof this.zeroShotClassifier === 'function',
       visualMemoriesStored: this.visualMemories.size,
       metrics: this.metrics,
       batchSize: this.batchSize
@@ -359,64 +340,8 @@ export class VisionProcessingArbiter extends EventEmitter {
   }
 
   /**
-   * Object detection with bounding boxes using DETR.
-   * Returns objects found in the image with pixel coordinates and center points.
-   * Center points can be passed directly to ComputerControl.executeAction for precise clicking.
-   *
-   * Falls back to classifyImage (whole-image CLIP) if DETR isn't available.
+   * Shutdown cleanup
    */
-  async detectObjects(imagePathOrURL, threshold = 0.7) {
-    console.log(`[${this.name}] 🔍 Detecting objects (threshold: ${threshold})`);
-    const startTime = Date.now();
-
-    try {
-      // Lazy-load DETR detector (separate from CLIP classifier)
-      if (!this._objectDetector) {
-        console.log(`[${this.name}]    Loading DETR object detection model...`);
-        this._objectDetector = await pipeline(
-          'object-detection',
-          'Xenova/detr-resnet-50',
-          { revision: 'no_timm' }
-        );
-        console.log(`[${this.name}]    ✅ DETR model ready`);
-      }
-
-      const results = await this._objectDetector(imagePathOrURL, { threshold });
-
-      const objects = (results || []).map(r => ({
-        label:      r.label,
-        confidence: parseFloat((r.score || 0).toFixed(3)),
-        box:        r.box,  // { xmin, ymin, xmax, ymax } in pixels
-        center: {           // ready for mouse_action { type:'click', x, y }
-          x: Math.round(((r.box?.xmin || 0) + (r.box?.xmax || 0)) / 2),
-          y: Math.round(((r.box?.ymin || 0) + (r.box?.ymax || 0)) / 2)
-        }
-      }));
-
-      this.metrics.classificationsRun++;
-      console.log(`[${this.name}]    Found ${objects.length} object(s) in ${Date.now() - startTime}ms`);
-      return { objects, count: objects.length, processingTime: Date.now() - startTime };
-
-    } catch (detrErr) {
-      console.warn(`[${this.name}] DETR unavailable (${detrErr.message}), falling back to CLIP classification`);
-      // Graceful fallback: CLIP whole-image classification (no bounding boxes)
-      try {
-        const labels = ['person', 'car', 'button', 'text', 'window', 'icon', 'image'];
-        const clip = await this.classifyImage(imagePathOrURL, labels);
-        return {
-          objects: clip.classifications.filter(c => c.score > threshold).map(c => ({
-            label: c.label, confidence: c.score, box: null, center: null
-          })),
-          count: clip.classifications.filter(c => c.score > threshold).length,
-          processingTime: Date.now() - startTime,
-          fallback: 'CLIP (no bounding boxes)'
-        };
-      } catch (clipErr) {
-        return { error: `Object detection failed: ${detrErr.message}`, objects: [], count: 0 };
-      }
-    }
-  }
-
   async shutdown() {
     console.log(`[${this.name}] Shutting down...`);
 

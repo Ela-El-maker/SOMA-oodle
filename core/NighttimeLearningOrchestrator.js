@@ -350,6 +350,9 @@ export class NighttimeLearningOrchestrator extends EventEmitter {
       case 'rebuild_indices':
         return await this.rebuildIndices(params);
 
+      case 'system_health_maintenance':
+        return await this.systemHealthMaintenance(params);
+
       case 'analyze_own_code':
         return await this.analyzeOwnCode(params);
 
@@ -414,6 +417,9 @@ export class NighttimeLearningOrchestrator extends EventEmitter {
       case 'memory_consolidation':
         return await this.memoryConsolidation(params);
 
+      case 'deep_memory_cleanup':
+        return await this.deepMemoryCleanup(params);
+
       default:
         throw new Error(`Unknown task type: ${type}`);
     }
@@ -422,6 +428,45 @@ export class NighttimeLearningOrchestrator extends EventEmitter {
   // ═══════════════════════════════════════════════════════════
   // TASK IMPLEMENTATIONS
   // ═══════════════════════════════════════════════════════════
+
+  /**
+   * DEEP MEMORY CLEANUP: Purge massive memories and state dumps.
+   * Automates the 'Digital Constipation' fix.
+   */
+  async deepMemoryCleanup(params = {}) {
+    if (!this.mnemonic) {
+      return { success: false, reason: 'MnemonicArbiter not available' };
+    }
+
+    console.log(`[${this.name}] 🧹 Running Deep Memory Cleanup (Digital Constipation Fix)...`);
+    
+    try {
+        // We can call it directly if mnemonic is injected as the object
+        // Or via message broker if it's an ID
+        let result;
+        if (typeof this.mnemonic.deepCleanup === 'function') {
+            result = await this.mnemonic.deepCleanup();
+        } else {
+            // Fallback to message broker
+            const response = await this.dreamBrokerAPI.sendMessage({
+                to: 'MnemonicArbiter',
+                type: 'deep_cleanup',
+                payload: {}
+            });
+            result = response?.payload;
+        }
+
+        if (result?.success) {
+            console.log(`[${this.name}] ✅ Deep cleanup complete: purged ${result.purged} entries`);
+            this.metrics.spaceSaved += (result.purged * 0.1); // Estimated space
+        }
+
+        return result || { success: false, reason: 'No result from MnemonicArbiter' };
+    } catch (err) {
+        console.error(`[${this.name}] ❌ Deep memory cleanup failed: ${err.message}`);
+        return { success: false, error: err.message };
+    }
+  }
 
   /**
    * VISUAL PROPRIOCEPTION: Update Mind Map
@@ -1200,15 +1245,50 @@ export class NighttimeLearningOrchestrator extends EventEmitter {
     };
   }
 
+  /**
+   * SYSTEM HEALTH MAINTENANCE: Deep memory cleanup and DB optimization.
+   */
+  async systemHealthMaintenance(params = {}) {
+    console.log(`[${this.name}] 🏥 Starting System Health Maintenance...`);
+    
+    // 1. Memory Cleanup
+    const cleanupResult = await this.deepMemoryCleanup(params);
+    
+    // 2. Index Refresh
+    const indexResult = await this.rebuildIndices(params);
+
+    return {
+        success: true,
+        cleanup: cleanupResult,
+        indexing: indexResult
+    };
+  }
+
   async rebuildIndices(params) {
     if (!this.mnemonic) {
       throw new Error('MnemonicArbiter not available');
     }
 
+    if (!this.mnemonicIndexer) {
+        // Fallback: check if it's on system object
+        this.mnemonicIndexer = this.system?.mnemonicIndexer;
+    }
+
+    if (this.mnemonicIndexer) {
+        const scanPath = params.path || process.cwd();
+        console.log(`[${this.name}] 🔍 Triggering full index rebuild for ${scanPath}...`);
+        try {
+            await this.mnemonicIndexer.scanDirectory(scanPath);
+        } catch (err) {
+            console.error(`[${this.name}] ❌ Index rebuild failed: ${err.message}`);
+        }
+    }
+
     return {
       rebuilt: true,
       vectors: params.rebuild_vectors,
-      sqlite: params.optimize_sqlite
+      sqlite: params.optimize_sqlite,
+      indexer_active: !!this.mnemonicIndexer
     };
   }
 

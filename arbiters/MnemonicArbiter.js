@@ -272,6 +272,7 @@ class MnemonicArbiter extends BaseArbiter {
       this.registerMessageHandler('save', this._handleSave.bind(this)); // NEW
       this.registerMessageHandler('stats', this._handleStats.bind(this));
       this.registerMessageHandler('optimize', this._handleOptimize.bind(this));
+      this.registerMessageHandler('deep_cleanup', this._handleDeepCleanup.bind(this)); // NEW: Digital Constipation Fix
 
       this.log('info', '✅ MnemonicArbiterV2 ready - all 3 tiers operational');
       this._logTierStatus();
@@ -545,6 +546,18 @@ class MnemonicArbiter extends BaseArbiter {
       this.log('error', 'Cold tier (SQLite) not initialized - memory lost');
       return { success: false, error: 'Database not ready' };
     }
+
+    // SAFETY GUARD: Prevent massive blobs from bloating the DB and hanging reasoning
+    if (content && content.length > 100000) {
+      this.log('warn', `⚠️ Skipping memory storage: Content too large (${Math.round(content.length/1024)}KB). Probable state dump.`);
+      return { success: false, error: 'Content exceeds memory size limit' };
+    }
+
+    if (content && (content.includes('"experiences":') || content.includes('"state":'))) {
+      this.log('warn', '⚠️ Skipping memory storage: State dump detected.');
+      return { success: false, error: 'State dumps should not be stored in semantic memory' };
+    }
+
     const id = this._generateId(content);
     const now = Date.now();
 
@@ -1186,6 +1199,9 @@ class MnemonicArbiter extends BaseArbiter {
         case 'optimize':
           result = await this._optimize();
           break;
+        case 'deep_cleanup':
+          result = await this.deepCleanup();
+          break;
         default:
           throw new Error(`Unknown action: ${action}`);
       }
@@ -1224,6 +1240,65 @@ class MnemonicArbiter extends BaseArbiter {
       optimized: true,
       metrics: this.getMemoryStats()
     };
+  }
+
+  /**
+   * Deep Cleanup - Automated Digital Constipation Fix
+   * Purges massive state dumps and optimizes the database.
+   */
+  async deepCleanup() {
+    this.log('info', '🧹 Starting Deep Memory Cleanup (Digital Constipation Fix)...');
+    
+    if (!this.db) return { success: false, error: 'Cold storage not available' };
+
+    try {
+      const statsBefore = this.db.prepare(`
+        SELECT 
+            count(*) as total,
+            sum(CASE WHEN length(content) > 100000 THEN 1 ELSE 0 END) as massive,
+            sum(CASE WHEN content LIKE '%"experiences":%' THEN 1 ELSE 0 END) as state_dumps
+        FROM memories
+      `).get();
+
+      // 1. Purge Garbage
+      const result = this.db.prepare(`
+        DELETE FROM memories 
+        WHERE length(content) > 100000 
+           OR content LIKE '%"experiences":%'
+           OR content LIKE '%[MessageBroker] Arbiter not found%'
+      `).run();
+
+      this.log('info', `✅ Purged ${result.changes} garbage entries from DB.`);
+
+      // 2. Index Optimization
+      if (result.changes > 50) {
+        this.log('info', '⏳ Reclaiming disk space (VACUUM)...');
+        this.db.exec("VACUUM;");
+        this.log('info', '✨ Vacuum complete.');
+      }
+
+      this.db.exec("ANALYZE;");
+
+      const statsAfter = this.db.prepare("SELECT count(*) as total FROM memories").get();
+
+      return {
+        success: true,
+        purged: result.changes,
+        before: statsBefore.total,
+        after: statsAfter.total,
+        massiveFound: statsBefore.massive || 0,
+        stateDumpsFound: statsBefore.state_dumps || 0
+      };
+
+    } catch (error) {
+      this.log('error', `Deep cleanup failed: ${error.message}`);
+      return { success: false, error: error.message };
+    }
+  }
+
+  async _handleDeepCleanup(envelope) {
+    const result = await this.deepCleanup();
+    await this.sendMessage(envelope.from, 'deep_cleanup_response', result);
   }
 
   async _handleRemember(envelope) {

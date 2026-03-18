@@ -709,7 +709,7 @@ export class FragmentRegistry extends EventEmitter {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        model: 'soma-v2:latest',
+        model: process.env.OLLAMA_MODEL || 'gemma3:4b',
         prompt,
         stream: false,
         options: { temperature: 0.7, num_predict: maxTokens }

@@ -30,7 +30,8 @@ const __dirname = dirname(__filename);
 import { CONFIG } from './core/SomaConfig.js';
 import { SomaBootstrap } from './core/SomaBootstrap.js';
 import { logger } from './core/Logger.js';
-import chokidar from 'chokidar';
+import RepoWatcherDaemon from './daemons/RepoWatcherDaemon.js';
+import HealthDaemon from './daemons/HealthDaemon.js';
 import net from 'net';
 
 // Daemon State - Shared with main launcher via IPC
@@ -81,7 +82,36 @@ async function main() {
         logger.success('Daemon mode fully operational.');
         logger.info('Press Ctrl+C to stop the daemon.');
 
-        // 2. Memory Consolidation + Auto-Cleanup (Every hour)
+        // 2. Initialize COS Daemons
+        const repoWatcher = new RepoWatcherDaemon({ root: process.cwd(), logger });
+        const healthDaemon = new HealthDaemon({ logger });
+
+        // Update local state when signals occur (for legacy IPC compatibility)
+        repoWatcher.on('signal', (signal) => {
+            if (signal.type.startsWith('repo.file')) {
+                daemonState.fileChanges.push({ ...signal.payload, type: signal.type.split('.').pop() });
+                if (daemonState.fileChanges.length > 100) daemonState.fileChanges.shift();
+            }
+        });
+
+        healthDaemon.on('signal', (signal) => {
+            if (signal.type === 'health.metrics') {
+                daemonState.systemHealth = { healthy: true, ...signal.payload };
+            }
+            if (signal.type === 'health.warning') {
+                daemonState.systemHealth.healthy = false;
+                daemonState.systemHealth.alerts = daemonState.systemHealth.alerts || [];
+                daemonState.systemHealth.alerts.push(signal.payload.issue);
+                if (daemonState.systemHealth.alerts.length > 10) daemonState.systemHealth.alerts.shift();
+            }
+        });
+
+        await Promise.all([
+            repoWatcher.start(),
+            healthDaemon.start()
+        ]);
+
+        // 3. Memory Consolidation + Auto-Cleanup (Every hour)
         const memoryConsolidation = setInterval(async () => {
             try {
                 if (system.mnemonic && system.mnemonic.consolidate) {
@@ -90,6 +120,12 @@ async function main() {
                     daemonState.memoryConsolidations++;
                     daemonState.lastConsolidation = Date.now();
                     logger.success(`[Memory] Consolidated ${result?.count || 0} fragments`);
+                }
+
+                // NEW: Automated Digital Constipation Fix (Hourly Purge)
+                if (system.mnemonic && typeof system.mnemonic.deepCleanup === 'function') {
+                    logger.info('[Memory] Running deep cleanup safety check...');
+                    await system.mnemonic.deepCleanup();
                 }
 
                 // Auto-cleanup: prune old experience files
@@ -139,32 +175,43 @@ async function main() {
             }
         }, 3600000); // 1 hour
 
-        // 3. File System Watcher (Monitor codebase changes)
-        const watcher = chokidar.watch([
-            join(__dirname, 'core/**/*.{js,mjs,cjs}'),
-            join(__dirname, 'arbiters/**/*.{js,mjs,cjs}'),
-            join(__dirname, 'frontend/**/*.{js,jsx,ts,tsx}')
-        ], {
-            ignored: /(^|[\/\\])\..|(node_modules|dist|build)/,
-            persistent: true,
-            ignoreInitial: true
-        });
+        // 5. State Persistence (Write to disk every 10 minutes)
+        const statePersistence = setInterval(async () => {
+            try {
+                const stateFile = join(__dirname, 'data', 'daemon-state.json');
+                await fs.writeFile(stateFile, JSON.stringify({
+                    ...daemonState,
+                    uptime: Date.now() - daemonState.startTime,
+                    savedAt: new Date().toISOString()
+                }, null, 2));
+                daemonState.lastPersistence = Date.now();
+                logger.info('[Persistence] Daemon state saved');
+            } catch (e) {
+                logger.error('[Persistence] Failed to save state:', e.message);
+            }
+        }, 600000); // 10 minutes
 
-        watcher.on('change', (path) => {
-            const event = { type: 'change', path, timestamp: Date.now() };
-            daemonState.fileChanges.push(event);
-            if (daemonState.fileChanges.length > 100) daemonState.fileChanges.shift();
-            logger.info(`[FileWatch] Changed: ${path}`);
-        });
+        // 6. Capture Dream Insights (When nighttime learning produces insights)
+        if (system.nighttimeLearning) {
+            // Hook into dream cycle completion
+            const originalOnCycleComplete = system.nighttimeLearning.onCycleComplete;
+            system.nighttimeLearning.onCycleComplete = (insights) => {
+                if (insights && insights.length > 0) {
+                    daemonState.dreamInsights.push(...insights.map(i => ({
+                        ...i,
+                        timestamp: Date.now()
+                    })));
+                    // Keep only last 50 insights
+                    if (daemonState.dreamInsights.length > 50) {
+                        daemonState.dreamInsights = daemonState.dreamInsights.slice(-50);
+                    }
+                    logger.success(`[Dream] Captured ${insights.length} new insights`);
+                }
+                if (originalOnCycleComplete) originalOnCycleComplete(insights);
+            };
+        }
 
-        watcher.on('add', (path) => {
-            const event = { type: 'add', path, timestamp: Date.now() };
-            daemonState.fileChanges.push(event);
-            if (daemonState.fileChanges.length > 100) daemonState.fileChanges.shift();
-            logger.info(`[FileWatch] Added: ${path}`);
-        });
-
-        // 4. IPC Server (Communication bridge with main launcher)
+        // 7. IPC Server (Communication bridge with main launcher)
         const IPC_PATH = process.platform === 'win32'
             ? '\\\\.\\pipe\\soma-daemon'
             : '/tmp/soma-daemon.sock';
@@ -215,67 +262,17 @@ async function main() {
             logger.success(`[IPC] Bridge listening on ${IPC_PATH}`);
         });
 
-        // 5. State Persistence (Write to disk every 10 minutes)
-        const statePersistence = setInterval(async () => {
-            try {
-                const stateFile = join(__dirname, 'data', 'daemon-state.json');
-                await fs.writeFile(stateFile, JSON.stringify({
-                    ...daemonState,
-                    uptime: Date.now() - daemonState.startTime,
-                    savedAt: new Date().toISOString()
-                }, null, 2));
-                daemonState.lastPersistence = Date.now();
-                logger.info('[Persistence] Daemon state saved');
-            } catch (e) {
-                logger.error('[Persistence] Failed to save state:', e.message);
-            }
-        }, 600000); // 10 minutes
-
-        // 6. Heartbeat logic (Every 10 minutes)
-        // This ensures the event loop stays alive and logs basic health
-        const heartbeat = setInterval(async () => {
-            const mem = process.memoryUsage().rss / 1024 / 1024;
-            logger.info(`[Heartbeat] SOMA is alive. Memory: ${mem.toFixed(1)} MB`);
-
-            // Check if Immune System is still healthy
-            if (system.immuneSystem) {
-                const health = await system.immuneSystem.watchdog.senseSystemState();
-                daemonState.systemHealth = health;
-                if (!health.healthy) {
-                    logger.warn(`[Health Alert] ${health.alerts.join(', ')}`);
-                }
-            }
-        }, 600000); // 10 minutes
-
-        // 7. Capture Dream Insights (When nighttime learning produces insights)
-        if (system.nighttimeLearning) {
-            // Hook into dream cycle completion
-            const originalOnCycleComplete = system.nighttimeLearning.onCycleComplete;
-            system.nighttimeLearning.onCycleComplete = (insights) => {
-                if (insights && insights.length > 0) {
-                    daemonState.dreamInsights.push(...insights.map(i => ({
-                        ...i,
-                        timestamp: Date.now()
-                    })));
-                    // Keep only last 50 insights
-                    if (daemonState.dreamInsights.length > 50) {
-                        daemonState.dreamInsights = daemonState.dreamInsights.slice(-50);
-                    }
-                    logger.success(`[Dream] Captured ${insights.length} new insights`);
-                }
-                if (originalOnCycleComplete) originalOnCycleComplete(insights);
-            };
-        }
-
         // 8. Graceful Shutdown
         process.on('SIGINT', async () => {
             logger.info('\nStopping SOMA Daemon...');
-            clearInterval(heartbeat);
             clearInterval(memoryConsolidation);
             clearInterval(statePersistence);
 
-            // Close file watcher
-            if (watcher) await watcher.close();
+            // Stop Daemons
+            await Promise.all([
+                repoWatcher.stop(),
+                healthDaemon.stop()
+            ]);
 
             // Close IPC server
             if (ipcServer) ipcServer.close();

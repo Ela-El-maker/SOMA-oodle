@@ -137,6 +137,7 @@ class GoalPlannerArbiter extends BaseArbiter {
     messageBroker.subscribe(this.name, 'cancel_goal');
     messageBroker.subscribe(this.name, 'approve_goal');
     messageBroker.subscribe(this.name, 'reject_goal');
+    messageBroker.subscribe(this.name, 'query_plan'); // New subscription for plan queries
     messageBroker.subscribe(this.name, 'question_response'); // New subscription for question responses
     
     // System observations for autonomous goal generation
@@ -149,6 +150,7 @@ class GoalPlannerArbiter extends BaseArbiter {
     messageBroker.subscribe(this.name, 'practice_reminder'); // SkillAcquisitionArbiter
     messageBroker.subscribe(this.name, 'skill_degraded'); // SkillAcquisitionArbiter
     messageBroker.subscribe(this.name, 'resource_pressure_critical'); // ResourceBudgetArbiter
+    messageBroker.subscribe(this.name, 'fix_proposed'); // FixProposalSystem
 
     // Conflict resolution (Conservative vs Progressive)
     messageBroker.subscribe(this.name, 'arbitration_request'); // ProgressiveArbiter
@@ -187,6 +189,12 @@ class GoalPlannerArbiter extends BaseArbiter {
         
         case 'question_response':
           return await this.handleQuestionResponse(payload);
+        
+        case 'fix_proposed':
+          return await this._handleFixProposed(payload);
+        
+        case 'query_plan':
+          return this._handleQueryPlan();
         
         
         case 'velocity_report':
@@ -1568,6 +1576,49 @@ class GoalPlannerArbiter extends BaseArbiter {
     }
   }
 
+  async _handleQueryPlan(envelope) {
+    // Generate the plan content (re-use _writePlanMd logic without writing to file)
+    const now = new Date();
+    const ts = now.toLocaleString('en-US', { dateStyle: 'medium', timeStyle: 'short' });
+
+    const allGoals = Array.from(this.goals.values());
+    const proposed  = allGoals.filter(g => g.status === 'proposed').sort((a, b) => b.priority - a.priority);
+    const active    = allGoals.filter(g => g.status === 'active').sort((a, b) => b.priority - a.priority);
+    const pending   = allGoals.filter(g => g.status === 'pending').sort((a, b) => b.priority - a.priority);
+    const completed = this.completedGoals.slice(0, 20);
+    const failed    = this.failedGoals.slice(0, 10);
+
+    const fmtGoal = (g, checked = false) => {
+      const box = checked ? '[x]' : '[ ]';
+      const pct = g.metrics?.progress != null ? ` — ${g.metrics.progress.toFixed(0)}%` : '';
+      const desc = g.description ? `\n  > ${g.description.substring(0, 120)}` : '';
+      return `- ${box} **${g.title}** *(priority: ${g.priority})${pct}*${desc}`;
+    };
+
+    let md = `# SOMA's Plan\n\n*Last updated: ${ts}*\n\n`;
+
+    if (proposed.length) {
+      md += `## ⏳ Awaiting Approval\n${proposed.map(g => fmtGoal(g)).join('\n')}\n\n`;
+    }
+    if (active.length) {
+      md += `## 🔥 Active\n${active.map(g => fmtGoal(g)).join('\n')}\n\n`;
+    }
+    if (pending.length) {
+      md += `## 🕐 Queued\n${pending.map(g => fmtGoal(g)).join('\n')}\n\n`;
+    }
+    if (completed.length) {
+      md += `## ✅ Completed\n${completed.map(g => fmtGoal(g, true)).join('\n')}\n\n`;
+    }
+    if (failed.length) {
+      md += `## ❌ Rejected / Failed\n${failed.map(g => `- ~~${g.title}~~ *(${g.metadata?.rejectionReason || g.status})*`).join('\n')}\n\n`;
+    }
+
+    md += `---\n*${this.goals.size} goals tracked · ${active.length} active · Tension: ${Math.round((this.lastTension || 0) * 100)}%*\n`;
+
+    // Send the plan content back
+    return { success: true, plan: md, updatedAt: now.toISOString() };
+  }
+
   async approveGoal(goalId) {
     const goal = this.goals.get(goalId);
     if (!goal) {
@@ -1670,6 +1721,9 @@ class GoalPlannerArbiter extends BaseArbiter {
 
     return { success: true, message: 'Question response processed' };
   }
+
+
+
 
   // ═══════════════════════════════════════════════════════════
   // ░░ AUTOPILOT CONTROL ░░

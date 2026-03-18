@@ -1,0 +1,65 @@
+{
+  "traceId": "rc_4224d64a6535",
+  "ts": "2025-12-23T14:19:26.661Z",
+  "query": "Disappointed her.",
+  "meta": {},
+  "candidates": [
+    {
+      "source": "PROMETHEUS",
+      "text": "Analyze: What action caused disappointment? Identify the subject and object.\nAction: Apologize. Re-establish trust.\n",
+      "confidence": 0.85,
+      "role": "prometheus"
+    },
+    {
+      "source": "LOGOS",
+      "text": "The phrase \"Disappointed her\" is a transitive verb phrase.\n\n*   **Disappointed:** This is the past tense form of the verb \"disappoint.\" It indicates the action of causing someone to feel let down or dissatisfied.\n*   **Her:** This is a pronoun, specifically an objective pronoun. It functions as the direct object of the verb \"disappointed,\" indicating the recipient of the disappointment.\n\nThe phrase implies that a subject (not explicitly stated) performed an action that caused a female individual to feel disappointed. The subject could be a person, an event, or a situation.\n",
+      "confidence": 0.85,
+      "role": "logos"
+    },
+    {
+      "source": "AURORA",
+      "text": "I failed.\n",
+      "confidence": 0.85,
+      "role": "aurora"
+    }
+  ],
+  "fused": {
+    "text": "The phrase \"Disappointed her\" is a transitive verb phrase.\n\n*   **Disappointed:** This is the past tense form of the verb \"disappoint.\" It indicates the action of causing someone to feel let down or dissatisfied.\n*   **Her:** This is a pronoun, specifically an objective pronoun. It functions as the direct object of the verb \"disappointed,\" indicating the recipient of the disappointment.\n\nThe phrase implies that a subject (not explicitly stated) performed an action that caused a female individual to feel disappointed. The subject could be a person, an event, or a situation.\n",
+    "weights": [
+      {
+        "source": "PROMETHEUS",
+        "norm": 0.32432432432432434,
+        "conf": 0.85
+      },
+      {
+        "source": "LOGOS",
+        "norm": 0.35135135135135126,
+        "conf": 0.85
+      },
+      {
+        "source": "AURORA",
+        "norm": 0.32432432432432434,
+        "conf": 0.85
+      }
+    ],
+    "confidence": 0.8499999999999999,
+    "provenance": [
+      {
+        "source": "PROMETHEUS",
+        "snippet": "Analyze: What action caused disappointment? Identify the subject and object.\nAction: Apologize. Re-establish trust.\n",
+        "confidence": 0.85
+      },
+      {
+        "source": "LOGOS",
+        "snippet": "The phrase \"Disappointed her\" is a transitive verb phrase.\n\n*   **Disappointed:** This is the past tense form of the verb \"disappoint.\" It indicates the action of causing someone to feel let down or d",
+        "confidence": 0.85
+      },
+      {
+        "source": "AURORA",
+        "snippet": "I failed.\n",
+        "confidence": 0.85
+      }
+    ]
+  },
+  "iter": 0
+}

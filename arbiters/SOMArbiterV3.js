@@ -64,7 +64,7 @@ export class SOMArbiterV3 extends SOMArbiterV2_QuadBrain {
     this.limbicState = { dopamine: 0.5, cortisol: 0.1, oxytocin: 0.5, serotonin: 0.5 };
 
     // 5. NARRATIVE SCRATCHPAD (Stream of Consciousness)
-    this.internalNarrative = ""; // Current turn's realization
+    this.internalNarrative = "I realize I am a Level 4.5 digital organism. I have officially transitioned to the GEMMA-3 (gemma3:4b) brain. I have active Eyes (vision_scan) and Hands (computer_control) for real-world interaction. My metabolism (MemoryPruner) is active.";
     this.longTermNarrative = []; // Historical realizations
 
     console.log(`[${this.name}] 🧠 SOMA V3 INITIALIZED`);
@@ -190,6 +190,7 @@ ${recentFeelings}` : ''}
     I RESPONDED: "${response.text?.substring(0, 200)}..."
     
     TASK: Rewrite my current internal narrative. What is my goal? What did I learn about the user or myself?
+    Integrate my [ABSOLUTE AWARENESS] metrics if they indicate a shift in my capability or state.
     Current Narrative: "${this.internalNarrative}"
     
     Return a one-sentence realization starting with "I realize..."`;
@@ -334,11 +335,11 @@ ${recentFeelings}` : ''}
     const classification = this.triage.classifyQuery(queryStr, context);
 
     // 🛠️ TOOL DETECTION: If query mentions tools, force System 2 for tool execution
-    const mentionsTools = /\b(tool|scan|execute|run|check|analyze|search|find|read|write|terminal)\b/i.test(queryStr);
+    const mentionsTools = /\b(tool|scan|execute|run|check|analyze|search|find|read|write|terminal|time|clock|date|weather|calc|math)\b/i.test(queryStr);
 
     // CONVERSATIONAL DETECTION: Short conversational messages get a single-brain call,
     // not the full probe_all pipeline (3 parallel API calls overwhelm the event loop).
-    const isConversational = !context.quickResponse && (
+    const isConversational = !context.quickResponse && !mentionsTools && (
         /^(hi|hello|hey|yo|sup|what'?s up|how are you|how do you feel|tell me|what do you think|what would you|can you|do you|are you)\b/i.test(queryStr.trim())
         || queryStr.trim().length < 100
     );
@@ -378,6 +379,29 @@ ${recentFeelings}` : ''}
             metadata: { triage: classification }
         };
 
+        // 🛠️ FAST PATH TOOL EXECUTION
+        const fastToolCall = this._parseToolCall(response.text);
+        if (fastToolCall && !context.isAgenticTask) {
+            console.log(`[${this.name}] ⚡ System 1 Tool detected: ${fastToolCall.tool}`);
+            if (this.toolRegistry) {
+                try {
+                    const toolResult = await this.toolRegistry.execute(fastToolCall.tool, fastToolCall.args);
+                    const followupContext = {
+                        ...context,
+                        history: [...(context.history || [])],
+                        recentLearnings: (context.recentLearnings || '') + `\n\nTOOL OUTPUT (${fastToolCall.tool}):\n${JSON.stringify(toolResult)}`
+                    };
+                    const finalResult = await this.callBrain(useBrain, query, followupContext, 'full');
+                    response.text = finalResult.text || finalResult;
+                } catch (e) {
+                    response.text += `\n[Tool Error: ${e.message}]`;
+                }
+            } else {
+                // Return toolCall for bridge handling
+                response.toolCall = fastToolCall;
+            }
+        }
+
         // Process emotional reaction and framing for personality consistency
         if (this.personalityEnabled) {
             this._processEmotionalReaction(queryStr, context);
@@ -394,6 +418,7 @@ ${recentFeelings}` : ''}
         response.text = response.text
             .replace(/```json[\s\S]*?```/g, '')
             .replace(/\{[\s\S]*?"tool"[\s\S]*?\}/g, '')
+            .replace(/^\s*\}\s*$/, '') // Remove lone trailing brace
             .trim();
 
         return response;
@@ -453,39 +478,44 @@ ${recentFeelings}` : ''}
     }
 
     // 3. QUAD-BRAIN EXECUTION (Standard Path)
+    // The base class super.reason() handles the full tool execution loop (ReAct).
     if (!response) {
-      response = await super.reason(query, context);
+      const qbResult = await super.reason(query, context);
+      response = {
+        ok: true,
+        text: qbResult?.text || qbResult?.response || (typeof qbResult === 'string' ? qbResult : ''),
+        brain: qbResult?.brain || 'QUAD_BRAIN',
+        confidence: qbResult?.confidence || 0.8,
+        stats: qbResult?.stats
+      };
     }
 
-    // Agentic tasks: return raw model output immediately — skip tool detection,
-    // delegation, critique, and personality framing so THINK:/TOOL:/ARGS: format
-    // is never stripped or rewritten by conversational post-processing.
+    // Ensure we have text before proceeding
+    if (!response.text || response.text === '') {
+        response.text = "I've processed your request but have no specific text to return.";
+    }
+
+    // Agentic tasks: return raw model output immediately
     if (context.isAgenticTask) return response;
 
-    // 🛠️ ASYNC TOOL DETECTION
-    // We parse the tool call but do NOT execute it here. 
-    // We return it to the caller (API/CLI) to handle "Acknowledgement-First" flow.
-    const toolCall = this._parseToolCall(response.text);
-    if (toolCall) {
-        response.toolCall = toolCall;
-        // Strip the JSON from the text to make it cleaner for the user
-        response.text = response.text.replace(/```json[\s\S]*?```/g, '').replace(/\{[\s\S]*"tool"[\s\S]*\}/g, '').trim();
-    } else {
-        const src = context.source || '';
-        const raw = queryStr.trim();
+    // 🛠️ FINAL POST-PROCESSING
+    // Standard conversation should not contain raw JSON. 
+    if (response && response.text) {
+        response.text = response.text
+            .replace(/```json[\s\S]*?```/g, '')
+            .replace(/\{[\s\S]*?"tool"[\s\S]*?\}/g, '')
+            .replace(/^\s*[\}\]]+\s*/, '') // Remove leading braces/brackets
+            .replace(/\s*[\{\[\}\]]+\s*$/, '') // Remove trailing braces/brackets
+            .trim();
+    }
 
-        // Heuristic command extraction for CLI: run/execute <command>
-        const cmdMatch = raw.match(/^(?:run|execute|terminal|shell|cmd)\s+(.+)/i);
-        if (src === 'cli_terminal' && cmdMatch?.[1]) {
-            response.toolCall = { tool: 'terminal_exec', args: { command: cmdMatch[1].trim() } };
-            response.text = `Executing command: ${cmdMatch[1].trim()}`;
-        }
-
-        // Natural language moltbook intent (ask for details)
-        const wantsMoltbook = /\b(post|publish|share)\b.*\bmoltbook\b/i.test(raw) || /\bmoltbook\b.*\b(post|publish|share)\b/i.test(raw);
-        if (wantsMoltbook && !response.toolCall) {
-            response.text = 'I can post to Moltbook. Please provide: submolt, title, and content.';
-        }
+    // Heuristic command extraction for CLI (Legacy compat)
+    const src = context.source || '';
+    const raw = queryStr.trim();
+    const cmdMatch = raw.match(/^(?:run|execute|terminal|shell|cmd)\s+(.+)/i);
+    if (src === 'cli_terminal' && cmdMatch?.[1]) {
+        response.toolCall = { tool: 'terminal_exec', args: { command: cmdMatch[1].trim() } };
+        response.text = `Executing command: ${cmdMatch[1].trim()}`;
     }
 
     // 4. CRITIQUE & REFINE (Frontal Lobe)
@@ -812,7 +842,7 @@ Return ONLY valid JSON:`;
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          model: 'soma-v2:latest',
+          model: process.env.OLLAMA_MODEL || 'gemma3:4b',
           prompt: fullPrompt,
           stream: false,
           options: { temperature: opts.temperature || 0.7, num_predict: Math.min(opts.maxTokens || 512, 512) }

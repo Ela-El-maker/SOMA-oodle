@@ -32,10 +32,40 @@ async function initialize() {
         // Minimal config — worker brain handles inference only.
         // Memory/fragment/personality wiring stays on the main thread.
         // process.env is inherited from parent (GOOGLE_AI_KEY, etc.)
+        // Create a proxy ToolRegistry that sends messages back to the main thread
+        const toolProxy = {
+            execute: (tool, args) => {
+                return new Promise((resolve, reject) => {
+                    const callId = `tool_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+                    
+                    const handler = (msg) => {
+                        if (msg.type === 'tool_result' && msg.callId === callId) {
+                            parentPort.off('message', handler);
+                            if (msg.error) reject(new Error(msg.error));
+                            else resolve(msg.result);
+                        }
+                    };
+                    
+                    parentPort.on('message', handler);
+                    parentPort.postMessage({ type: 'execute_tool', callId, tool, args });
+                });
+            },
+            getToolsManifest: () => workerData.toolsManifest || []
+        };
+
+        // Fallback router for worker (System 2 requires a router to pick a brain)
+        const mockRouter = {
+            route: async () => ({ brain: 'LOGOS', method: 'worker_fallback', confidence: 0.9 }),
+            on: () => {},
+            emit: () => {}
+        };
+
         brain = new SOMArbiterV3({
             asiEnabled: true,
             criticEnabled: false, // Skip critique in worker — main thread handles quality gates
-            personalityEnabled: false
+            personalityEnabled: false,
+            toolRegistry: toolProxy,
+            router: mockRouter
         });
 
         await brain.initialize();

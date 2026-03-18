@@ -1,5 +1,38 @@
 import readline from 'readline';
 import { randomBytes } from 'crypto';
+import http from 'http';
+
+// httpPost — uses Node's http module to bypass Undici's keep-alive pool,
+// which causes "socket hang up" on loopback connections after the server's
+// 5s keep-alive timeout expires between messages.
+function httpPost(url, body, timeoutMs = 65000) {
+    return new Promise((resolve, reject) => {
+        const parsed = new URL(url);
+        const data = JSON.stringify(body);
+        const req = http.request({
+            hostname: parsed.hostname,
+            port: parsed.port,
+            path: parsed.pathname,
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'Content-Length': Buffer.byteLength(data),
+                'Connection': 'close'
+            }
+        }, (res) => {
+            let buf = '';
+            res.on('data', chunk => buf += chunk);
+            res.on('end', () => {
+                try { resolve(JSON.parse(buf)); }
+                catch (e) { reject(new Error('JSON parse failed: ' + buf.slice(0, 200))); }
+            });
+        });
+        req.setTimeout(timeoutMs, () => { req.destroy(); reject(new Error('Request timed out after ' + timeoutMs + 'ms')); });
+        req.on('error', reject);
+        req.write(data);
+        req.end();
+    });
+}
 
 // ═══════════════════════════════════════════════════════════
 // SOMA ENHANCED CLI v2.0 - Neural Link Terminal
@@ -141,7 +174,7 @@ async function checkHealth() {
     const pulse = startPulse();
 
     try {
-        const response = await fetch(HEALTH_URL, { signal: AbortSignal.timeout(15000) });
+        const response = await fetch(HEALTH_URL, { signal: AbortSignal.timeout(30000) });
         const data = await response.json();
         stopPulse(pulse);
 
@@ -249,21 +282,14 @@ async function chatLoop(message, isToolOutput = false) {
             content: h.text
         }));
 
-        const response = await fetch(API_URL, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-                message: message,
-                deepThinking: session.deepThinking,
-                sessionId: session.id,
-                source: 'cli_terminal',
-                history: historyForBackend,
-                isToolOutput // Flag to tell brain this is a tool result
-            }),
-            signal: AbortSignal.timeout(session.deepThinking ? 120000 : 45000) // 45s normal, 120s deep
-        });
-
-        const data = await response.json();
+        const data = await httpPost(API_URL, {
+            message: message,
+            deepThinking: session.deepThinking,
+            sessionId: session.id,
+            source: 'cli_terminal',
+            history: historyForBackend,
+            isToolOutput
+        }, session.deepThinking ? 120000 : 65000);
         const responseTime = Date.now() - startTime;
         stopPulse(pulse);
 
@@ -280,9 +306,23 @@ async function chatLoop(message, isToolOutput = false) {
             // 2. Handle Tool Call if present (or embedded JSON)
             let toolCall = data.toolCall;
             if (!toolCall && replyText) {
+                // Try fenced block first
                 const jsonBlock = replyText.match(/```json\s*([\s\S]*?)```/i);
-                const inlineJson = replyText.match(/({\s*"tool"\s*:[\s\S]*?})/i);
-                const candidate = jsonBlock?.[1] || inlineJson?.[1];
+                let candidate = jsonBlock?.[1];
+
+                // Fallback: balanced-brace scan for {"tool":...} anywhere in text
+                if (!candidate) {
+                    const start = replyText.search(/\{\s*"tool"\s*:/i);
+                    if (start !== -1) {
+                        let depth = 0, i = start;
+                        for (; i < replyText.length; i++) {
+                            if (replyText[i] === '{') depth++;
+                            else if (replyText[i] === '}') { depth--; if (depth === 0) { i++; break; } }
+                        }
+                        candidate = replyText.slice(start, i);
+                    }
+                }
+
                 if (candidate) {
                     try {
                         const parsed = JSON.parse(candidate);
@@ -316,12 +356,7 @@ async function chatLoop(message, isToolOutput = false) {
                         ? { command: args?.command || args?.cmd || args?.shell || args?.input || args }
                         : { tool, args };
 
-                    const toolExec = await fetch(endpoint, {
-                        method: 'POST',
-                        headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify(payload)
-                    });
-                    const toolData = await toolExec.json();
+                    const toolData = await httpPost(endpoint, payload, 30000);
                     stopPulse(toolPulse);
 
                     if (toolData.success) {
@@ -364,7 +399,7 @@ async function chatLoop(message, isToolOutput = false) {
 
     } catch (error) {
         stopPulse(pulse);
-        console.log('\x1b[31m✗ Connection lost\x1b[0m');
+        console.log(`\x1b[31m✗ Connection lost\x1b[0m (${error.message})`);
     }
 }
 

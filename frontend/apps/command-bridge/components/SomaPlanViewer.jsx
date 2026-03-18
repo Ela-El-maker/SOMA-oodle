@@ -11,18 +11,29 @@ const SomaPlanViewer = ({ isConnected }) => {
   const [loading, setLoading] = useState(false);
 
   const fetchPlan = useCallback(async () => {
+    if (!isConnected) return;
     setLoading(true);
     try {
-      const res = await fetch('/api/soma/plan');
-      const data = await res.json();
-      setContent(data.content || '');
-      setUpdatedAt(data.updatedAt);
-    } catch {
-      setContent('*Failed to load plan.*');
+      const response = await somaBackend.sendMessage({
+        from: 'SomaPlanViewer',
+        to: 'SomaUnifiedBackend',
+        type: 'plan:fetch',
+        payload: {}
+      });
+
+      if (response.success) {
+        setContent(response.plan || '');
+        setUpdatedAt(response.updatedAt);
+      } else {
+        setContent(`*Failed to load plan: ${response.error || 'Unknown error'}.*`);
+      }
+    } catch (error) {
+      console.error('Error fetching plan:', error);
+      setContent(`*Failed to load plan: ${error.message}.*`);
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [isConnected]);
 
   // Initial load
   useEffect(() => {

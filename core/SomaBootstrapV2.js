@@ -15,6 +15,7 @@ import { setupWebSocket } from '../server/loaders/websocket.js';
 import { loadLimbicSystem } from '../server/loaders/limbic.js';
 import { loadTradingSafety } from '../server/loaders/trading-safety.js';
 import { loadEssentialSystems, loadExtendedSystems } from '../server/loaders/extended.js';
+import { loadCOSSystems } from '../server/loaders/cos.js';
 import { BrainBridge } from '../server/BrainBridge.js';
 import { registry } from '../server/SystemRegistry.js';
 
@@ -49,14 +50,16 @@ export class SomaBootstrapV2 {
             if (this.system.knowledgeGraph) registry.markReady('KnowledgeGraph');
 
             // PHASE 2.1: Wrap QuadBrain in BrainBridge
-            // BrainBridge is a drop-in proxy: Phase 1 = direct (immediate), Phase 2 = worker thread.
-            // The worker starts in the background — no delay to core boot.
             if (this.system.quadBrain) {
                 const bridge = new BrainBridge(this.system.quadBrain);
                 this.system.quadBrain = bridge;
                 registry.markLoading('BrainWorker');
-                // Start worker non-blocking — falls back to direct if it fails
-                bridge.startWorker()
+                
+                // Get tools manifest to pass to worker
+                const toolsManifest = this.system.toolRegistry?.getToolsManifest() || [];
+
+                // Start worker non-blocking
+                bridge.startWorker({ toolsManifest })
                     .then(() => registry.markReady('BrainWorker'))
                     .catch(err => {
                         registry.markFailed('BrainWorker', err);
@@ -64,6 +67,10 @@ export class SomaBootstrapV2 {
                     });
                 console.log('[SOMA V2] BrainBridge active — worker starting in background');
             }
+
+            // PHASE 2.3: Cognitive Operating System (COS) - CNS & Perception
+            const cos = await loadCOSSystems(this.system);
+            this.system = { ...this.system, ...cos };
 
             // PHASE 2.5: Limbic System (Body & Soul)
             const limbic = await loadLimbicSystem(this.system);

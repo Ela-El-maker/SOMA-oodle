@@ -6,6 +6,7 @@
 
 import { fileURLToPath } from 'url';
 import { dirname, join } from 'path';
+import path from 'path';
 import http from 'http';
 import { config as dotenvConfig } from 'dotenv';
 import fs from 'fs';
@@ -147,6 +148,19 @@ process.stderr.on('error', (err) => {
 async function main() {
     try {
         cLog('ULTRA', '🟢 Initializing SOMA System...');
+
+        // ─── Database Health Check ───────────────────────────
+        const dbPath = path.join(__dirname, 'soma-memory.db');
+        if (fs.existsSync(dbPath)) {
+            const stats = fs.statSync(dbPath);
+            const sizeGB = stats.size / (1024 * 1024 * 1024);
+            if (sizeGB > 2.0) {
+                cLog('DATABASE', `⚠️  CRITICAL BLOAT: Database is ${sizeGB.toFixed(2)} GB!`, colors.red);
+                cLog('DATABASE', '⚠️  Reasoning timeouts are LIKELY. Run "node purge_memories.mjs" immediately.', colors.yellow);
+            } else {
+                cLog('DATABASE', `✅ Health: ${sizeGB.toFixed(2)} GB`, colors.green);
+            }
+        }
 
         // 1. Kill Zombies on main port only (cluster port 7777 has Windows system PIDs that cause loop)
         const PORT = 3001; // FIXED PORT

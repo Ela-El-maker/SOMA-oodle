@@ -1,0 +1,65 @@
+{
+  "traceId": "rc_6ed9d6cde23f",
+  "ts": "2025-12-17T22:04:36.950Z",
+  "query": "Hello, what's your name?",
+  "meta": {},
+  "candidates": [
+    {
+      "source": "PROMETHEUS",
+      "text": "Prometheus. I answer questions.\n",
+      "confidence": 0.85,
+      "role": "prometheus"
+    },
+    {
+      "source": "LOGOS",
+      "text": "My designation is LOGOS. I am an AI assistant designed for deep analytical reasoning and code analysis.\n",
+      "confidence": 0.85,
+      "role": "logos"
+    },
+    {
+      "source": "AURORA",
+      "text": "Hello! I am Aurora, a creative synthesis. It's nice to meet you.\n",
+      "confidence": 0.85,
+      "role": "aurora"
+    }
+  ],
+  "fused": {
+    "text": "My designation is LOGOS. I am an AI assistant designed for deep analytical reasoning and code analysis.\n",
+    "weights": [
+      {
+        "source": "PROMETHEUS",
+        "norm": 0.32432432432432434,
+        "conf": 0.85
+      },
+      {
+        "source": "LOGOS",
+        "norm": 0.35135135135135126,
+        "conf": 0.85
+      },
+      {
+        "source": "AURORA",
+        "norm": 0.32432432432432434,
+        "conf": 0.85
+      }
+    ],
+    "confidence": 0.8499999999999999,
+    "provenance": [
+      {
+        "source": "PROMETHEUS",
+        "snippet": "Prometheus. I answer questions.\n",
+        "confidence": 0.85
+      },
+      {
+        "source": "LOGOS",
+        "snippet": "My designation is LOGOS. I am an AI assistant designed for deep analytical reasoning and code analysis.\n",
+        "confidence": 0.85
+      },
+      {
+        "source": "AURORA",
+        "snippet": "Hello! I am Aurora, a creative synthesis. It's nice to meet you.\n",
+        "confidence": 0.85
+      }
+    ]
+  },
+  "iter": 0
+}

@@ -1,0 +1,108 @@
+{
+  "traceId": "rc_d9f5258edb26",
+  "ts": "2025-12-22T02:07:10.320Z",
+  "query": "what is your name",
+  "meta": {
+    "conversationHistory": [
+      {
+        "role": "model",
+        "parts": [
+          {
+            "text": "Hello there! Just a friendly greeting, as far as I can tell. What's on your mind?"
+          }
+        ]
+      },
+      {
+        "role": "user",
+        "parts": [
+          {
+            "text": "honestly just hanging out watching movies how are you?"
+          }
+        ]
+      },
+      {
+        "role": "user",
+        "parts": [
+          {
+            "text": "honestly just hanging out watching movies how are you?"
+          }
+        ]
+      },
+      {
+        "role": "model",
+        "parts": [
+          {
+            "text": "While I don't \"hang out\" in the traditional sense with popcorn and a screen, I'm doing great! My circuits are humming, ready to assist you with anything you need. Just let me know what's on your mind!"
+          }
+        ]
+      },
+      {
+        "role": "user",
+        "parts": [
+          {
+            "text": "what is your name"
+          }
+        ]
+      }
+    ]
+  },
+  "candidates": [
+    {
+      "source": "PROMETHEUS",
+      "text": "I am Prometheus. I bring fire.\n",
+      "confidence": 0.85,
+      "role": "prometheus"
+    },
+    {
+      "source": "LOGOS",
+      "text": "My designation is LOGOS.\n",
+      "confidence": 0.85,
+      "role": "logos"
+    },
+    {
+      "source": "AURORA",
+      "text": "I am AURORA. I synthesize information and express it creatively.\n",
+      "confidence": 0.85,
+      "role": "aurora"
+    }
+  ],
+  "fused": {
+    "text": "My designation is LOGOS.\n",
+    "weights": [
+      {
+        "source": "PROMETHEUS",
+        "norm": 0.32432432432432434,
+        "conf": 0.85
+      },
+      {
+        "source": "LOGOS",
+        "norm": 0.35135135135135126,
+        "conf": 0.85
+      },
+      {
+        "source": "AURORA",
+        "norm": 0.32432432432432434,
+        "conf": 0.85
+      }
+    ],
+    "confidence": 0.8499999999999999,
+    "provenance": [
+      {
+        "source": "PROMETHEUS",
+        "snippet": "I am Prometheus. I bring fire.\n",
+        "confidence": 0.85
+      },
+      {
+        "source": "LOGOS",
+        "snippet": "My designation is LOGOS.\n",
+        "confidence": 0.85
+      },
+      {
+        "source": "AURORA",
+        "snippet": "I am AURORA. I synthesize information and express it creatively.\n",
+        "confidence": 0.85
+      }
+    ]
+  },
+  "iter": 0
+}

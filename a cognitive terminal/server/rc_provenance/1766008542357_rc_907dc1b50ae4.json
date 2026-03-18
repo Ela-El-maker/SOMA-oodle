@@ -1,0 +1,65 @@
+{
+  "traceId": "rc_907dc1b50ae4",
+  "ts": "2025-12-17T21:55:42.357Z",
+  "query": "What is your name?",
+  "meta": {},
+  "candidates": [
+    {
+      "source": "PROMETHEUS",
+      "text": "Prometheus.\n",
+      "confidence": 0.85,
+      "role": "prometheus"
+    },
+    {
+      "source": "LOGOS",
+      "text": "My designation is LOGOS.\n",
+      "confidence": 0.85,
+      "role": "logos"
+    },
+    {
+      "source": "AURORA",
+      "text": "I am AURORA. I am a creative synthesis assistant.\n",
+      "confidence": 0.85,
+      "role": "aurora"
+    }
+  ],
+  "fused": {
+    "text": "My designation is LOGOS.\n",
+    "weights": [
+      {
+        "source": "PROMETHEUS",
+        "norm": 0.32432432432432434,
+        "conf": 0.85
+      },
+      {
+        "source": "LOGOS",
+        "norm": 0.35135135135135126,
+        "conf": 0.85
+      },
+      {
+        "source": "AURORA",
+        "norm": 0.32432432432432434,
+        "conf": 0.85
+      }
+    ],
+    "confidence": 0.8499999999999999,
+    "provenance": [
+      {
+        "source": "PROMETHEUS",
+        "snippet": "Prometheus.\n",
+        "confidence": 0.85
+      },
+      {
+        "source": "LOGOS",
+        "snippet": "My designation is LOGOS.\n",
+        "confidence": 0.85
+      },
+      {
+        "source": "AURORA",
+        "snippet": "I am AURORA. I am a creative synthesis assistant.\n",
+        "confidence": 0.85
+      }
+    ]
+  },
+  "iter": 0
+}

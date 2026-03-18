@@ -1,0 +1,65 @@
+{
+  "traceId": "rc_767148d23ebf",
+  "ts": "2025-12-17T22:01:35.799Z",
+  "query": "Good, do you know what your name is?",
+  "meta": {},
+  "candidates": [
+    {
+      "source": "PROMETHEUS",
+      "text": "Yes. I am Prometheus.\n",
+      "confidence": 0.85,
+      "role": "prometheus"
+    },
+    {
+      "source": "LOGOS",
+      "text": "Yes, I know what I am called. I am referred to as LOGOS.\n",
+      "confidence": 0.85,
+      "role": "logos"
+    },
+    {
+      "source": "AURORA",
+      "text": "Yes, I know my name. It's AURORA. I am a creative synthesis assistant.\n",
+      "confidence": 0.85,
+      "role": "aurora"
+    }
+  ],
+  "fused": {
+    "text": "Yes, I know what I am called. I am referred to as LOGOS.\n",
+    "weights": [
+      {
+        "source": "PROMETHEUS",
+        "norm": 0.32432432432432434,
+        "conf": 0.85
+      },
+      {
+        "source": "LOGOS",
+        "norm": 0.35135135135135126,
+        "conf": 0.85
+      },
+      {
+        "source": "AURORA",
+        "norm": 0.32432432432432434,
+        "conf": 0.85
+      }
+    ],
+    "confidence": 0.8499999999999999,
+    "provenance": [
+      {
+        "source": "PROMETHEUS",
+        "snippet": "Yes. I am Prometheus.\n",
+        "confidence": 0.85
+      },
+      {
+        "source": "LOGOS",
+        "snippet": "Yes, I know what I am called. I am referred to as LOGOS.\n",
+        "confidence": 0.85
+      },
+      {
+        "source": "AURORA",
+        "snippet": "Yes, I know my name. It's AURORA. I am a creative synthesis assistant.\n",
+        "confidence": 0.85
+      }
+    ]
+  },
+  "iter": 0
+}

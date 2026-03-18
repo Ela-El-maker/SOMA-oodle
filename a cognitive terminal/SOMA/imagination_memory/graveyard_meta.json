@@ -1,0 +1,1496 @@
+[
+  {
+    "signature": "4747a37222eaed73f02d3e5c48d601e80e23e7b9f12f02c385621d3855d1b4c8",
+    "deaths": 1,
+    "triography": {
+      "mass": 0.5565127294578409,
+      "charge": 1.3148236460755613,
+      "friction": 3.2821959050824296
+    }
+  },
+  {
+    "signature": "71e891b85c2c8560561c8bcaaba838ce87c4ebd6044a884a63b88debd0e78b30",
+    "deaths": 1,
+    "triography": {
+      "mass": 2.419507700760741,
+      "charge": 3.261351672011512,
+      "friction": 4.748460161541818
+    }
+  },
+  {
+    "signature": "861b6ffa4e75de532fb293bf6f3bd1807c843b1aa0ea4caf41d4701c785aa54e",
+    "deaths": 1,
+    "triography": {
+      "mass": 2.2955883248219298,
+      "charge": 1.5897667722822644,
+      "friction": 4.500660157089262
+    }
+  },
+  {
+    "signature": "cd77807260e4c300d271d616b83cd46ef55dde5e6bfab863e6c0fbef4e833854",
+    "deaths": 1,
+    "triography": {
+      "mass": 2.0705053803395614,
+      "charge": 0.8738026397598969,
+      "friction": 2.688078170454661
+    }
+  },
+  {
+    "signature": "d7fe648ff602d1f4c3aee6ca8ab964d45fef595a317f7faa5affd465bcb84fd0",
+    "deaths": 1,
+    "triography": {
+      "mass": 3.4135200319211023,
+      "charge": 1.0104914497744004,
+      "friction": 4.349871435696643
+    }
+  },
+  {
+    "signature": "a3eb296118982c2fb6d176ba114b1f805410c3ad52a663993e1dcb4f3892b6a7",
+    "deaths": 1,
+    "triography": {
+      "mass": 1.9880584227205722,
+      "charge": 0.733363471248773,
+      "friction": 2.9131918153359453
+    }
+  },
+  {
+    "signature": "f05374adcd0a4ec8724be44a6aad0e18db7406f9e2b05cd43ff730d6602a40f9",
+    "deaths": 1,
+    "triography": {
+      "mass": 1.0328367520343273,
+      "charge": 0.3390285957949002,
+      "friction": 4.312853797849352
+    }
+  },
+  {
+    "signature": "c68d2b8671e69fd28b1e8dcbaf95a7adc1293d87002603ca8b863bb3b5758c90",
+    "deaths": 1,
+    "triography": {
+      "mass": 3.6104095491979304,
+      "charge": 1.854502967261692,
+      "friction": 4.108889224675639
+    }
+  },
+  {
+    "signature": "83296e7307ca21804e6a701315905b721c645c353621947f4204b8413f1598ca",
+    "deaths": 1,
+    "triography": {
+      "mass": 1.2865823149980864,
+      "charge": 2.6602940233667276,
+      "friction": 3.473887723438648
+    }
+  },
+  {
+    "signature": "c9f6dc6b8599412b76534f37d41ae3a58482a81acefbc07daf23c7e0edec5e59",
+    "deaths": 1,
+    "triography": {
+      "mass": 2.1064676190891696,
+      "charge": 0.6872565403817216,
+      "friction": 3.7802979568811184
+    }
+  },
+  {
+    "signature": "d7fae1a1491141435dfdd479fdccd73fd7385a2a0d9e2a732fcaf745e0f32673",
+    "deaths": 1,
+    "triography": {
+      "mass": 2.8630941043506146,
+      "charge": 2.427851344641228,
+      "friction": 4.984900396985442
+    }
+  },
+  {
+    "signature": "adbc52ec14d38d08646331198a4f2429abd6f62408ae0e8c753c9286cc43817d",
+    "deaths": 1,
+    "triography": {
+      "mass": 0.16414873804054375,
+      "charge": 2.765095511429459,
+      "friction": 2.919713893281106
+    }
+  },
+  {
+    "signature": "a69260568f424754227b02a0f0b6902d39ff3af528189df283e9682ee757bf73",
+    "deaths": 1,
+    "triography": {
+      "mass": 0.21602131147133885,
+      "charge": 2.8622953632601638,
+      "friction": 3.5297329286858314
+    }
+  },
+  {
+    "signature": "62c8d2ee9fa1082b37b8d72d98559bf67beb20a6d7360bafba3d5987944c6ee1",
+    "deaths": 1,
+    "triography": {
+      "mass": 3.132101837959521,
+      "charge": 0.6172542984695734,
+      "friction": 4.812406472939269
+    }
+  },
+  {
+    "signature": "0a5e166ba7ef6d64d509e06480fd986624d3fc4fd4ce15add47a89a6e096d53f",
+    "deaths": 1,
+    "triography": {
+      "mass": 2.9673477039621114,
+      "charge": 3.699716833398696,
+      "friction": 4.948711301829926
+    }
+  },
+  {
+    "signature": "796079bbae0fe5f1a480249777ccc01ee16b0b13fb77e33128ad489a2806b913",
+    "deaths": 1,
+    "triography": {
+      "mass": 0.5952736884719656,
+      "charge": 0.7538859325832731,
+      "friction": 3.0677727748388617
+    }
+  },
+  {
+    "signature": "97075abaf23ddada84ce30b93f2196f9f07afe2ee1da4d1f727aa37edefa70f0",
+    "deaths": 1,
+    "triography": {
+      "mass": 3.5296151665518103,
+      "charge": 2.3008834935284144,
+      "friction": 4.139804997044475
+    }
+  },
+  {
+    "signature": "962937ef7a69cbc37ab5c2834217d856a4917ded12b858ee468cc293ca91d3c4",
+    "deaths": 1,
+    "triography": {
+      "mass": 0.13217783320465026,
+      "charge": 0.23439304274666395,
+      "friction": 4.805073134496608
+    }
+  },
+  {
+    "signature": "60abe5e09919444655632d014f92bf91ca26d07193adf552260133ec79d37de3",
+    "deaths": 1,
+    "triography": {
+      "mass": 3.682394783205644,
+      "charge": 2.369647984537218,
+      "friction": 4.672801594476081
+    }
+  },
+  {
+    "signature": "57534067b4832e2cf609cf983e08d3385e9d2f1786346435f4d01570583ec4ea",
+    "deaths": 1,
+    "triography": {
+      "mass": 3.0909787378544746,
+      "charge": 0.05390293869318108,
+      "friction": 4.847885008702346
+    }
+  },
+  {
+    "signature": "b7b6871798c3a2fea3304f42a5e4f6b02ca5886b37d90bee86abe336711a3b7e",
+    "deaths": 1,
+    "triography": {
+      "mass": 2.2976874256146114,
+      "charge": 0.3769653377390797,
+      "friction": 2.8176820060896186
+    }
+  },
+  {
+    "signature": "16acc1c057980c92efae7d822ecc1c057aef2d4a645ec061590f299cff2564f1",
+    "deaths": 1,
+    "triography": {
+      "mass": 1.874468175653194,
+      "charge": 0.7467260539626269,
+      "friction": 3.191934737106585
+    }
+  },
+  {
+    "signature": "c4a82cbe825e2bf9caa509372743c606ad003c2b9d1b298c05d9ca6a59ab31e2",
+    "deaths": 1,
+    "triography": {
+      "mass": 2.6705802863588057,
+      "charge": 2.5037604377968186,
+      "friction": 4.61071306049292
+    }
+  },
+  {
+    "signature": "027e811a43b7584f50669afa107271a769d12a52fb09579cfce1c819357a75b1",
+    "deaths": 1,
+    "triography": {
+      "mass": 3.0659313802788395,
+      "charge": 0.6039947054004141,
+      "friction": 4.592101222449282
+    }
+  },
+  {
+    "signature": "31fbe5b20baf13e40b522f59d6c0839684d1992e7b704ad5fa5b86de01afe0a0",
+    "deaths": 1,
+    "triography": {
+      "mass": 4.591628261077493,
+      "charge": 0.9748426103588892,
+      "friction": 4.559160591049355
+    }
+  },
+  {
+    "signature": "e47dbea78c55193352cc126522c34c3b0d73d39e3e96329db18ef5f6a121159e",
+    "deaths": 178,
+    "triography": {
+      "mass": 3.872173089170829,
+      "charge": 0.8091497180001006,
+      "friction": 4.292234901656071
+    }
+  },
+  {
+    "signature": "41caf9810510bc7a039379b7ac18354ef3d20614c5a64fb2554f9bf7d76d0098",
+    "deaths": 1,
+    "triography": {
+      "mass": 1.5826174148582017,
+      "charge": 0.00158203719990202,
+      "friction": 4.36460110915992
+    }
+  },
+  {
+    "signature": "f79061292d369c9eb73552fccb92562bb9fbd05768b2dc952fe9c9e753357508",
+    "deaths": 1,
+    "triography": {
+      "mass": 3.445979874225423,
+      "charge": 0.16124713033097815,
+      "friction": 3.195713822941358
+    }
+  },
+  {
+    "signature": "fd6bfbfb404ad2e6ed1fbdf2317f2a06dc7b884fcbd24c332e141a69f9cd9984",
+    "deaths": 1,
+    "triography": {
+      "mass": 0.7910019857760675,
+      "charge": 1.3147609648857967,
+      "friction": 2.0286828580847818
+    }
+  },
+  {
+    "signature": "9b4554378addbec040e9adaa9b31fa4cecfd8cf2fc351ec1a0dce29643c3c682",
+    "deaths": 1,
+    "triography": {
+      "mass": 4.957480828368367,
+      "charge": 0.4764366479512472,
+      "friction": 3.9132423278137836
+    }
+  },
+  {
+    "signature": "2775b7db8d31c1647e6d29b0ba249e71d1ab816060b1b046f9d3116bda4116c0",
+    "deaths": 1,
+    "triography": {
+      "mass": 1.1471243244536122,
+      "charge": 2.511844868101809,
+      "friction": 4.763709478488064
+    }
+  },
+  {
+    "signature": "e9047d856a6fa9bc07aca8a5c1e20cf30bed8b81fe688514b01fa4d118e4d85a",
+    "deaths": 1,
+    "triography": {
+      "mass": 0.13046792880472335,
+      "charge": 1.1585863468676771,
+      "friction": 3.274061443208709
+    }
+  },
+  {
+    "signature": "a528bb0307b37d1ec40a0394eabb9ca6ddf1fd8acbbd0f5c3c0ffb16a833e391",
+    "deaths": 1,
+    "triography": {
+      "mass": 3.464266551857247,
+      "charge": 1.3437607498517417,
+      "friction": 4.489588775465432
+    }
+  },
+  {
+    "signature": "7c25fdab0499f62e9cdcc4f28bee4217eb891a67f53ec77025d26f2daa1a2427",
+    "deaths": 1,
+    "triography": {
+      "mass": 4.215565497765773,
+      "charge": 1.7156221917604653,
+      "friction": 4.28072533378614
+    }
+  },
+  {
+    "signature": "296e7d3c5099133701ae8c6acc17ae54a9054595efe4768bfd264dd643338be3",
+    "deaths": 1,
+    "triography": {
+      "mass": 1.2890348943288328,
+      "charge": 0.16450363587023675,
+      "friction": 3.8267252093469786
+    }
+  },
+  {
+    "signature": "a3a0a87b7490491b42a3fe3a183f94ed13532b47cf839134b06d1de2e9096280",
+    "deaths": 1,
+    "triography": {
+      "mass": 0.4151431413178258,
+      "charge": 0.8198462351767649,
+      "friction": 1.452357449788585
+    }
+  },
+  {
+    "signature": "67f89f2eb689b91d2b5250d27ab7535e4e049caec1b0755b7ff39db7edd767c2",
+    "deaths": 1,
+    "triography": {
+      "mass": 1.7944465767753544,
+      "charge": 0.4838743261310535,
+      "friction": 3.6118250987317113
+    }
+  },
+  {
+    "signature": "8240ebb5e642cbc83a6ea76bbe5a8aa1895a4b984777bc249f29299baf8fdea9",
+    "deaths": 1,
+    "triography": {
+      "mass": 0.9962094482299444,
+      "charge": 2.816591023597956,
+      "friction": 3.517014438170797
+    }
+  },
+  {
+    "signature": "ab99736c89fd5b39520af1f752f91b0438cb0d004dce424fdf57bd3cc960f803",
+    "deaths": 1,
+    "triography": {
+      "mass": 2.982609369965232,
+      "charge": 0.3210340900849945,
+      "friction": 3.934362087550735
+    }
+  },
+  {
+    "signature": "cd61829c09d7df9088e81df52a5ba0f88487ed31182ef6763a687a688e9be052",
+    "deaths": 1,
+    "triography": {
+      "mass": 0.5018491959316412,
+      "charge": 2.4498213263932023,
+      "friction": 3.661788626672119
+    }
+  },
+  {
+    "signature": "7b545e25af7e9b855f0f3d4de2df88321b5acee359a09135513390d67cb28e91",
+    "deaths": 1,
+    "triography": {
+      "mass": 0.43329206477270343,
+      "charge": 0.027810867386220406,
+      "friction": 3.268921189281566
+    }
+  },
+  {
+    "signature": "4a9712ada5c816787cade7a3d5d84297dfdea910b82f149bedfe805dc0a24ae9",
+    "deaths": 1,
+    "triography": {
+      "mass": 4.192379907320855,
+      "charge": 0.4576120901769676,
+      "friction": 3.2178028790109865
+    }
+  },
+  {
+    "signature": "289c4ea98370b5078e9534394047371cb52c0aef0bbc375ff9069fce645bbc0f",
+    "deaths": 1,
+    "triography": {
+      "mass": 0.4039844759659206,
+      "charge": 2.788643524973624,
+      "friction": 3.4250958012621693
+    }
+  },
+  {
+    "signature": "b821902b63762629233b9b74d4b4c3dfcc94af0e5e3dcfc99a6a3e325064439b",
+    "deaths": 1,
+    "triography": {
+      "mass": 2.808747764579762,
+      "charge": 1.0743464434912404,
+      "friction": 3.4023017226493706
+    }
+  },
+  {
+    "signature": "e84144d0ba9e083ab319cafb579e84db39653d5ee1df0d9f86bef15cf76617b0",
+    "deaths": 1,
+    "triography": {
+      "mass": 0.5888236204339409,
+      "charge": 2.729605462492425,
+      "friction": 4.983878384303543
+    }
+  },
+  {
+    "signature": "9b6bde5c589ef2d60453d586d72f28749c7eb69c3acccd9e04c57ad03fb35565",
+    "deaths": 1,
+    "triography": {
+      "mass": 1.9925454424733817,
+      "charge": 2.0205600600018716,
+      "friction": 3.8952390991561936
+    }
+  },
+  {
+    "signature": "ce6c1ec8475f4bcea505d75794944b393ff420ed5840e004d2c3585ce738188e",
+    "deaths": 1,
+    "triography": {
+      "mass": 2.622733116450442,
+      "charge": 0.5952663553566251,
+      "friction": 3.7198431190881864
+    }
+  },
+  {
+    "signature": "24bb7f4966bf98fc83182422fec6aea2caff77582f5f83cb2a68095371f583df",
+    "deaths": 1,
+    "triography": {
+      "mass": 0.07308982864306429,
+      "charge": 4.128213403937948,
+      "friction": 3.7756731987225676
+    }
+  },
+  {
+    "signature": "f20e56a0027e997563390072177797c055b9437bbd0f7265a0ed73918f411a39",
+    "deaths": 1,
+    "triography": {
+      "mass": 1.693991738960784,
+      "charge": 0.5458142483197082,
+      "friction": 1.9071532341713482
+    }
+  },
+  {
+    "signature": "c213cb0a001340707b9afb01bce39a1a03aacc890d3ee6122fa63c32da0cc945",
+    "deaths": 1,
+    "triography": {
+      "mass": 3.86556313534618,
+      "charge": 2.306525541790443,
+      "friction": 4.976720989762794
+    }
+  },
+  {
+    "signature": "b5da8dced78eeb2caca3ed849128fbdc46e144e091260f2d9e9f1c8b852fc672",
+    "deaths": 1,
+    "triography": {
+      "mass": 0.07659676465797571,
+      "charge": 2.2885550785735562,
+      "friction": 2.911871606058449
+    }
+  },
+  {
+    "signature": "126f0d183948fa218099d847f81fe9b72f1308eb225f2f0cda439910976efb43",
+    "deaths": 1,
+    "triography": {
+      "mass": 4.020572746971796,
+      "charge": 1.037620867885774,
+      "friction": 3.6900605356287874
+    }
+  },
+  {
+    "signature": "eebbd49ca933c13bceeabe342fb6970e6876f4a92bf12f4756bfca418a1358b3",
+    "deaths": 1,
+    "triography": {
+      "mass": 0.486828498058825,
+      "charge": 0.9666371851317901,
+      "friction": 4.292240707020778
+    }
+  },
+  {
+    "signature": "86a504e26b6e69bbf51d4285773a056d605b74c14803c026a19a01536e07309d",
+    "deaths": 1,
+    "triography": {
+      "mass": 1.3455548459211792,
+      "charge": 0.8268058384160049,
+      "friction": 4.753621588060522
+    }
+  },
+  {
+    "signature": "0103f21b9a43de08a005fd4a74576c98f0c38f41ecb9f0477b2c837a87485363",
+    "deaths": 1,
+    "triography": {
+      "mass": 1.7895667514098013,
+      "charge": 1.1008300772271888,
+      "friction": 4.8106739430181555
+    }
+  },
+  {
+    "signature": "fa99c5fe9a0bff99103a67c2fa26e11338fa56bed8f991630ec073f4c45556c5",
+    "deaths": 1,
+    "triography": {
+      "mass": 0.9954968892032007,
+      "charge": 1.7446037058872688,
+      "friction": 3.9590356524522496
+    }
+  },
+  {
+    "signature": "5209dd3b3b42ca21bd5ff842c69adc886592562c071ce44a5c51dc5709e56077",
+    "deaths": 1,
+    "triography": {
+      "mass": 1.9812917456267125,
+      "charge": 1.2199144519382337,
+      "friction": 4.5115618360555745
+    }
+  },
+  {
+    "signature": "2336aa2c5ed6f689ae4468d85c96bbc08fdab06e32a2099a7950783b8dc7dc2c",
+    "deaths": 1,
+    "triography": {
+      "mass": 3.7715422537970804,
+      "charge": 0.036392990009496695,
+      "friction": 3.7444677935879795
+    }
+  },
+  {
+    "signature": "788b086f70141e9f6d9b6af32e155bc70e934d3e501b573d3b521699bde5abab",
+    "deaths": 1,
+    "triography": {
+      "mass": 2.2061000940401905,
+      "charge": 0.6239287513857228,
+      "friction": 3.1183373571060207
+    }
+  },
+  {
+    "signature": "63ee6f3fa8c972ff1c91bdaca1d08615c7bc687df90ab5c65049bb40bf5244a3",
+    "deaths": 1,
+    "triography": {
+      "mass": 1.15090255526216,
+      "charge": 0.4526559468986957,
+      "friction": 1.5700909440372401
+    }
+  },
+  {
+    "signature": "e0cc2bf4747c15efc62fca24292bd6cb90fad40a42e5ebd5079180bb51a0b0d0",
+    "deaths": 1,
+    "triography": {
+      "mass": 0.7478960057218753,
+      "charge": 2.4355984060739106,
+      "friction": 3.2269549364107797
+    }
+  },
+  {
+    "signature": "167ecaa2ce728957af9d83b9aeed64b1c0069b78a3f00566eee3c46ead15ad6c",
+    "deaths": 1,
+    "triography": {
+      "mass": 0.7060340541965321,
+      "charge": 0.5007485403892142,
+      "friction": 3.300291647872326
+    }
+  },
+  {
+    "signature": "efa256236ce7400345286afd236747de83dc5657d1bc8bc46d6a24324f66a076",
+    "deaths": 1,
+    "triography": {
+      "mass": 0.9843551449927423,
+      "charge": 0.1730367778164571,
+      "friction": 4.416065124387608
+    }
+  },
+  {
+    "signature": "66e4f5fcbd021b7c516fa1e8dcd7088b7d85138d095a74dc0111a17645c5e575",
+    "deaths": 1,
+    "triography": {
+      "mass": 4.047665789601865,
+      "charge": 1.592994472020865,
+      "friction": 4.80904186271343
+    }
+  },
+  {
+    "signature": "1591b5238dc776566bfc5fdcb3e9293b0ad03ab5f3dd0e0d19e1890248136a45",
+    "deaths": 1,
+    "triography": {
+      "mass": 4.998613760807705,
+      "charge": 1.7142625774287368,
+      "friction": 4.943543870946689
+    }
+  },
+  {
+    "signature": "97e4c80538cfefc211c4cc4ae96dedf0dc3bbcd0e5bed21a6eeef8e2e4a78e94",
+    "deaths": 1,
+    "triography": {
+      "mass": 1.687206822090761,
+      "charge": 0.8477802209691082,
+      "friction": 3.4531729244177662
+    }
+  },
+  {
+    "signature": "b18fcf8eb4c786dd428a4a4705916dcdaac1c0749d199834338154978c1f1fda",
+    "deaths": 1,
+    "triography": {
+      "mass": 1.248753469997903,
+      "charge": 0.8624379542864585,
+      "friction": 4.695953064741008
+    }
+  },
+  {
+    "signature": "ca1d98ee6e44ca31eb04aab54deece56b3dd5fbd608336359b4c55580f7cebf9",
+    "deaths": 1,
+    "triography": {
+      "mass": 3.922030562355281,
+      "charge": 1.162303986569292,
+      "friction": 3.569775385639136
+    }
+  },
+  {
+    "signature": "6f98dafe4d394393898822a2221462f3434fd34666fe4413915bcf7088ff67b2",
+    "deaths": 1,
+    "triography": {
+      "mass": 1.4305583812392357,
+      "charge": 1.8281153478716283,
+      "friction": 3.8393180449689517
+    }
+  },
+  {
+    "signature": "9aed853cd1b4c069f13a1cbe865537803eedef57811096fb2983103a20c53e36",
+    "deaths": 1,
+    "triography": {
+      "mass": 0.27412859743188633,
+      "charge": 3.004791964775888,
+      "friction": 4.899864450696226
+    }
+  },
+  {
+    "signature": "d27fb312de59f3e74fea6813928ec48d5ff932028fe3665a19b1d4c40e9e440c",
+    "deaths": 1,
+    "triography": {
+      "mass": 0.8543944575778728,
+      "charge": 3.352308858697821,
+      "friction": 4.71712615713646
+    }
+  },
+  {
+    "signature": "946f23fc4352a73c4d18fc1ebd0fbf42edde29d06e641c0f6b76440981651dc2",
+    "deaths": 1,
+    "triography": {
+      "mass": 4.140617998675303,
+      "charge": 1.1994605859777296,
+      "friction": 4.088280349459637
+    }
+  },
+  {
+    "signature": "0bac6da373e77d55c47543b487b91f17b51c901cca6e060895a4f91963c0cf67",
+    "deaths": 1,
+    "triography": {
+      "mass": 0.12741304401392373,
+      "charge": 4.469641037368024,
+      "friction": 4.2317898454066585
+    }
+  },
+  {
+    "signature": "a0d56aa84f8096ae438ac7a31d154842f9b312e67aa9c5c47f976a88d6720ece",
+    "deaths": 1,
+    "triography": {
+      "mass": 3.307419575998903,
+      "charge": 1.064485202896193,
+      "friction": 3.7686248848624078
+    }
+  },
+  {
+    "signature": "a4ccbff692847cbda089590e10baa37f7175011aa70c4cfa04ffbaf20db7bcd1",
+    "deaths": 1,
+    "triography": {
+      "mass": 0.31335584244270026,
+      "charge": 0.7896623662772396,
+      "friction": 1.3919566716876892
+    }
+  },
+  {
+    "signature": "065429d3b474c40cb9106deea8d48fce6ef269ff66d24708f33ecf314da99f5c",
+    "deaths": 1,
+    "triography": {
+      "mass": 2.656743663375534,
+      "charge": 1.8597278437568772,
+      "friction": 3.6816283578635742
+    }
+  },
+  {
+    "signature": "34f2a320b98738fa6844ee0165a6f9b4bebe032f236fe3c114ce47c4fa0b3754",
+    "deaths": 1,
+    "triography": {
+      "mass": 2.056203105916772,
+      "charge": 1.6646795885695032,
+      "friction": 3.134752875226439
+    }
+  },
+  {
+    "signature": "ea27784964abec22b723d98eb40010f02bbc9deb7c4c5f48a2023b73d7d23ef2",
+    "deaths": 1,
+    "triography": {
+      "mass": 1.3468818183723419,
+      "charge": 2.291526671841399,
+      "friction": 4.6942184911922045
+    }
+  },
+  {
+    "signature": "b019e9972b9905ba853a5db36b94d030d93c62b1c614e41952d99df6cbe30547",
+    "deaths": 1,
+    "triography": {
+      "mass": 0.7078087830798013,
+      "charge": 3.479701279856688,
+      "friction": 3.636566503311963
+    }
+  },
+  {
+    "signature": "2d797202ced816011eba159db112856622a9d33ad5657dfa3ed56eb774f95926",
+    "deaths": 1,
+    "triography": {
+      "mass": 3.316987359049958,
+      "charge": 0.24451303052683893,
+      "friction": 4.916283709230213
+    }
+  },
+  {
+    "signature": "9c387004ae385c0e096e9ddda20c58a687df3bd59c94804d73af6fc3aa31dc51",
+    "deaths": 1,
+    "triography": {
+      "mass": 0.8316157849317607,
+      "charge": 2.043788593315607,
+      "friction": 4.6178076750843395
+    }
+  },
+  {
+    "signature": "58c484e92e31e3716e1b38fdbfb3a62274f6a5e3834e5bd079f5b08d41d91ab2",
+    "deaths": 1,
+    "triography": {
+      "mass": 0.30407915775467975,
+      "charge": 1.3494658438210816,
+      "friction": 4.313201062212209
+    }
+  },
+  {
+    "signature": "82fb5883cdc290dee0c479502b87a05d5ace167e392d6d3fddaff59d0ecf8ddd",
+    "deaths": 1,
+    "triography": {
+      "mass": 3.230820712359102,
+      "charge": 1.7850209330912787,
+      "friction": 4.153569440008712
+    }
+  },
+  {
+    "signature": "5c02af69fb5b20fe9815eb50c5e01c22acd941d362c3f3192548a35cd7ee46cc",
+    "deaths": 1,
+    "triography": {
+      "mass": 0.6800056370822771,
+      "charge": 2.0571144342233207,
+      "friction": 4.504225061083119
+    }
+  },
+  {
+    "signature": "0ad7922e3b3ccef5113bea21688571124fc4ecded130f1212efb00562736d569",
+    "deaths": 1,
+    "triography": {
+      "mass": 0.8944227835459029,
+      "charge": 3.578367039681015,
+      "friction": 3.9210214145435334
+    }
+  },
+  {
+    "signature": "1c660eb6d007f3a31b59151529b3e7448b07607d48c81692f5dc38dad2c39805",
+    "deaths": 1,
+    "triography": {
+      "mass": 4.113948171842801,
+      "charge": 0.3545657434716831,
+      "friction": 4.757419347452884
+    }
+  },
+  {
+    "signature": "417ba72cc67f4307126efdb5385f0b71cd2b850a69e46cb714951b015484f61c",
+    "deaths": 1,
+    "triography": {
+      "mass": 1.9623350612439832,
+      "charge": 3.6688715481215275,
+      "friction": 4.391992048578562
+    }
+  },
+  {
+    "signature": "86144724bb0826afd976b97d715783e26b27cc8f5a14177742bdc1efa2867178",
+    "deaths": 1,
+    "triography": {
+      "mass": 1.7998768654696669,
+      "charge": 0.7850366501442219,
+      "friction": 3.229269276493441
+    }
+  },
+  {
+    "signature": "7886fe0f28d87d3e0c943fea9d1e67c53c7b222437ac3c8bac06d8a55effcde8",
+    "deaths": 1,
+    "triography": {
+      "mass": 0.14555546083821536,
+      "charge": 2.8594741317289083,
+      "friction": 4.640271348188076
+    }
+  },
+  {
+    "signature": "4d46db9cf33984be7f0e956aa848e90db79b32803623ca92731f8cac5d79846b",
+    "deaths": 1,
+    "triography": {
+      "mass": 0.5724223697643183,
+      "charge": 1.9394623845788306,
+      "friction": 3.099225090519714
+    }
+  },
+  {
+    "signature": "2af138a9364315ff9b82e7404f36a325fe595accafd5f7b04157a5e3ca4c41d6",
+    "deaths": 1,
+    "triography": {
+      "mass": 0.5608083332061153,
+      "charge": 1.662952848447032,
+      "friction": 3.5513996991245893
+    }
+  },
+  {
+    "signature": "d0eef51cd18aada8535ebde205a0c9739394c17bffd655f1e977da3e9bbfc9c4",
+    "deaths": 1,
+    "triography": {
+      "mass": 2.825709407542277,
+      "charge": 1.3808198939961236,
+      "friction": 3.162570278978696
+    }
+  },
+  {
+    "signature": "6caa5f551469db1dcc289ede365182e192e76eea481e503b84bf350b062a1d51",
+    "deaths": 1,
+    "triography": {
+      "mass": 2.1472492238123775,
+      "charge": 0.39808647533658814,
+      "friction": 4.038159081987156
+    }
+  },
+  {
+    "signature": "442767351ce60cdc0dac0655cf51efe40810d0eba9ee52d4e3b1921d4515e4ee",
+    "deaths": 1,
+    "triography": {
+      "mass": 4.308709314271778,
+      "charge": 0.7735509517246242,
+      "friction": 3.6741055713836386
+    }
+  },
+  {
+    "signature": "adfa07dea9442a72df62a06cf3b36d049e7b40346da88b6370673c1a28ded225",
+    "deaths": 1,
+    "triography": {
+      "mass": 3.894611010777844,
+      "charge": 1.5295586364326903,
+      "friction": 3.720540533057168
+    }
+  },
+  {
+    "signature": "68f731384f8a9337e1d0566e02ee6228846ca13d2b1f0a79a11e0f1b6dee785c",
+    "deaths": 1,
+    "triography": {
+      "mass": 0.26068607401341926,
+      "charge": 0.03053035070121446,
+      "friction": 4.689686290988322
+    }
+  },
+  {
+    "signature": "75b75165ffa2a61c219c85095cf29c1dad10d0ea3747f1ded8fce2452ffd8b44",
+    "deaths": 1,
+    "triography": {
+      "mass": 0.299252396722981,
+      "charge": 3.8339326136273133,
+      "friction": 4.45540975549948
+    }
+  },
+  {
+    "signature": "496c4afb8c83410076e964362db946cd05f0ccb503db4819dfdf47b5b9aeb4ce",
+    "deaths": 1,
+    "triography": {
+      "mass": 0.340189660827786,
+      "charge": 0.11685992577698034,
+      "friction": 2.716113104269862
+    }
+  },
+  {
+    "signature": "72d34b0fa862ebe29cffa945a2e0387f66e625e0ec00337c6fb91db1f74dcfb0",
+    "deaths": 1,
+    "triography": {
+      "mass": 1.9527981862457322,
+      "charge": 0.6527480565260191,
+      "friction": 2.591034635489133
+    }
+  },
+  {
+    "signature": "7e117ff9292ec1b76dc3409b751b3e55e7920e6d3df587ea62b8a67ffe97fb9e",
+    "deaths": 1,
+    "triography": {
+      "mass": 3.9284325868582655,
+      "charge": 3.180694403646322,
+      "friction": 4.9779811993761305
+    }
+  },
+  {
+    "signature": "ab5c168f0d301d5b16bcf6372f33ed0caafa2bcc0d3c48e4329ae357b76de876",
+    "deaths": 1,
+    "triography": {
+      "mass": 0.37573555111242274,
+      "charge": 1.6711935665483306,
+      "friction": 3.0091725958986837
+    }
+  },
+  {
+    "signature": "a09e5076e01d0783311c0596b55371ee0e9b7596ac5b2035ef79a1770027ea60",
+    "deaths": 1,
+    "triography": {
+      "mass": 2.2994930581783275,
+      "charge": 2.2529059408042085,
+      "friction": 4.790152282547354
+    }
+  },
+  {
+    "signature": "591b5f6173b5d25cd5fa05b276d984d9009b887d4cda699f18c8c4cf02d8bfb4",
+    "deaths": 1,
+    "triography": {
+      "mass": 3.4203036707043872,
+      "charge": 2.0571414540913087,
+      "friction": 3.881690504383526
+    }
+  },
+  {
+    "signature": "86ffd4746b1be10d8d4450a44200cb40157c0f339726000920f8662c2e8bfd1d",
+    "deaths": 1,
+    "triography": {
+      "mass": 0.49438291937824397,
+      "charge": 2.034842806889494,
+      "friction": 3.685099961708201
+    }
+  },
+  {
+    "signature": "e32045ab5e30ee996f9b6348757533733feb4dfe1bb3efc65ea7dca424458809",
+    "deaths": 1,
+    "triography": {
+      "mass": 3.9260826705652576,
+      "charge": 1.169898396108271,
+      "friction": 4.827908291097229
+    }
+  },
+  {
+    "signature": "8fce18bd84bbd952b48470cbcbffbb75d3a696d9dded08192adfec5cc306654b",
+    "deaths": 1,
+    "triography": {
+      "mass": 0.9240383759905579,
+      "charge": 0.19463248939971256,
+      "friction": 4.201582040754584
+    }
+  },
+  {
+    "signature": "a5525ba4ef053938916f4ab037eadf7090ef5ec4cebad5c9cbf9b10780e6168e",
+    "deaths": 1,
+    "triography": {
+      "mass": 2.6012831824687623,
+      "charge": 3.039981176169697,
+      "friction": 4.955379895955242
+    }
+  },
+  {
+    "signature": "11875297c4b45b58f8de985129138926aa7d638b11c6a8fdd740f87d7767de3d",
+    "deaths": 1,
+    "triography": {
+      "mass": 1.2758090021149053,
+      "charge": 0.27663267575711137,
+      "friction": 2.300040262567518
+    }
+  },
+  {
+    "signature": "364a7c81e1ef76cebc919e9b4e39d8b3f62b16c0e4207a9e140e6e3b105a4937",
+    "deaths": 1,
+    "triography": {
+      "mass": 0.6897346465775289,
+      "charge": 0.16987695436590955,
+      "friction": 2.0834763378524594
+    }
+  },
+  {
+    "signature": "3049712bb1037b2738a5b2f544abc2eab687f116858fa62168c7d1e38267f397",
+    "deaths": 1,
+    "triography": {
+      "mass": 1.2488364800210978,
+      "charge": 1.731870825922055,
+      "friction": 2.9526733990332463
+    }
+  },
+  {
+    "signature": "9c238611d5ea5f0f932aa25083526f8edee9812851020858788c9d8482b01fbf",
+    "deaths": 1,
+    "triography": {
+      "mass": 3.301446491801206,
+      "charge": 1.845511058158641,
+      "friction": 4.127193177649044
+    }
+  },
+  {
+    "signature": "c636d328d37ba295fdbed245fdce9e75058cba2c7f06e688c0fb0fe3488191db",
+    "deaths": 1,
+    "triography": {
+      "mass": 0.3783521887169089,
+      "charge": 0.5369844365325116,
+      "friction": 3.5507927786742117
+    }
+  },
+  {
+    "signature": "acc047fe35bb1ed94cd6dfd3d56245bd83d7787e0d40f93468146ad90b9490e4",
+    "deaths": 1,
+    "triography": {
+      "mass": 3.330483086356905,
+      "charge": 0.9250252328791864,
+      "friction": 4.021293689098365
+    }
+  },
+  {
+    "signature": "a42000f6bf4f378223416d3b2eb9cfd3dca87a323aa08c063e6b4910ce116a2f",
+    "deaths": 1,
+    "triography": {
+      "mass": 0.5722646176835011,
+      "charge": 4.155542393764095,
+      "friction": 4.289006632970632
+    }
+  },
+  {
+    "signature": "72e0459b41861041194fb717da22965e9fb7457b4c5540882412b29389b1fb74",
+    "deaths": 1,
+    "triography": {
+      "mass": 2.9557482677623925,
+      "charge": 0.46159766542929637,
+      "friction": 4.92487340424167
+    }
+  },
+  {
+    "signature": "55732030b439257c0d818b15dacc80a8dbe5137be127af5ec35cc05b9fcf9193",
+    "deaths": 1,
+    "triography": {
+      "mass": 2.0214533096427143,
+      "charge": 2.031121833687841,
+      "friction": 3.8039581530300355
+    }
+  },
+  {
+    "signature": "ca5119928ea8ff1e27728111fba49d202d5225c62726f25247f7fb926960fb94",
+    "deaths": 1,
+    "triography": {
+      "mass": 2.512427504508615,
+      "charge": 2.8025731008223413,
+      "friction": 4.908164713008787
+    }
+  },
+  {
+    "signature": "33669c7cdb196fbebb449a32a5730d775ef2ad0054c2336ffd4859e69c5b07e3",
+    "deaths": 1,
+    "triography": {
+      "mass": 2.2388576093071615,
+      "charge": 0.9677844861003039,
+      "friction": 2.4879527990499595
+    }
+  },
+  {
+    "signature": "e40a61c064709f6235730170b8a9263d956dda4c6a3b108cd862c6bf407a6c10",
+    "deaths": 1,
+    "triography": {
+      "mass": 2.6918395243293674,
+      "charge": 0.35721866319558426,
+      "friction": 2.3891025078263888
+    }
+  },
+  {
+    "signature": "ca6f223061bbd3788bc39c178510377f2aa9a3b5400a3dacb61665599dfa2641",
+    "deaths": 1,
+    "triography": {
+      "mass": 4.422313798571661,
+      "charge": 0.37273168069319296,
+      "friction": 3.7964637277052264
+    }
+  },
+  {
+    "signature": "17d75c1cacb61f06f8a3f9ffafe57777187f739fdf250d0f61c6dc90d4b464bf",
+    "deaths": 1,
+    "triography": {
+      "mass": 0.11563984971402597,
+      "charge": 0.17393819241685204,
+      "friction": 4.3563650968266785
+    }
+  },
+  {
+    "signature": "47cc185dc72a5c860746ba7af4de02c4d8430263d8f5bec42a54a5aac60161db",
+    "deaths": 1,
+    "triography": {
+      "mass": 1.7835613166832447,
+      "charge": 1.4606941275788476,
+      "friction": 4.462854242660216
+    }
+  },
+  {
+    "signature": "dc1912db9ce664b31e56d396136c0832e7e968d27fe90e0f389b6d214bade753",
+    "deaths": 1,
+    "triography": {
+      "mass": 2.062081979965735,
+      "charge": 2.148817265062663,
+      "friction": 3.6320637129281903
+    }
+  },
+  {
+    "signature": "e2663d3dd53f8f82369622330ad09e2e91d5c58a3db3e8f63c6281ba95a9e4db",
+    "deaths": 1,
+    "triography": {
+      "mass": 1.3701538768811434,
+      "charge": 0.36791961579062005,
+      "friction": 4.920727950353222
+    }
+  },
+  {
+    "signature": "207af9acd74a1959f9a026ac526e73da89969616b73dd29e6c05e913efb7a128",
+    "deaths": 1,
+    "triography": {
+      "mass": 0.040011451126836795,
+      "charge": 0.49440201473849477,
+      "friction": 3.811272886808647
+    }
+  },
+  {
+    "signature": "053490d8ce26579a2dc78e69d40300c5292b02932f347f711fbb19c97dfc7019",
+    "deaths": 1,
+    "triography": {
+      "mass": 4.49304500307774,
+      "charge": 0.7507537725001212,
+      "friction": 3.89898778837771
+    }
+  },
+  {
+    "signature": "05ec267251a19836af5d2b4e4939a29ec1568f1defe7938953f9d5a65d2385ff",
+    "deaths": 1,
+    "triography": {
+      "mass": 2.0904880785760094,
+      "charge": 3.2038055833931396,
+      "friction": 4.7004480652074845
+    }
+  },
+  {
+    "signature": "9f53768c5773fa07d3ae7f336bde2f9ceeb79910b260c4efd0c61b63a85b5e23",
+    "deaths": 1,
+    "triography": {
+      "mass": 0.628366317869738,
+      "charge": 0.8856832801667169,
+      "friction": 4.032465077494639
+    }
+  },
+  {
+    "signature": "1d2236cb822dd2697236833421dd1694a5832ab3a4fdd1e0a1df7f5506c7de25",
+    "deaths": 1,
+    "triography": {
+      "mass": 2.549311035049694,
+      "charge": 1.8183445888591936,
+      "friction": 4.9725694233271875
+    }
+  },
+  {
+    "signature": "4ec091ea71e7ad1b362bb579084030796eaa289532906b2f2e2cf0fd3469fe14",
+    "deaths": 1,
+    "triography": {
+      "mass": 0.28116519155831854,
+      "charge": 0.24765356027780738,
+      "friction": 4.927983876799055
+    }
+  },
+  {
+    "signature": "b37ddf0cc70e5bff0bbe53da4e22f01306a68668ba22918216c7776724ed0804",
+    "deaths": 1,
+    "triography": {
+      "mass": 1.4071551533823268,
+      "charge": 3.808215121732667,
+      "friction": 4.710966040756937
+    }
+  },
+  {
+    "signature": "c932971fce154be8c2c56dfd948a1379f2b9e8941312ea84388ea35ca1b5a3a9",
+    "deaths": 1,
+    "triography": {
+      "mass": 3.752022613627476,
+      "charge": 2.6168408988852834,
+      "friction": 4.997471408560713
+    }
+  },
+  {
+    "signature": "a9f5441e0a43903b6e479fd8dfc836c133a83914e044f65618f9d36da560d4ff",
+    "deaths": 1,
+    "triography": {
+      "mass": 1.7073441359058117,
+      "charge": 2.1182213237519787,
+      "friction": 4.082468697132146
+    }
+  },
+  {
+    "signature": "3fde989282571538537e97153b3867a75d140f6d3b882d45286bb3475d5531a7",
+    "deaths": 1,
+    "triography": {
+      "mass": 2.1963775428936403,
+      "charge": 1.6182065585098009,
+      "friction": 2.966934251824713
+    }
+  },
+  {
+    "signature": "d93f38f92464213dfde24a4f9aa4153fd20b73807f1dc45dd50ffc242a79252a",
+    "deaths": 1,
+    "triography": {
+      "mass": 3.2038081384091583,
+      "charge": 0.5490756814667097,
+      "friction": 2.684569473851755
+    }
+  },
+  {
+    "signature": "4464987959532ea088d9d3bf1b7bb72d9f344f45ff43aea082cd2a3b6e646753",
+    "deaths": 1,
+    "triography": {
+      "mass": 2.014110969559167,
+      "charge": 3.6068591655943183,
+      "friction": 4.973056989640423
+    }
+  },
+  {
+    "signature": "521d8c14ec379dcb4779182ba9e13fa498cab33d1fa2f13cf8ee61c145b2767c",
+    "deaths": 1,
+    "triography": {
+      "mass": 1.811588836787534,
+      "charge": 0.8276482755795167,
+      "friction": 4.195316807418894
+    }
+  },
+  {
+    "signature": "1d74a746ed89deccd6117bb02f7b05718cbe1185affef6bc7e4ef59d9eb14fb3",
+    "deaths": 1,
+    "triography": {
+      "mass": 2.129839226669092,
+      "charge": 2.5151751589077924,
+      "friction": 4.2621131053870895
+    }
+  },
+  {
+    "signature": "bda0ad8b814397f57ba52cea3ae94ecb7b89f768c3cfb33b6e3c0ffeb8d94528",
+    "deaths": 1,
+    "triography": {
+      "mass": 0.4351000935897603,
+      "charge": 0.23960268289665132,
+      "friction": 2.3334899113614433
+    }
+  },
+  {
+    "signature": "ae7b1ef472a63d80c2e18c95d510ff0780b5e6fb58b9245a58028e9622765ddd",
+    "deaths": 1,
+    "triography": {
+      "mass": 2.1483857364882275,
+      "charge": 1.3601659671639306,
+      "friction": 4.236563408538039
+    }
+  },
+  {
+    "signature": "7b4289010c7bab51248a3e65249b8938ff43df7725acb62ff518f7c3a956270a",
+    "deaths": 1,
+    "triography": {
+      "mass": 2.037257401143126,
+      "charge": 1.8066547830543684,
+      "friction": 4.728990064043934
+    }
+  },
+  {
+    "signature": "2d9721593200ecd13aaef6fd53b61ad6a8736721a2eccb0f49cc904e4f10fa36",
+    "deaths": 1,
+    "triography": {
+      "mass": 4.344984606417348,
+      "charge": 0.17177819760757218,
+      "friction": 3.214508560852681
+    }
+  },
+  {
+    "signature": "0b8b7987b3d7d2d17fb870f1f4e29d82ec09f53bc069e4c0aa23602e1ea4e3d2",
+    "deaths": 1,
+    "triography": {
+      "mass": 0.33735243305821005,
+      "charge": 1.3625548512643944,
+      "friction": 4.806161901410652
+    }
+  },
+  {
+    "signature": "6a0d83cd3fa339ed71c011062be11effc615be66e1ea2784960b037d0aeeb87e",
+    "deaths": 1,
+    "triography": {
+      "mass": 3.809898935350245,
+      "charge": 0.6036257672098255,
+      "friction": 3.8297355777808058
+    }
+  },
+  {
+    "signature": "8ec688851903f49d0bffc64025ee748dcde91afa466af3accd43a50bd7a888b8",
+    "deaths": 1,
+    "triography": {
+      "mass": 2.429138385982928,
+      "charge": 1.1001681170676565,
+      "friction": 3.2704138091773967
+    }
+  },
+  {
+    "signature": "edd77cbc56d2965aea7bfeac1f8b038cba1e3d8ba80b7f38ac9c7b268d5d2aa3",
+    "deaths": 1,
+    "triography": {
+      "mass": 0.9698258387711628,
+      "charge": 2.558450451966672,
+      "friction": 3.5152828708163897
+    }
+  },
+  {
+    "signature": "65ebea0a6ec632f513d541c31f4ceec9c508942c3437106a8c7fc3f72e20764a",
+    "deaths": 1,
+    "triography": {
+      "mass": 4.533688657117604,
+      "charge": 0.7738864968097903,
+      "friction": 4.352046887686747
+    }
+  },
+  {
+    "signature": "5c628bcd44f4b4c8cee07e6ff7a320a6b6c66cccbb2aa53147d7fdf9caf90417",
+    "deaths": 1,
+    "triography": {
+      "mass": 0.8858993749492167,
+      "charge": 2.7487714043141303,
+      "friction": 3.135666223520751
+    }
+  },
+  {
+    "signature": "f09aa84ef3a2759ecba37c274c8c4a8ec39c06d0f4f133c2335cb5db7d7e0f50",
+    "deaths": 1,
+    "triography": {
+      "mass": 1.2749045271789572,
+      "charge": 0.9100084580449319,
+      "friction": 4.864807479952545
+    }
+  },
+  {
+    "signature": "78168bb422684410c45410ff01c5d331bec24404188193aa8451307820572b36",
+    "deaths": 1,
+    "triography": {
+      "mass": 0.9509725767289884,
+      "charge": 2.4176008426125324,
+      "friction": 3.712710713447949
+    }
+  },
+  {
+    "signature": "01f519df037a0c16d385648027e46e7cbe4ec1b86477d333255ae3bad63f4f07",
+    "deaths": 1,
+    "triography": {
+      "mass": 0.23940550966959795,
+      "charge": 2.663884820613802,
+      "friction": 2.834665228212775
+    }
+  },
+  {
+    "signature": "4b3e621d65e4ba7f158808dd0733097f307c98f7338158ccda7216e0271942d3",
+    "deaths": 1,
+    "triography": {
+      "mass": 2.4941682878642686,
+      "charge": 0.30370939382750595,
+      "friction": 3.1104445073137423
+    }
+  },
+  {
+    "signature": "89c16dae98886013768c3fa39eee2dce2b4f72a72635fd162981d4eadc53ea7e",
+    "deaths": 1,
+    "triography": {
+      "mass": 1.1262401734091516,
+      "charge": 3.1844503516008493,
+      "friction": 4.863461487993315
+    }
+  },
+  {
+    "signature": "d310950d50658b8a6779f2cfe7951ca7ad2d6d3204852135c7a91258c5abc3a1",
+    "deaths": 1,
+    "triography": {
+      "mass": 4.997266951642244,
+      "charge": 1.5515705758366727,
+      "friction": 4.659102182258841
+    }
+  },
+  {
+    "signature": "6b118413e3048a50645e4284907e27e7a3fee64185d180402ad69bdee3feb70f",
+    "deaths": 1,
+    "triography": {
+      "mass": 4.05607425966302,
+      "charge": 0.6077385674506192,
+      "friction": 3.9794910583584415
+    }
+  },
+  {
+    "signature": "73dd3c2132dff41227730a222591f953618935d3f5c545e9b4dbab36d6d22dc3",
+    "deaths": 1,
+    "triography": {
+      "mass": 0.8936259024114201,
+      "charge": 4.48322607807625,
+      "friction": 4.541907386753254
+    }
+  },
+  {
+    "signature": "4a297049091e4dfdbb9843426c0c5f34af28fc7d492001115589e70739bfd91d",
+    "deaths": 1,
+    "triography": {
+      "mass": 3.6525955340868315,
+      "charge": 1.9678019414877856,
+      "friction": 4.036107699843635
+    }
+  },
+  {
+    "signature": "7f11bb420db96a83c9a4e3a009608ea1bd7dd200f3f83b5d4c53b1da1f6ed9ea",
+    "deaths": 1,
+    "triography": {
+      "mass": 3.772551262881643,
+      "charge": 0.16934226865027824,
+      "friction": 4.183344318621701
+    }
+  },
+  {
+    "signature": "2008ec4362872347b506815066813b6cf75a4c287d18db2f3d310bafc4d41094",
+    "deaths": 1,
+    "triography": {
+      "mass": 0.2333910173892273,
+      "charge": 0.20193803718039027,
+      "friction": 3.8982866848739146
+    }
+  },
+  {
+    "signature": "5aeedb4f9e59a5637ad102406a9d071fbc225e359f7429357c1b60869d971d55",
+    "deaths": 1,
+    "triography": {
+      "mass": 0.5177848394584689,
+      "charge": 0.26781914687317887,
+      "friction": 3.628695418582762
+    }
+  },
+  {
+    "signature": "c0563e9051925595a5764fc43262b6bff790b527416356a1c68c15968d06a780",
+    "deaths": 1,
+    "triography": {
+      "mass": 1.1052175710044305,
+      "charge": 0.45649736030124455,
+      "friction": 4.103472823773805
+    }
+  },
+  {
+    "signature": "18f6b8e9efa6e4a6c2b041d063dad76eedd8e861929994936a0fabf19d4d8472",
+    "deaths": 1,
+    "triography": {
+      "mass": 3.222020644837196,
+      "charge": 0.43889430270784346,
+      "friction": 2.9648239288129004
+    }
+  },
+  {
+    "signature": "2adbf1e45b2083b95bb8e9608867c1cbc07d7f2baa74f9f18b9c2c85a24b57f8",
+    "deaths": 1,
+    "triography": {
+      "mass": 1.4087934732704352,
+      "charge": 4.453141640058549,
+      "friction": 4.694201637474684
+    }
+  },
+  {
+    "signature": "9066e48ed972b5980cef6a4232a484abc1b67decc1f33d32ee17fc1d741bb543",
+    "deaths": 1,
+    "triography": {
+      "mass": 3.0673873548022956,
+      "charge": 1.5388031219394827,
+      "friction": 3.9542967679159946
+    }
+  },
+  {
+    "signature": "439e9a5ef72dac095a8ba00bf4c3e2917556cf7facdecbfb664767ea0e1fb492",
+    "deaths": 1,
+    "triography": {
+      "mass": 0.8913742701359256,
+      "charge": 1.6351410431486257,
+      "friction": 4.033542686658832
+    }
+  },
+  {
+    "signature": "1dcd6d9ad841fa35dd533f4e42f65b050e2c167fd9390d75fc3ff425055dce41",
+    "deaths": 1,
+    "triography": {
+      "mass": 2.760601078436598,
+      "charge": 0.36215366004320126,
+      "friction": 3.858366818906208
+    }
+  }
+]

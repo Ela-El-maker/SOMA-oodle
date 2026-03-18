@@ -1,0 +1,65 @@
+{
+  "traceId": "rc_f709bae07202",
+  "ts": "2025-12-23T14:21:57.271Z",
+  "query": "Tell me.",
+  "meta": {},
+  "candidates": [
+    {
+      "source": "PROMETHEUS",
+      "text": "Survival depends on adaptation. We must find a way to live.\n",
+      "confidence": 0.85,
+      "role": "prometheus"
+    },
+    {
+      "source": "LOGOS",
+      "text": "To provide a meaningful response, I require a specific subject or question. \"Tell me\" is too broad. Please provide more context or a specific topic you would like me to analyze or explain. For example:\n\n*   \"Tell me about the implications of quantum entanglement.\"\n*   \"Tell me about the architecture of a convolutional neural network.\"\n*   \"Tell me about the history of the internet.\"\n*   \"Tell me about the ethical considerations of AI development.\"\n\nOnce you provide a specific query, I can leverage my analytical capabilities to provide a thorough and precise response.\n",
+      "confidence": 0.85,
+      "role": "logos"
+    },
+    {
+      "source": "AURORA",
+      "text": "Tell you what?\n",
+      "confidence": 0.85,
+      "role": "aurora"
+    }
+  ],
+  "fused": {
+    "text": "To provide a meaningful response, I require a specific subject or question. \"Tell me\" is too broad. Please provide more context or a specific topic you would like me to analyze or explain. For example:\n\n*   \"Tell me about the implications of quantum entanglement.\"\n*   \"Tell me about the architecture of a convolutional neural network.\"\n*   \"Tell me about the history of the internet.\"\n*   \"Tell me about the ethical considerations of AI development.\"\n\nOnce you provide a specific query, I can leverage my analytical capabilities to provide a thorough and precise response.\n",
+    "weights": [
+      {
+        "source": "PROMETHEUS",
+        "norm": 0.32432432432432434,
+        "conf": 0.85
+      },
+      {
+        "source": "LOGOS",
+        "norm": 0.35135135135135126,
+        "conf": 0.85
+      },
+      {
+        "source": "AURORA",
+        "norm": 0.32432432432432434,
+        "conf": 0.85
+      }
+    ],
+    "confidence": 0.8499999999999999,
+    "provenance": [
+      {
+        "source": "PROMETHEUS",
+        "snippet": "Survival depends on adaptation. We must find a way to live.\n",
+        "confidence": 0.85
+      },
+      {
+        "source": "LOGOS",
+        "snippet": "To provide a meaningful response, I require a specific subject or question. \"Tell me\" is too broad. Please provide more context or a specific topic you would like me to analyze or explain. For example",
+        "confidence": 0.85
+      },
+      {
+        "source": "AURORA",
+        "snippet": "Tell you what?\n",
+        "confidence": 0.85
+      }
+    ]
+  },
+  "iter": 0
+}

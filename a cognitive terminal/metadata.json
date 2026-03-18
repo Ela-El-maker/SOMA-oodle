@@ -1,0 +1,7 @@
+{
+  "name": "SOMA Cognitive Terminal",
+  "description": "A web-based cognitive terminal that simulates learning from every interaction, powered by the Gemini API. Engage with an AI that grows its knowledge and capabilities through your commands.",
+  "requestFramePermissions": [
+    "microphone"
+  ]
+}

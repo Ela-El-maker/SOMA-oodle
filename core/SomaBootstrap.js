@@ -729,7 +729,7 @@ export class SomaBootstrap {
         this.system.localModelManager = new LocalModelManager({
             name: 'LocalModelManager',
             baseModel: 'gemma3:4b',
-            somaModelPrefix: 'soma-1t',
+            somaModelPrefix: 'GEMMA-3',
             fineTuneThreshold: 500,
             autoFineTune: true,
             minDatasetSize: 100,
@@ -1831,16 +1831,25 @@ export class SomaBootstrap {
             console.warn('   ⚠️ AudioProcessingArbiter not found - skipping');
         }
 
-        // Vision Processing (CLIP)
-        const { VisionProcessingArbiter } = await import('../arbiters/VisionProcessingArbiter.js');
-        this.system.visionProcessing = new VisionProcessingArbiter({
-            name: 'VisionProcessingArbiter',
-            batchSize: 32,
-            loadPipeline: this.system.loadPipeline // Inject load pipeline for GPU check
-        });
-        await this.system.visionProcessing.initialize();
-        this.system.messageBroker.registerArbiter('VisionProcessingArbiter', { instance: this.system.visionProcessing });
-        console.log('   ✅ VisionProcessingArbiter ready (CLIP Active)');
+        // Vision Processing (CLIP) — gated behind SOMA_LOAD_VISION=true
+        // CLIP WASM kernel compilation blocks the event loop for 30-90s; run in background only
+        if (process.env.SOMA_LOAD_VISION === 'true') {
+            import('../arbiters/VisionProcessingArbiter.js').then(({ VisionProcessingArbiter }) => {
+                const va = new VisionProcessingArbiter({
+                    name: 'VisionProcessingArbiter',
+                    batchSize: 32,
+                    loadPipeline: this.system.loadPipeline
+                });
+                return va.initialize().then(() => {
+                    this.system.visionProcessing = va;
+                    this.system.messageBroker.registerArbiter('VisionProcessingArbiter', { instance: va });
+                    console.log('   ✅ VisionProcessingArbiter ready (CLIP Active)');
+                });
+            }).catch(e => console.warn('   ⚠️ VisionProcessingArbiter failed to load:', e.message));
+            console.log('   👁️  VisionProcessingArbiter loading CLIP in background (SOMA_LOAD_VISION=true)...');
+        } else {
+            console.log('   ⏭️  VisionProcessingArbiter skipped (set SOMA_LOAD_VISION=true to enable)');
+        }
 
         // Quantum Simulation (Strategic Directive Q1 2026)
         this.system.quantumSim = new QuantumSimulationArbiter({ name: 'QuantumSimulationArbiter' });
@@ -2325,8 +2334,17 @@ export class SomaBootstrap {
             const { HealthDaemon }       = await import('../daemons/HealthDaemon.js');
             const { OptimizationDaemon } = await import('../daemons/OptimizationDaemon.js');
             const { DiscoveryDaemon }    = await import('../daemons/DiscoveryDaemon.js');
+            const { default: MemoryPrunerDaemon } = await import('../daemons/MemoryPrunerDaemon.js');
+            const { CuriosityReactor }    = await import('./CuriosityReactor.js');
+            const { default: CuriosityDaemon }    = await import('../daemons/CuriosityDaemon.js');
 
             this.system.daemonManager = new DaemonManager({ logger: console });
+
+            // Curiosity Reactor (The Wandering Mind)
+            this.system.curiosityReactor = new CuriosityReactor({
+                quadBrain: this.system.quadBrain,
+                messageBroker: this.system.messageBroker
+            });
 
             // 2. AttentionArbiter — wired as CNS gate BEFORE daemons start
             //    MessageBroker._deliverSignal already checks this.attentionEngine
@@ -2406,6 +2424,10 @@ export class SomaBootstrap {
             // 6. Register daemons and start (startAll also launches watchdog)
             this.system.daemonManager.register(new RepoWatcherDaemon({ root: this.rootPath }));
             this.system.daemonManager.register(new HealthDaemon({ intervalMs: 30_000 }));
+            this.system.daemonManager.register(new MemoryPrunerDaemon({ 
+                mnemonic: this.system.mnemonic,
+                intervalMs: 43200000 // 12 hours
+            }));
             this.system.daemonManager.register(new OptimizationDaemon({
                 optimizer:  this.system.swarmOptimizer,
                 intervalMs: 3_600_000     // hourly

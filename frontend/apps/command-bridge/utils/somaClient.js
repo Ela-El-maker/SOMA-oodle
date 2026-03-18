@@ -16,13 +16,13 @@ export async function reasonWithSoma(
   try {
     console.log('🧠 Sending to SOMA:', query.substring(0, 50) + '...');
 
-    const response = await fetch(`${SOMA_API_BASE}/api/soma/reason`, {
+    const response = await fetch(`${SOMA_API_BASE}/api/soma/chat`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
       },
       body: JSON.stringify({
-        query,
+        message: query,
         conversationId: conversationId || generateConversationId(),
       }),
     });
@@ -36,8 +36,8 @@ export async function reasonWithSoma(
 
     return {
       success: true,
-      response: data.response || data.answer || data.text,
-      thoughtProcess: data.thoughtProcess,
+      response: data.response || data.text || data.answer,
+      thoughtProcess: data.thoughtProcess || data.reasoning,
       conversationId: data.conversationId,
       confidence: data.confidence,
     };

@@ -1530,13 +1530,14 @@ export async function loadRoutes(app, system) {
         }
     });
 
-    // ── Shared conversation history — used by CT, FloatingChat, Orb via shared sessionId ──
+    // ── Shared conversation history — used by CT, FloatingChat, Orb ──────────
+    // Note: messages are stored under the backend's internal session UUID (not the
+    // frontend's soma_session_id). getRecentMessages() returns the active session.
     app.get('/api/soma/history', async (req, res) => {
-        const { sessionId, limit = 30 } = req.query;
-        if (!sessionId) return res.json({ success: true, messages: [] });
+        const { limit = 30 } = req.query;
         try {
             const history = system.conversationHistory
-                ? await system.conversationHistory.getRecentMessages(parseInt(limit), { sessionId })
+                ? system.conversationHistory.getRecentMessages(parseInt(limit))
                 : [];
             const messages = (history || []).map(h => ({
                 role: h.role === 'assistant' ? 'soma' : 'user',
@@ -1551,10 +1552,10 @@ export async function loadRoutes(app, system) {
 
     // ── ORB: Conversation history (persist sessions across refreshes) ────
     app.get('/api/orb/history', async (req, res) => {
-        const { sessionId = 'orb-link', limit = 30 } = req.query;
+        const { limit = 30 } = req.query;
         try {
             const history = system.conversationHistory
-                ? await system.conversationHistory.getRecentMessages(parseInt(limit), { sessionId })
+                ? system.conversationHistory.getRecentMessages(parseInt(limit))
                 : [];
             const messages = (history || []).map(h => ({
                 role: h.role === 'assistant' ? 'soma' : 'user',

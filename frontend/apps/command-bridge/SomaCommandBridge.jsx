@@ -654,8 +654,7 @@ const SomaCommandBridge = () => {
   // 4. Orb conversation history — load from shared session when neural link is established
   useEffect(() => {
     if (!isOrbConnected || orbConversation.length > 0) return;
-    const sessionId = getSharedSessionId();
-    fetch(`/api/soma/history?sessionId=${encodeURIComponent(sessionId)}&limit=30`)
+    fetch(`/api/soma/history?limit=30`)
       .then(r => r.json())
       .then(data => {
         if (data.messages?.length) setOrbConversation(data.messages);

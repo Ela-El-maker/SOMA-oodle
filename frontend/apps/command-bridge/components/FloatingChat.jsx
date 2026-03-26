@@ -4,7 +4,6 @@ import MarkdownIt from 'markdown-it';
 import { parseEmotes } from '../lib/emotes';
 import PixelAvatar from './PixelAvatar';
 import somaBackend from '../somaBackend.js';
-import { getSharedSessionId } from '../utils/sharedSession';
 
 const md = new MarkdownIt({
   highlight: (str) =>
@@ -140,8 +139,7 @@ const FloatingChat = ({
   useEffect(() => {
     if (!isVisible || historyLoaded.current || !isServerRunning) return;
     historyLoaded.current = true;
-    const sessionId = getSharedSessionId();
-    fetch(`/api/soma/history?sessionId=${encodeURIComponent(sessionId)}&limit=20`)
+    fetch(`/api/soma/history?limit=20`)
       .then(r => r.json())
       .then(data => {
         if (!data.messages?.length) return;

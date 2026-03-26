@@ -1800,7 +1800,9 @@ const SomaCommandBridge = () => {
                 title={orbSidebarCollapsed ? "Expand Neural Session" : "Collapse Neural Session"}
               >
                 <div className={`absolute inset-0 rounded-full bg-purple-500/20 blur-md transition-opacity duration-500 ${orbSidebarCollapsed ? 'opacity-100 animate-pulse' : 'opacity-0'}`} />
-                <img src="/icon.svg" alt="SOMA" className={`w-5 h-5 relative z-10 transition-transform duration-500 ${orbSidebarCollapsed ? 'scale-110 rotate-[360deg]' : 'group-hover:rotate-12'}`} />
+                <svg viewBox="0 0 24 24" fill="currentColor" className={`w-5 h-5 relative z-10 transition-transform duration-500 ${orbSidebarCollapsed ? 'scale-110 rotate-[360deg]' : 'group-hover:rotate-12'}`}>
+                  <path d="M12 2C10.5 2 9 2.5 8 3.5C7 2.5 5.5 2 4 2C2.5 2 1 3 1 5C1 6.5 1.5 8 2.5 9C1.5 10 1 11.5 1 13C1 14.5 2 16 3.5 16.5C3 17.5 3 18.5 3.5 19.5C4 20.5 5 21 6 21.5C7 22 8.5 22 10 22H14C15.5 22 17 22 18 21.5C19 21 20 20.5 20.5 19.5C21 18.5 21 17.5 20.5 16.5C22 16 23 14.5 23 13C23 11.5 22.5 10 21.5 9C22.5 8 23 6.5 23 5C23 3 21.5 2 20 2C18.5 2 17 2.5 16 3.5C15 2.5 13.5 2 12 2Z" />
+                </svg>
                 {orbSidebarCollapsed && (
                   <span className="absolute left-full ml-3 px-2 py-1 bg-black/80 border border-white/10 rounded text-[9px] text-purple-300 uppercase tracking-widest whitespace-nowrap opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none">
                     Session Logs

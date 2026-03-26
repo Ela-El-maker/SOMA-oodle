@@ -1530,6 +1530,25 @@ export async function loadRoutes(app, system) {
         }
     });
 
+    // ── Shared conversation history — used by CT, FloatingChat, Orb via shared sessionId ──
+    app.get('/api/soma/history', async (req, res) => {
+        const { sessionId, limit = 30 } = req.query;
+        if (!sessionId) return res.json({ success: true, messages: [] });
+        try {
+            const history = system.conversationHistory
+                ? await system.conversationHistory.getRecentMessages(parseInt(limit), { sessionId })
+                : [];
+            const messages = (history || []).map(h => ({
+                role: h.role === 'assistant' ? 'soma' : 'user',
+                text: h.content || h.text || '',
+                timestamp: h.timestamp || Date.now()
+            }));
+            res.json({ success: true, messages });
+        } catch (e) {
+            res.json({ success: true, messages: [] });
+        }
+    });
+
     // ── ORB: Conversation history (persist sessions across refreshes) ────
     app.get('/api/orb/history', async (req, res) => {
         const { sessionId = 'orb-link', limit = 30 } = req.query;

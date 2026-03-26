@@ -199,6 +199,16 @@ export function setupWebSocket(server, wss, system) {
         broker.on('alert.triggered', (envelope) => broadcast('alert_triggered', envelope.payload || envelope));
     } catch { /* non-fatal */ }
 
+    // Forward RepoWatcherDaemon file changes → frontend for contextual "Ask SOMA →" prompts
+    try {
+        const broker = require('../../core/MessageBroker.cjs');
+        broker.subscribe('WebSocketLoader.repoWatcher', 'repo.file.changed');
+        broker.on('repo.file.changed', (envelope) => {
+            const p = envelope.payload || envelope;
+            broadcast('repo_activity', { filename: p.filename, path: p.path, timestamp: Date.now() });
+        });
+    } catch { /* non-fatal */ }
+
     // ── Heartbeat: ping all clients every 30s, terminate any that don't pong ──
     // Silently-dead connections (NAT timeout, adapter sleep, background tab) never
     // fire 'close' without this — leaving dead sockets in dashboardClients forever
@@ -343,6 +353,15 @@ Write ONE short, natural opening — something you genuinely want to say right n
                             : 'toggle_agent';
                     const result = await executeCommand(mappedAction, { name: arbiterName }, system, broadcast);
                     ws.send(JSON.stringify({ type: 'agent_result', payload: { action, arbiterName, ...result } }));
+                    return;
+                }
+
+                if (type === 'user_activity') {
+                    // User presence signal — lets SocialImpulseDaemon know the user is actively on-page
+                    try {
+                        const broker = require('../../core/MessageBroker.cjs');
+                        broker.publish('WebSocketLoader', 'user.interaction', { timestamp: payload?.timestamp || Date.now(), source: 'frontend' });
+                    } catch { /* non-fatal */ }
                     return;
                 }
 

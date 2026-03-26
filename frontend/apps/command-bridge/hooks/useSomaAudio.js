@@ -1,6 +1,7 @@
 import { useState, useRef, useEffect, useCallback } from 'react';
 import { initElevenLabs, textToSpeech, isElevenLabsEnabled } from '../utils/elevenLabsTTS';
 import { reasonWithSoma, checkSomaHealth, formatResponseForSpeech, SomaCognitiveStream } from '../utils/somaClient';
+import { getSharedSessionId } from '../utils/sharedSession';
 
 // Audio configuration constants
 const OUTPUT_SAMPLE_RATE = 24000;
@@ -142,7 +143,7 @@ export function useSomaAudio(onResponse) {
   const animationFrameRef = useRef(null);
   const currentVolumeRef = useRef(0);
   const currentInputVolumeRef = useRef(0);
-  const conversationIdRef = useRef(`conv_${Date.now()}`);
+  const conversationIdRef = useRef(getSharedSessionId());
   const cognitiveStreamRef = useRef(null);
   const elevenLabsVoiceIdRef = useRef(null);
   const mediaRecorderRef = useRef(null);
@@ -576,6 +577,6 @@ export function useSomaAudio(onResponse) {
   return {
     isConnected, connect, disconnect, volume, inputVolume,
     isTalking, isListening, isThinking, systemStatus,
-    sendTextQuery, somaHealthy
+    sendTextQuery, somaHealthy, speakText
   };
 }

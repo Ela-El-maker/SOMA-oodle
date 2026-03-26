@@ -4,6 +4,7 @@ import MarkdownIt from 'markdown-it';
 import { parseEmotes } from '../lib/emotes';
 import PixelAvatar from './PixelAvatar';
 import somaBackend from '../somaBackend.js';
+import { getSharedSessionId } from '../utils/sharedSession';
 
 const md = new MarkdownIt({
   highlight: (str) =>
@@ -132,6 +133,30 @@ const FloatingChat = ({
       somaBackend.send('recall_recent', { durationMs: 86400000, limit: 5 });
     }
     return () => somaBackend.off('recall_recent_response', onRecall);
+  }, [isVisible, isServerRunning]);
+
+  // ── Load shared conversation history on first open ────────────────────────
+  const historyLoaded = useRef(false);
+  useEffect(() => {
+    if (!isVisible || historyLoaded.current || !isServerRunning) return;
+    historyLoaded.current = true;
+    const sessionId = getSharedSessionId();
+    fetch(`/api/soma/history?sessionId=${encodeURIComponent(sessionId)}&limit=20`)
+      .then(r => r.json())
+      .then(data => {
+        if (!data.messages?.length) return;
+        const loaded = data.messages.map((m, i) => ({
+          id: m.timestamp ? m.timestamp + i : Date.now() - (data.messages.length - i) * 1000,
+          text: m.text,
+          sender: m.role === 'soma' ? 'system' : 'user',
+        }));
+        setMessages(prev => {
+          // Only inject if messages haven't accumulated yet (avoid prepending over active chat)
+          if (prev.length > 2) return prev;
+          return [...loaded, ...prev];
+        });
+      })
+      .catch(() => {});
   }, [isVisible, isServerRunning]);
 
   // ── Open / Close with spring animation ────────────────────────────────────

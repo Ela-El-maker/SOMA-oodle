@@ -189,6 +189,9 @@ class SomaBackend {
         break;
       case 'pulse':
         this.emit('pulse', payload);
+        // Synthesis greeting arrives as { type:'pulse', payload: { type:'soma_proactive', message:... } }
+        // Unwrap so soma_proactive listeners fire correctly
+        if (payload?.type) this.emit(payload.type, payload);
         break;
       case 'agents':
         this.emit('agents', payload);
@@ -256,6 +259,15 @@ class SomaBackend {
         break;
       case 'alert_triggered':
         this.emit('alert_triggered', payload);
+        break;
+      case 'repo_activity':
+        this.emit('repo_activity', payload);
+        break;
+      case 'soma_proactive':
+        this.emit('soma_proactive', payload);
+        break;
+      case 'soma_activity':
+        this.emit('soma_activity', payload);
         break;
       default:
         // suppress noisy unknown-type logs in production

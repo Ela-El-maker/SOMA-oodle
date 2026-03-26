@@ -18,6 +18,7 @@ import { ToastContainer, toast } from 'react-toastify';
 import 'react-toastify/dist/ReactToastify.css';
 
 import somaBackend from './somaBackend';
+import { getSharedSessionId } from './utils/sharedSession';
 import SomaCT from '../command-ct/SomaCT';
 import Orb from './Orb';
 import KevinInterface from './KevinInterface';
@@ -628,7 +629,8 @@ const SomaCommandBridge = () => {
     systemStatus: orbSystemStatus,
     sendTextQuery,
     somaHealthy,
-    inputVolume
+    inputVolume,
+    speakText
   } = useSomaAudio(handleOrbResponse);
 
   // Expose text query globally for manual input
@@ -649,16 +651,54 @@ const SomaCommandBridge = () => {
     setIsSomaBusy(isThinking);
   }, [isThinking]);
 
-  // 4. Orb conversation history — load from backend when neural link is established
+  // 4. Orb conversation history — load from shared session when neural link is established
   useEffect(() => {
     if (!isOrbConnected || orbConversation.length > 0) return;
-    fetch('/api/orb/history?sessionId=orb-link&limit=30')
+    const sessionId = getSharedSessionId();
+    fetch(`/api/soma/history?sessionId=${encodeURIComponent(sessionId)}&limit=30`)
       .then(r => r.json())
       .then(data => {
         if (data.messages?.length) setOrbConversation(data.messages);
       })
       .catch(() => {});
   }, [isOrbConnected]);
+
+  // 5. Proactive voice — speak when orb is connected and SOMA sends autonomous messages
+  const speakTextRef = useRef(null);
+  useEffect(() => { speakTextRef.current = speakText; });
+  const isOrbConnectedRef = useRef(false);
+  useEffect(() => { isOrbConnectedRef.current = isOrbConnected; }, [isOrbConnected]);
+  const isTalkingRef = useRef(false);
+  useEffect(() => { isTalkingRef.current = isTalking; }, [isTalking]);
+  const isListeningRef = useRef(false);
+  useEffect(() => { isListeningRef.current = isListening; }, [isListening]);
+
+  useEffect(() => {
+    const onProactiveSpeak = (payload) => {
+      if (!isOrbConnectedRef.current || isTalkingRef.current || isListeningRef.current) return;
+      const text = payload.message || payload.text;
+      if (text && speakTextRef.current) speakTextRef.current(text);
+    };
+    somaBackend.on('soma_proactive', onProactiveSpeak);
+    return () => somaBackend.off('soma_proactive', onProactiveSpeak);
+  }, []);
+
+  // 6. User presence signal — throttled activity ping so SOMA knows the user is on-page
+  useEffect(() => {
+    let lastSent = 0;
+    const onActivity = () => {
+      const now = Date.now();
+      if (now - lastSent < 15000) return;
+      lastSent = now;
+      somaBackend.send('user_activity', { timestamp: now });
+    };
+    window.addEventListener('mousemove', onActivity, { passive: true });
+    window.addEventListener('keypress', onActivity, { passive: true });
+    return () => {
+      window.removeEventListener('mousemove', onActivity);
+      window.removeEventListener('keypress', onActivity);
+    };
+  }, []);
 
   // Fetch personality traits when backend connects
   useEffect(() => {
@@ -1011,6 +1051,19 @@ const SomaCommandBridge = () => {
       ]);
     });
 
+    // Repo file change — show contextual "Ask SOMA" prompt
+    somaBackend.on('repo_activity', (payload) => {
+      const { filename } = payload || {};
+      if (!filename) return;
+      toast.info(
+        `📁 ${filename} changed — Ask SOMA →`,
+        {
+          theme: 'dark', autoClose: 6000,
+          onClick: () => setActiveModule('orb'),
+        }
+      );
+    });
+
     somaBackend.connect();
 
     return () => {
@@ -1306,20 +1359,18 @@ const SomaCommandBridge = () => {
 
   const handleFloatingChatMessage = async (message, { history = [], activeModule: page } = {}) => {
     try {
-      const data = await somaBackend.fetch('/api/query', {
+      const data = await somaBackend.fetch('/api/soma/chat', {
         method: 'POST',
         body: JSON.stringify({
-          query: message,
-          context: {
-            source: 'floating-chat',
-            page: page || activeModule,           // what tab the user is on
-            history,                              // last 6 exchanges for continuity
-          }
+          message,
+          sessionId: getSharedSessionId(),
+          history: history.map(m => ({ role: m.role || (m.sender === 'user' ? 'user' : 'assistant'), content: m.content || m.text })),
+          context: { source: 'floating-chat', page: page || activeModule },
         })
       });
-      if (data && data.response) {
+      if (data && (data.response || data.message)) {
         return {
-          text: data.response,
+          text: data.response || data.message,
           characterSuggestion: data.characterSuggestion || null,
           activeCharacter: data.activeCharacter || null,
         };

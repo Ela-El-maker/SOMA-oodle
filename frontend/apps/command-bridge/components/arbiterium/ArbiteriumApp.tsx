@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
+import somaBackend from '../../somaBackend';
 import {
   Arbiter, ArbiterStatus, WorkflowPlan, TaskStatus, ChatMessage, Session, WorkflowStep
 } from './types';
@@ -10,7 +11,7 @@ import TaskDetailPanel from './components/TaskDetailPanel';
 import PlanOverview from './components/PlanOverview';
 import {
   Terminal, Users, Home, Layers, Activity,
-  Plus, Paperclip, ArrowUp, Zap, Skull, MessageSquare, Clock,
+  Plus, ArrowUp, Zap, Skull, MessageSquare, Clock,
   FileText, X, Brain, Wrench, Database
 } from 'lucide-react';
 
@@ -114,6 +115,283 @@ const CyberGrid = ({ isActive }: { isActive: boolean }) => {
   return <canvas ref={canvasRef} className="absolute inset-0 w-full h-full pointer-events-none z-0" />;
 };
 
+// ── Engineering Swarm UI ─────────────────────────────────────────────────────
+
+const PHASES = ['research', 'plan', 'debate', 'synthesis', 'transaction', 'verification', 'optimization'];
+
+const SwarmView: React.FC = () => {
+  const [filepath, setFilepath] = React.useState('');
+  const [request, setRequest] = React.useState('');
+  const [running, setRunning] = React.useState(false);
+  const [phases, setPhases] = React.useState<Array<{ phase: string; message: string; progress: number; status: 'pending' | 'active' | 'done' | 'error' }>>([]);
+  const [done, setDone] = React.useState<{ success: boolean; message: string } | null>(null);
+  const logRef = React.useRef<HTMLDivElement>(null);
+
+  const start = async () => {
+    if (!filepath.trim() || !request.trim() || running) return;
+    setRunning(true);
+    setDone(null);
+    setPhases(PHASES.map(p => ({ phase: p, message: '', progress: 0, status: 'pending' })));
+
+    try {
+      const resp = await fetch('/api/soma/engineering/modify', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ filepath: filepath.trim(), request: request.trim() })
+      });
+
+      if (!resp.ok) {
+        const err = await resp.json().catch(() => ({ error: resp.statusText }));
+        setDone({ success: false, message: err.error || 'Request failed' });
+        setRunning(false);
+        return;
+      }
+
+      const reader = resp.body!.getReader();
+      const decoder = new TextDecoder();
+      let buf = '';
+
+      while (true) {
+        const { done: streamDone, value } = await reader.read();
+        if (streamDone) break;
+        buf += decoder.decode(value, { stream: true });
+        const lines = buf.split('\n');
+        buf = lines.pop() || '';
+        for (const line of lines) {
+          if (!line.startsWith('data: ')) continue;
+          try {
+            const ev = JSON.parse(line.slice(6));
+            if (ev.phase === 'start') continue;
+            if (ev.phase === 'complete' || ev.phase === 'error') {
+              setDone({ success: ev.success ?? ev.phase !== 'error', message: ev.message });
+              setPhases(prev => prev.map(p => p.status === 'active' ? { ...p, status: 'done' } : p));
+            } else {
+              setPhases(prev => prev.map(p => {
+                if (p.phase === ev.phase) return { ...p, message: ev.message, progress: ev.progress, status: 'active' };
+                if (p.status === 'active') return { ...p, status: 'done' };
+                return p;
+              }));
+            }
+          } catch { /* skip malformed */ }
+        }
+        if (logRef.current) logRef.current.scrollTop = logRef.current.scrollHeight;
+      }
+    } catch (err: any) {
+      setDone({ success: false, message: err.message });
+    } finally {
+      setRunning(false);
+    }
+  };
+
+  const phaseColor = (status: string) => {
+    if (status === 'done') return 'text-emerald-400 border-emerald-500/40 bg-emerald-500/10';
+    if (status === 'active') return 'text-cyber-primary border-cyber-primary/50 bg-cyber-primary/10 animate-pulse';
+    if (status === 'error') return 'text-rose-400 border-rose-500/40 bg-rose-500/10';
+    return 'text-cyber-muted border-white/10 bg-white/5';
+  };
+
+  return (
+    <div className="h-full glass-panel rounded-xl p-5 flex flex-col gap-4 overflow-hidden">
+      <div className="flex items-center gap-2 shrink-0">
+        <Wrench className="w-4 h-4 text-amber-400" />
+        <h2 className="text-lg font-bold text-cyber-white tracking-tight">Engineering Swarm</h2>
+        <span className="text-[10px] font-mono text-cyber-muted ml-auto">7-PHASE AUTONOMOUS CYCLE</span>
+      </div>
+
+      {/* Input */}
+      <div className="flex flex-col gap-2 shrink-0">
+        <input
+          type="text"
+          placeholder="File path (e.g. arbiters/SomeArbiter.js)"
+          value={filepath}
+          onChange={e => setFilepath(e.target.value)}
+          disabled={running}
+          className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-sm text-cyber-white placeholder-cyber-muted/50 font-mono focus:outline-none focus:border-cyber-primary/50 disabled:opacity-50"
+        />
+        <textarea
+          placeholder="Describe the modification request..."
+          value={request}
+          onChange={e => setRequest(e.target.value)}
+          disabled={running}
+          rows={2}
+          className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-sm text-cyber-white placeholder-cyber-muted/50 focus:outline-none focus:border-cyber-primary/50 resize-none disabled:opacity-50"
+        />
+        <button
+          onClick={start}
+          disabled={running || !filepath.trim() || !request.trim()}
+          className="self-start px-5 py-2 rounded-lg bg-cyber-primary/20 border border-cyber-primary/40 text-cyber-primary text-[11px] font-black tracking-widest uppercase hover:bg-cyber-primary/30 disabled:opacity-40 disabled:cursor-not-allowed transition-all"
+        >
+          {running ? 'RUNNING...' : 'ENGAGE SWARM'}
+        </button>
+      </div>
+
+      {/* Phase tracker */}
+      {phases.length > 0 && (
+        <div className="flex-1 overflow-y-auto space-y-2 min-h-0" ref={logRef}>
+          {phases.map((p) => (
+            <div key={p.phase} className={`flex items-start gap-3 px-3 py-2 rounded-lg border text-[11px] font-mono transition-all ${phaseColor(p.status)}`}>
+              <span className="uppercase font-black tracking-wider shrink-0 w-24">{p.phase}</span>
+              <div className="flex-1 min-w-0">
+                {p.message && <span className="opacity-80 break-words">{p.message}</span>}
+                {p.status === 'active' && p.progress > 0 && (
+                  <div className="mt-1 h-0.5 bg-white/10 rounded-full overflow-hidden">
+                    <div className="h-full bg-cyber-primary rounded-full transition-all duration-500" style={{ width: `${p.progress}%` }} />
+                  </div>
+                )}
+              </div>
+              <span className="shrink-0 text-[9px] opacity-60">{p.status === 'done' ? '✓' : p.status === 'active' ? '▶' : '○'}</span>
+            </div>
+          ))}
+          {done && (
+            <div className={`px-3 py-2 rounded-lg border text-[11px] font-mono ${done.success ? 'text-emerald-400 border-emerald-500/40 bg-emerald-500/10' : 'text-rose-400 border-rose-500/40 bg-rose-500/10'}`}>
+              <span className="font-black">{done.success ? '✓ COMPLETE' : '✗ FAILED'}</span>
+              <span className="ml-2 opacity-80">{done.message}</span>
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+};
+
+// ── CNS: Central Nervous System live signal feed ─────────────────────────────
+
+interface CNSEvent {
+  id: string;
+  topic: string;
+  payload: any;
+  ts: number;
+}
+
+const TOPIC_COLOR: Record<string, string> = {
+  health:    'text-emerald-400',
+  swarm:     'text-purple-400',
+  goal:      'text-fuchsia-400',
+  user:      'text-cyan-400',
+  repo:      'text-amber-400',
+  market:    'text-blue-400',
+  attention: 'text-rose-400',
+  signal:    'text-indigo-400',
+};
+
+const topicColor = (topic: string) => {
+  const prefix = Object.keys(TOPIC_COLOR).find(k => topic.startsWith(k));
+  return prefix ? TOPIC_COLOR[prefix] : 'text-cyber-muted';
+};
+
+const CNSView: React.FC = () => {
+  const [events, setEvents] = React.useState<CNSEvent[]>([]);
+  const [filter, setFilter] = React.useState('');
+  const [paused, setPaused] = React.useState(false);
+  const pausedRef = React.useRef(false);
+
+  React.useEffect(() => { pausedRef.current = paused; }, [paused]);
+
+  React.useEffect(() => {
+    const onSignal = (payload: any) => {
+      if (pausedRef.current) return;
+      setEvents(prev => [{
+        id: Math.random().toString(36).slice(2),
+        topic: payload.topic || 'unknown',
+        payload: payload.payload ?? payload,
+        ts: payload.ts || Date.now()
+      }, ...prev].slice(0, 500));
+    };
+
+    // Also capture all other WS frame types as fallback so the feed is never empty
+    const onAny = (payload: any) => {
+      if (pausedRef.current) return;
+      setEvents(prev => [{
+        id: Math.random().toString(36).slice(2),
+        topic: payload?._wsType || 'ws.frame',
+        payload,
+        ts: Date.now()
+      }, ...prev].slice(0, 500));
+    };
+
+    // Patch somaBackend emit to capture all events
+    const origEmit = (somaBackend as any).emit.bind(somaBackend);
+    (somaBackend as any).emit = (event: string, data: any) => {
+      origEmit(event, data);
+      if (event === 'cns_signal') return; // handled by dedicated listener
+      if (['connect', 'disconnect', 'connectionStateChange', 'reconnecting'].includes(event)) return;
+      if (!pausedRef.current) {
+        setEvents(prev => [{
+          id: Math.random().toString(36).slice(2),
+          topic: event,
+          payload: data,
+          ts: Date.now()
+        }, ...prev].slice(0, 500));
+      }
+    };
+
+    somaBackend.on('cns_signal', onSignal);
+
+    return () => {
+      somaBackend.off('cns_signal', onSignal);
+      (somaBackend as any).emit = origEmit; // restore
+    };
+  }, []);
+
+  const filtered = filter
+    ? events.filter(e => e.topic.toLowerCase().includes(filter.toLowerCase()))
+    : events;
+
+  return (
+    <div className="h-full glass-panel rounded-xl p-4 flex flex-col gap-3 overflow-hidden">
+      <div className="flex items-center gap-2 shrink-0">
+        <Activity className="w-4 h-4 text-emerald-400" />
+        <h2 className="text-lg font-bold text-cyber-white tracking-tight">CNS Signal Feed</h2>
+        <span className="text-[10px] font-mono text-cyber-muted ml-auto">{events.length} EVENTS</span>
+        <button
+          onClick={() => setPaused(p => !p)}
+          className={`px-3 py-1 rounded text-[10px] font-black uppercase tracking-wider border transition-all ${paused ? 'text-amber-400 border-amber-500/40 bg-amber-500/10' : 'text-emerald-400 border-emerald-500/40 bg-emerald-500/10'}`}
+        >
+          {paused ? 'PAUSED' : 'LIVE'}
+        </button>
+        <button
+          onClick={() => setEvents([])}
+          className="px-3 py-1 rounded text-[10px] font-black uppercase tracking-wider border border-white/10 text-cyber-muted hover:text-rose-400 hover:border-rose-500/40 transition-all"
+        >
+          CLEAR
+        </button>
+      </div>
+
+      <input
+        type="text"
+        placeholder="Filter by topic..."
+        value={filter}
+        onChange={e => setFilter(e.target.value)}
+        className="shrink-0 w-full bg-white/5 border border-white/10 rounded-lg px-3 py-1.5 text-[11px] text-cyber-white placeholder-cyber-muted/50 font-mono focus:outline-none focus:border-cyber-primary/50"
+      />
+
+      <div className="flex-1 overflow-y-auto min-h-0 space-y-px font-mono text-[10px]">
+        {filtered.length === 0 ? (
+          <div className="flex flex-col items-center justify-center h-full text-cyber-muted opacity-40">
+            <Activity className="w-8 h-8 mb-2" />
+            <p className="uppercase tracking-widest font-black text-[9px]">Awaiting signals...</p>
+            <p className="mt-1 opacity-60 text-center">MessageBroker signals and WS events appear here in real-time</p>
+          </div>
+        ) : (
+          filtered.map(ev => (
+            <div key={ev.id} className="flex items-start gap-2 px-2 py-1.5 rounded hover:bg-white/5 transition-colors group cursor-default">
+              <span className="text-white/20 shrink-0 tabular-nums">
+                {new Date(ev.ts).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })}
+              </span>
+              <span className={`shrink-0 font-black w-36 truncate ${topicColor(ev.topic)}`}>{ev.topic}</span>
+              <span className="text-white/40 truncate flex-1 group-hover:whitespace-normal group-hover:break-all">
+                {typeof ev.payload === 'object' ? JSON.stringify(ev.payload) : String(ev.payload ?? '')}
+              </span>
+            </div>
+          ))
+        )}
+      </div>
+    </div>
+  );
+};
+
+// ─────────────────────────────────────────────────────────────────────────────
+
 interface ArbiteriumAppProps {
   systemArbiters?: any[];
   onToggleArbiter?: (id: string) => void;
@@ -136,7 +414,6 @@ const ArbiteriumApp: React.FC<ArbiteriumAppProps> = ({ systemArbiters, onToggleA
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false);
   const [selectedStepId, setSelectedStepId] = useState<string | undefined>(undefined);
   const [isPaused, setIsPaused] = useState(false);
-  const [executionSpeed, setExecutionSpeed] = useState(800);
 
 
   // Store user customizations (Name, Description, Avatar) to persist across system updates
@@ -378,11 +655,14 @@ const ArbiteriumApp: React.FC<ArbiteriumAppProps> = ({ systemArbiters, onToggleA
       }));
 
       // 3. Call REAL orchestration backend
-      const plan = await orchestrateGoal(userText);
+      const plan = await orchestrateGoal(userText, isDeepThinking);
       
       // 4. Update session with the plan
       const memoryMsg = plan.memoriesRecalled && plan.memoriesRecalled.length > 0
         ? ` (${plan.memoriesRecalled.length} past memories recalled)`
+        : '';
+      const warningMsg = (plan as any).warnings?.length > 0
+        ? `\n⚠️ ${(plan as any).warnings.join(' | ')}`
         : '';
       updateActiveSession(s => ({
         ...s,
@@ -391,7 +671,7 @@ const ArbiteriumApp: React.FC<ArbiteriumAppProps> = ({ systemArbiters, onToggleA
         messages: s.messages.filter(m => m.id !== 'thinking').concat({
           id: Date.now().toString() + '_resp',
           sender: 'orchestrator',
-          text: `Plan formulated: ${plan.summary}${memoryMsg}`,
+          text: `Plan formulated: ${plan.summary}${memoryMsg}${warningMsg}`,
           timestamp: Date.now(),
           relatedPlanId: 'current'
         })
@@ -496,11 +776,6 @@ const ArbiteriumApp: React.FC<ArbiteriumAppProps> = ({ systemArbiters, onToggleA
     }
   };
 
-  const handleDemo = () => {
-    setInput("Analyze the SOMA codebase for architectural inconsistencies.");
-    setTimeout(() => handleSendMessage(), 100);
-  }
-
   const handleKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleSendMessage(); }
   };
@@ -565,6 +840,8 @@ const ArbiteriumApp: React.FC<ArbiteriumAppProps> = ({ systemArbiters, onToggleA
           <div className="w-1/2 p-3"><TaskDetailPanel step={activeSession.plan?.steps.find(s => s.id === selectedStepId)} onClose={() => setSelectedStepId(undefined)} /></div>
         </div>
       );
+      case 'swarm': return <SwarmView />;
+      case 'cns': return <CNSView />;
       case 'dashboard':
       default: return (
         <div className="grid grid-cols-12 gap-2 h-full">
@@ -642,9 +919,6 @@ const ArbiteriumApp: React.FC<ArbiteriumAppProps> = ({ systemArbiters, onToggleA
                     className="flex-1 bg-transparent border-none text-[11px] text-white focus:outline-none placeholder:text-cyber-muted/30 font-bold"
                   />
                   <div className="flex items-center gap-1">
-                    <button className="p-1.5 rounded hover:bg-white/5 text-cyber-muted hover:text-cyber-primary transition-all">
-                      <Paperclip className="w-3.5 h-3.5" />
-                    </button>
                     <button
                       onClick={() => setIsDeepThinking(!isDeepThinking)}
                       className={`p-1.5 rounded transition-all ${isDeepThinking ? 'text-amber-400 bg-amber-400/10' : 'text-cyber-muted hover:text-cyber-primary hover:bg-white/5'}`}
@@ -696,7 +970,7 @@ const ArbiteriumApp: React.FC<ArbiteriumAppProps> = ({ systemArbiters, onToggleA
     <div className="flex h-screen bg-main-gradient text-cyber-white font-sans selection:bg-cyber-accent/40 overflow-hidden">
       {/* Sidebar - Enhanced Branding integrated toggle */}
       <aside
-        className={`flex flex-col hidden md:flex shrink-0 h-full relative z-50 border-r border-white/5 bg-gradient-to-b from-[#151518] to-[#0A0A0C] backdrop-blur-3xl transition-all duration-500 ease-[cubic-bezier(0.4,0,0.2,1)] overflow-visible ${isSidebarCollapsed ? 'w-[64px]' : 'w-60'}`}
+        className={`flex flex-col hidden md:flex shrink-0 h-full relative z-50 border-r border-white/5 bg-gradient-to-b from-[#151518] to-[#0A0A0C] backdrop-blur-3xl transition-all duration-500 ease-[cubic-bezier(0.4,0,0.2,1)] overflow-visible ${isSidebarCollapsed ? 'w-[64px]' : 'w-[188px]'}`}
       >
         {/* Breathing Logo & Integrated Collapse Toggle */}
         <div
@@ -709,8 +983,10 @@ const ArbiteriumApp: React.FC<ArbiteriumAppProps> = ({ systemArbiters, onToggleA
             <div className={`absolute -inset-1 bg-cyber-primary/80 rounded-full blur-xl transition-all duration-700 animate-breathing-glow ${isSidebarCollapsed ? 'opacity-40' : 'opacity-80 group-hover:opacity-100'}`}></div>
 
             {/* Logo Container with High Reactivity */}
-            <div className={`relative w-10 h-10 rounded-xl bg-cyber-deep/80 flex items-center justify-center text-cyber-accent border border-white/10 shadow-neon-strong group-hover:scale-110 group-hover:rotate-12 transition-all duration-500 group-hover:border-cyber-accent/60 group-hover:shadow-[0_0_25px_rgba(168,85,247,0.5)] overflow-hidden`}>
-              <Skull className={`w-6 h-6 transition-all duration-1000 ${isSidebarCollapsed ? 'rotate-0' : 'rotate-[360deg]'}`} />
+            <div className={`relative w-10 h-10 rounded-xl bg-cyber-deep/80 flex items-center justify-center text-cyber-accent border border-white/10 shadow-neon-strong group-hover:scale-110 transition-all duration-500 group-hover:border-cyber-accent/60 group-hover:shadow-[0_0_25px_rgba(168,85,247,0.5)] overflow-hidden`}>
+              <svg viewBox="0 0 24 24" fill="currentColor" className="w-6 h-6 text-cyber-primary relative z-10">
+                <path d="M12 2C10.5 2 9 2.5 8 3.5C7 2.5 5.5 2 4 2C2.5 2 1 3 1 5C1 6.5 1.5 8 2.5 9C1.5 10 1 11.5 1 13C1 14.5 2 16 3.5 16.5C3 17.5 3 18.5 3.5 19.5C4 20.5 5 21 6 21.5C7 22 8.5 22 10 22H14C15.5 22 17 22 18 21.5C19 21 20 20.5 20.5 19.5C21 18.5 21 17.5 20.5 16.5C22 16 23 14.5 23 13C23 11.5 22.5 10 21.5 9C22.5 8 23 6.5 23 5C23 3 21.5 2 20 2C18.5 2 17 2.5 16 3.5C15 2.5 13.5 2 12 2Z" />
+              </svg>
               {/* Internal Scanline Effect */}
               <div className="absolute inset-0 bg-gradient-to-b from-transparent via-cyber-primary/10 to-transparent h-1/2 w-full animate-pulse pointer-events-none"></div>
             </div>
@@ -718,8 +994,8 @@ const ArbiteriumApp: React.FC<ArbiteriumAppProps> = ({ systemArbiters, onToggleA
 
           {!isSidebarCollapsed && (
             <div className="flex flex-col ml-4 animate-in fade-in slide-in-from-left-4 duration-500 group-hover:translate-x-1.5 transition-transform">
-              <span className="font-mono font-black text-xl tracking-tighter text-transparent bg-clip-text bg-gradient-to-r from-cyber-primary via-cyber-accent to-cyber-vivid leading-none drop-shadow-[0_0_12px_rgba(216,180,254,0.4)]">ARBITERIUM</span>
-              <span className="text-[8px] text-cyber-muted tracking-[0.4em] uppercase opacity-60 font-black mt-1.5 group-hover:opacity-100 group-hover:text-cyber-primary transition-all">Soma Core</span>
+              <span className="font-mono font-black text-xl tracking-tighter text-white leading-none drop-shadow-[0_0_12px_rgba(216,180,254,0.6)]">ARBITERIUM</span>
+              <span className="text-[8px] text-white/50 tracking-[0.4em] uppercase font-black mt-1.5 group-hover:opacity-100 group-hover:text-cyber-primary transition-all">Soma Core</span>
             </div>
           )}
         </div>
@@ -811,6 +1087,8 @@ const ArbiteriumApp: React.FC<ArbiteriumAppProps> = ({ systemArbiters, onToggleA
             { id: 'dashboard', icon: Home, label: 'Dashboard' },
             { id: 'agents', icon: Users, label: 'Arbiters' },
             { id: 'micro-agents', icon: Zap, label: 'Agents' },
+            { id: 'swarm', icon: Wrench, label: 'Swarm' },
+            { id: 'cns', icon: Activity, label: 'CNS' },
             { id: 'plan', icon: FileText, label: 'Plan & Outputs' },
             { id: 'tasks', icon: Layers, label: 'Trace' },
           ].map(item => {

@@ -151,10 +151,12 @@ export class EngineeringSwarmArbiter extends BaseArbiterV4 {
           }).catch(() => {});
           this.auditLogger.info(`[EngSwarm] ✅ Goal "${goal.title}" completed (${result.duration}s)`);
         } else {
+          // Use swarm_goal_failed (not cancel_goal) so GoalPlannerArbiter can
+          // apply retry escalation rather than just silently deferring the goal.
           messageBroker.sendMessage({
             from: 'EngineeringSwarmArbiter', to: 'GoalPlannerArbiter',
-            type: 'cancel_goal',
-            payload: { goalId, reason: `EngineeringSwarm failed: ${result?.error || 'unknown'}` }
+            type: 'swarm_goal_failed',
+            payload: { goalId, reason: result?.error || 'unknown' }
           }).catch(() => {});
           this.auditLogger.warn(`[EngSwarm] ❌ Goal "${goal.title}" failed: ${result?.error}`);
         }
@@ -264,6 +266,9 @@ export class EngineeringSwarmArbiter extends BaseArbiterV4 {
             const errorData = { sessionId, filepath, request, success: false, error: err.message, duration };
 
             if (this.optimizer) this.optimizer.record(errorData);
+            // Publish failure to broker — was previously silent; GoalPlannerArbiter
+            // and SwarmOptimizer both subscribe to swarm.experience for feedback loops.
+            await this._logToExperienceLedger(errorData);
             blackboard.post('insights', { type: 'task_aborted', error: err.message });
             this.auditLogger.error(`[Swarm] ❌ ENGINEERING ABORTED after ${swarmState.attempts} attempts: ${err.message}`);
             return { success: false, error: err.message };

@@ -1,9 +1,11 @@
-import os from 'os';
+﻿import os from 'os';
 import path from 'path';
 import fs from 'fs/promises';
 import { exec } from 'child_process';
 import { createRequire } from 'module';
 const require = createRequire(import.meta.url);
+const multer = require('multer');
+const _reflectionsUpload = multer({ dest: os.tmpdir() });
 import { ContentExtractor } from '../utils/ContentExtractor.js';
 import financeRoutes from '../../server/finance/financeRoutes.js';
 import marketDataRoutes from '../../server/finance/marketDataRoutes.js';
@@ -31,7 +33,7 @@ import { buildSystemSnapshot } from '../utils/systemState.js';
 import { executeCommand } from '../utils/commandRouter.js';
 
 export async function loadRoutes(app, system) {
-    console.log('\n[Loader] 🛣️  Mounting Production API Routes...');
+    console.log('\n[Loader] ðŸ›£ï¸  Mounting Production API Routes...');
 
     const allowedRoots = (process.env.SOMA_ALLOWED_PATHS || '')
         .split(';')
@@ -120,7 +122,7 @@ export async function loadRoutes(app, system) {
         res.json({ ok: true, status: system.ready ? 'healthy' : 'initializing', uptime: process.uptime() });
     });
 
-    // ── SYSTEM SELF-AWARENESS ENDPOINTS (Used by CommandBridgeInterface) ──
+    // â”€â”€ SYSTEM SELF-AWARENESS ENDPOINTS (Used by CommandBridgeInterface) â”€â”€
 
     app.get('/api/balancer/stats', (req, res) => {
         const balancer = system.loadBalancer || system.shadowClones;
@@ -162,10 +164,8 @@ export async function loadRoutes(app, system) {
 
     app.get('/api/beliefs', (req, res) => {
         const bs = system.beliefSystem || system.beliefSystemArbiter;
-        res.json({
-            success: true,
-            beliefs: bs?.getBeliefs ? bs.getBeliefs() : []
-        });
+        const result = bs?.queryBeliefs ? bs.queryBeliefs() : { beliefs: [] };
+        res.json({ success: true, beliefs: result.beliefs || [] });
     });
 
     app.get('/api/velocity/status', (req, res) => {
@@ -176,7 +176,7 @@ export async function loadRoutes(app, system) {
         });
     });
 
-    // ── ORB & EMOTIONAL ENGINE (Top-level mounting for stability) ──
+    // â”€â”€ ORB & EMOTIONAL ENGINE (Top-level mounting for stability) â”€â”€
     
     app.get('/api/soma/orb-emotions', (req, res) => {
         try {
@@ -224,7 +224,7 @@ export async function loadRoutes(app, system) {
                         .filter(m => (m.similarity || 1) > 0.35)
                         .slice(0, 3);
                     if (hits.length > 0) {
-                        memoryContext = `\n[SOMA MEMORY]\n${hits.map(m => `• ${(m.content || m).toString().substring(0, 150)}`).join('\n')}\n[/SOMA MEMORY]\n`;
+                        memoryContext = `\n[SOMA MEMORY]\n${hits.map(m => `â€¢ ${(m.content || m).toString().substring(0, 150)}`).join('\n')}\n[/SOMA MEMORY]\n`;
                     }
                 } catch (e) {}
             }
@@ -252,7 +252,7 @@ export async function loadRoutes(app, system) {
 
             // 4. Reasoning
             const finalPrompt = `${personaContext}${awarenessContext}${memoryContext}\n${query}`;
-            console.log(`[ReasonRoute] 🧠 Calling Brain (${brain.name}) with prompt length: ${finalPrompt.length}`);
+            console.log(`[ReasonRoute] ðŸ§  Calling Brain (${brain.name}) with prompt length: ${finalPrompt.length}`);
             
             const result = await brain.reason(finalPrompt, {
                 sessionId: conversationId || 'orb-link',
@@ -261,18 +261,18 @@ export async function loadRoutes(app, system) {
                 ...(reqContext || {})
             });
 
-            console.log(`[ReasonRoute] 📥 Brain result:`, JSON.stringify(result).substring(0, 200));
+            console.log(`[ReasonRoute] ðŸ“¥ Brain result:`, JSON.stringify(result).substring(0, 200));
 
             // 5. Response Extraction
             const responseTextRaw = result?.text || result?.response || result?.output || (typeof result === 'string' ? result : '');
             let responseText = responseTextRaw || (result?.success ? "I've processed your request but have no specific text to return." : "My reasoning engine failed to produce a response.");
 
-            // ── FINAL STAGE TOOL SAFETY NET ──
+            // â”€â”€ FINAL STAGE TOOL SAFETY NET â”€â”€
             const toolCallMatch = responseText.match(/\{[\s\S]*?"tool"[\s\S]*?\}/);
             if (toolCallMatch && !reqContext?.isAgenticTask) {
                 try {
                     const toolCall = JSON.parse(toolCallMatch[0]);
-                    console.log(`[ReasonRoute] 🛠️  Caught leaked tool call: ${toolCall.tool}`);
+                    console.log(`[ReasonRoute] ðŸ› ï¸  Caught leaked tool call: ${toolCall.tool}`);
                     const toolResult = await system.toolRegistry.execute(toolCall.tool, toolCall.args);
                     
                     const followUp = await brain.reason(query, {
@@ -300,7 +300,7 @@ export async function loadRoutes(app, system) {
         }
     });
 
-    // ── Arbiter Inventory: SOMA's self-knowledge of available capabilities ──
+    // â”€â”€ Arbiter Inventory: SOMA's self-knowledge of available capabilities â”€â”€
     app.get('/api/arbiter/inventory', (req, res) => {
         if (!system.arbiterLoader) return res.status(503).json({ error: 'ArbiterLoader offline' });
         res.json({ success: true, inventory: system.arbiterLoader.getInventory() });
@@ -330,7 +330,7 @@ export async function loadRoutes(app, system) {
         }
     });
 
-    // ── Engineering Swarm: on-demand self-modification trigger ──────────────
+    // â”€â”€ Engineering Swarm: on-demand self-modification trigger â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     // Accepts { filepath, request } and streams SSE phase events back.
     // Used by MAX and manual triggers. Safe: CommandPolicyEngine blocks dangerous cmds.
     app.post('/api/soma/engineering/modify', async (req, res) => {
@@ -342,7 +342,7 @@ export async function loadRoutes(app, system) {
 
         const swarm = system.engineeringSwarm;
         if (!swarm) {
-            return res.status(503).json({ error: 'EngineeringSwarm offline — system still booting (try again in ~90s)' });
+            return res.status(503).json({ error: 'EngineeringSwarm offline â€” system still booting (try again in ~90s)' });
         }
 
         // SSE headers
@@ -356,7 +356,7 @@ export async function loadRoutes(app, system) {
         };
 
         send('accepted', { filepath, request: modRequest, timestamp: new Date().toISOString() });
-        console.log(`[EngineeringRoute] 🔧 Swarm modify started — ${filepath}: ${modRequest.slice(0, 80)}`);
+        console.log(`[EngineeringRoute] ðŸ”§ Swarm modify started â€” ${filepath}: ${modRequest.slice(0, 80)}`);
 
         try {
             const result = await swarm.modifyCode(filepath, modRequest, (phase, message) => {
@@ -689,7 +689,7 @@ export async function loadRoutes(app, system) {
         });
     });
 
-    // Unified Activity Feed — aggregates events from all autonomous systems
+    // Unified Activity Feed â€” aggregates events from all autonomous systems
     app.get('/api/activity/recent', (req, res) => {
         const limit = Math.min(parseInt(req.query.limit) || 50, 200);
         const feed = [];
@@ -700,7 +700,7 @@ export async function loadRoutes(app, system) {
         if (goalPlanner) {
             for (const id of goalPlanner.activeGoals || []) {
                 const g = goalPlanner.goals?.get(id);
-                if (g) feed.push({ id: g.id, type: 'goal_active', agent: 'GoalPlanner', action: g.title, detail: `${g.metrics?.progress || 0}% — ${g.category}`, timestamp: g.startedAt || g.createdAt, status: g.status });
+                if (g) feed.push({ id: g.id, type: 'goal_active', agent: 'GoalPlanner', action: g.title, detail: `${g.metrics?.progress || 0}% â€” ${g.category}`, timestamp: g.startedAt || g.createdAt, status: g.status });
             }
             for (const g of (goalPlanner.completedGoals || []).slice(0, 10)) {
                 feed.push({ id: g.id, type: 'goal_completed', agent: 'GoalPlanner', action: g.title, detail: g.category, timestamp: g.completedAt, status: 'completed' });
@@ -891,7 +891,7 @@ export async function loadRoutes(app, system) {
         res.json({ success: true, message: 'Character deactivated, SOMA personality restored' });
     });
 
-    app.get('/api/beliefs', (req, res) => res.json(system.beliefSystem?.queryBeliefs?.({}) || { beliefs: [] }));
+    
     app.get('/api/beliefs/contradictions', (req, res) => res.json({ success: true, contradictions: system.beliefSystem?.contradictions ? Array.from(system.beliefSystem.contradictions.values()) : [] }));
     app.get('/api/analytics/summary', (req, res) => res.json({ success: true, summary: system.analytics?.getSummary?.() || {} }));
     app.get('/api/memory/status', (req, res) => {
@@ -938,7 +938,232 @@ export async function loadRoutes(app, system) {
         res.json({ success: true, ...result });
     });
 
-    // 4. STORAGE & FILE SYSTEM (Fixing Storage Tab)
+    
+    
+    // ── SIREN API: Neural Voice Synthesis ───────────────────────
+    app.post('/api/siren/synthesize', async (req, res) => {
+        try {
+            const { text, emotion, requestId } = req.body;
+            const synthesis = system.vocalSynthesis || Array.from(system.arbiters?.values() || []).find(a => a.name === 'VocalSynthesisArbiter');
+            if (!synthesis) return res.status(503).json({ success: false, error: 'Vocal Synthesis Arbiter not available' });
+            const result = await synthesis.handleSynthesis({ text, emotion, requestId });
+            res.json(result);
+        } catch (error) { res.status(500).json({ success: false, error: error.message }); }
+    });
+// ── ARCHIVE API: Research Library ──────────────────────────
+    app.get('/api/archive/list', async (req, res) => {
+        try {
+            const archivePath = path.join(process.cwd(), 'data', 'vault', 'archive');
+            await fs.mkdir(archivePath, { recursive: true });
+            const files = await fs.readdir(archivePath);
+            res.json({ success: true, files });
+        } catch (error) { res.json({ success: false, error: error.message }); }
+    });
+
+    app.post('/api/archive/link', async (req, res) => {
+        try {
+            const { path: targetPath } = req.body;
+            const indexer = system.mnemonicIndexer || Array.from(system.arbiters?.values() || []).find(a => a.name === 'MnemonicIndexerArbiter');
+            if (!indexer) return res.status(503).json({ success: false, error: 'Indexer not available' });
+            indexer.scanDirectory(targetPath).catch(err => console.error('[Archive] Scan error:', err));
+            res.json({ success: true, message: 'Indexing started', path: targetPath });
+        } catch (error) { res.status(500).json({ success: false, error: error.message }); }
+    });
+
+    // ── REFLECTIONS API: Brainstorming Laboratory ───────────────
+    app.get('/api/reflections/list', async (req, res) => {
+        try {
+            const vaultPath = path.join(process.cwd(), 'data', 'vault', 'reflections');
+            await fs.mkdir(vaultPath, { recursive: true });
+            const files = await fs.readdir(vaultPath);
+            const notes = files.filter(f => f.endsWith('.md')).map(f => ({ name: f, path: path.join(vaultPath, f) }));
+            res.json({ success: true, notes });
+        } catch (error) { res.json({ success: false, error: error.message }); }
+    });
+
+    app.post('/api/reflections/quick-note', async (req, res) => {
+        try {
+            const { text, title, context } = req.body;
+            if (!system.reflections) return res.status(503).json({ error: 'Reflections Arbiter not available' });
+            const result = await system.reflections.appendQuickNote(text, { title, context });
+            res.json(result);
+        } catch (error) { res.status(500).json({ error: error.message }); }
+    });
+
+    app.post('/api/reflections/distill', async (req, res) => {
+        try {
+            const { chatLog, title } = req.body;
+            if (!system.reflections) return res.status(503).json({ error: 'Reflections Arbiter not available' });
+            const result = await system.reflections.distillSession(chatLog, title);
+            res.json(result);
+        } catch (error) { res.status(500).json({ error: error.message }); }
+    });
+
+    // ── REFLECTIONS: Note CRUD + Graph ─────────────────────────────
+    app.get('/api/reflections/note/:name', async (req, res) => {
+        try {
+            const vaultPath = path.resolve(process.cwd(), 'data', 'vault', 'reflections');
+            const safeName = path.basename(req.params.name); // strip any dir traversal
+            const filePath = path.resolve(vaultPath, safeName);
+            if (!filePath.startsWith(vaultPath)) return res.status(403).json({ error: 'Forbidden' });
+            const content = await fs.readFile(filePath, 'utf8');
+            res.json({ success: true, content, name: safeName });
+        } catch (error) { res.status(404).json({ success: false, error: error.message }); }
+    });
+
+    app.put('/api/reflections/note', async (req, res) => {
+        try {
+            const { name, content } = req.body;
+            if (!name || content === undefined) return res.status(400).json({ error: 'name and content required' });
+            const vaultPath = path.resolve(process.cwd(), 'data', 'vault', 'reflections');
+            await fs.mkdir(vaultPath, { recursive: true });
+            const safeName = path.basename(name.replace(/[^a-zA-Z0-9_\-. ]/g, '_'));
+            const fileName = safeName.endsWith('.md') ? safeName : safeName + '.md';
+            const filePath = path.resolve(vaultPath, fileName);
+            if (!filePath.startsWith(vaultPath)) return res.status(403).json({ error: 'Forbidden' });
+            await fs.writeFile(filePath, content, 'utf8');
+            res.json({ success: true, name: fileName });
+        } catch (error) { res.status(500).json({ success: false, error: error.message }); }
+    });
+
+    app.delete('/api/reflections/note/:name', async (req, res) => {
+        try {
+            const vaultPath = path.resolve(process.cwd(), 'data', 'vault', 'reflections');
+            const safeName = path.basename(req.params.name);
+            const filePath = path.resolve(vaultPath, safeName);
+            if (!filePath.startsWith(vaultPath)) return res.status(403).json({ error: 'Forbidden' });
+            await fs.unlink(filePath);
+            res.json({ success: true });
+        } catch (error) { res.status(500).json({ success: false, error: error.message }); }
+    });
+
+    app.get('/api/reflections/search', async (req, res) => {
+        try {
+            const q = (req.query.q || '').toLowerCase().trim();
+            if (!q || q.length < 2) return res.json({ success: true, results: [] });
+            const vaultPath = path.resolve(process.cwd(), 'data', 'vault', 'reflections');
+            await fs.mkdir(vaultPath, { recursive: true });
+            const files = (await fs.readdir(vaultPath)).filter(f => f.endsWith('.md'));
+            const results = [];
+            for (const f of files) {
+                const raw = await fs.readFile(path.join(vaultPath, f), 'utf8').catch(() => '');
+                const stripped = raw.replace(/^---[\s\S]*?---\s*\n?/, '');
+                const idx = stripped.toLowerCase().indexOf(q);
+                if (idx !== -1 || f.toLowerCase().includes(q)) {
+                    const snippet = idx !== -1
+                        ? '...' + stripped.slice(Math.max(0, idx - 30), idx + 100).replace(/\n/g, ' ').trim() + '...'
+                        : '';
+                    results.push({ name: f, snippet });
+                }
+            }
+            res.json({ success: true, results });
+        } catch (error) { res.status(500).json({ success: false, error: error.message }); }
+    });
+
+    app.get('/api/reflections/analyze', async (req, res) => {
+        try {
+            const vaultPath = path.resolve(process.cwd(), 'data', 'vault', 'reflections');
+            await fs.mkdir(vaultPath, { recursive: true });
+            const files = (await fs.readdir(vaultPath)).filter(f => f.endsWith('.md'));
+            if (files.length === 0) return res.json({ success: true, insights: { patterns: [], gaps: [], clusters: [] } });
+
+            const noteContents = (await Promise.all(
+                files.slice(0, 30).map(async f => {
+                    const raw = await fs.readFile(path.join(vaultPath, f), 'utf8').catch(() => '');
+                    const stripped = raw.replace(/^---[\s\S]*?---\s*\n?/, '').trim();
+                    return `[${f.replace('.md', '')}]\n${stripped.slice(0, 500)}`;
+                })
+            )).join('\n\n---\n\n');
+
+            const prompt = `You are analyzing a personal knowledge vault of ${files.length} notes. Find meaningful cognitive patterns, blind spots/gaps, and concept clusters.
+
+NOTES:
+${noteContents}
+
+Return ONLY valid JSON (no markdown, no explanation):
+{"patterns":[{"title":"...","description":"..."}],"gaps":[{"title":"...","description":"..."}],"clusters":[{"title":"...","description":"..."}]}`;
+
+            let insights = { patterns: [], gaps: [], clusters: [] };
+            const brain = system.quadBrain || system.somArbiter;
+            if (brain?.reason) {
+                try {
+                    const result = await Promise.race([
+                        brain.reason(prompt, { brain: 'LOGOS' }),
+                        new Promise((_, reject) => setTimeout(() => reject(new Error('timeout')), 30000))
+                    ]);
+                    const text = result?.text || result?.response?.text || (typeof result === 'string' ? result : '');
+                    const m = text.match(/\{[\s\S]*\}/);
+                    if (m) insights = JSON.parse(m[0]);
+                } catch (err) { console.error('[Reflections] Analyze failed:', err.message); }
+            }
+            res.json({ success: true, insights });
+        } catch (error) { res.status(500).json({ success: false, error: error.message }); }
+    });
+
+    app.post('/api/reflections/upload', _reflectionsUpload.single('file'), async (req, res) => {
+        try {
+            if (!req.file) return res.status(400).json({ error: 'No file provided' });
+            const extractor = new ContentExtractor();
+            const content = await extractor.extract(req.file.path);
+            await fs.unlink(req.file.path).catch(() => {});
+            if (!content) return res.status(422).json({ error: 'Could not extract text from file' });
+            const originalName = req.file.originalname;
+            const ext = path.extname(originalName).toLowerCase();
+            const noteTitle = path.basename(originalName, ext).replace(/[^a-zA-Z0-9_\-. ]/g, '_');
+            const tags = [ext.slice(1) || 'file', 'upload'];
+            const date = new Date().toISOString();
+            const mdContent = `---\ntitle: ${originalName}\nsource: upload\ningested: ${date}\ntags: [${tags.join(', ')}]\n---\n\n# ${originalName}\n\n${content}\n\n---\n*Ingested via Project Reflections*\n`;
+            const vaultPath = path.resolve(process.cwd(), 'data', 'vault', 'reflections');
+            await fs.mkdir(vaultPath, { recursive: true });
+            const filename = `${noteTitle}_${Date.now()}.md`;
+            await fs.writeFile(path.join(vaultPath, filename), mdContent);
+            res.json({ success: true, filename });
+        } catch (error) { res.status(500).json({ success: false, error: error.message }); }
+    });
+
+    app.get('/api/reflections/graph', async (req, res) => {
+        try {
+            const vaultPath = path.resolve(process.cwd(), 'data', 'vault', 'reflections');
+            await fs.mkdir(vaultPath, { recursive: true });
+            const files = (await fs.readdir(vaultPath)).filter(f => f.endsWith('.md'));
+            const nodes = files.map(f => ({ id: f.replace('.md', '') }));
+            const edges = [];
+            const nodeIds = new Set(nodes.map(n => n.id));
+            for (const file of files) {
+                const content = await fs.readFile(path.join(vaultPath, file), 'utf8');
+                const source = file.replace('.md', '');
+                for (const [, target] of content.matchAll(/\[\[([^\]]+)\]\]/g)) {
+                    const cleanTarget = target.split('|')[0].trim(); // handle [[Note|Alias]]
+                    if (nodeIds.has(cleanTarget)) edges.push({ source, target: cleanTarget });
+                }
+            }
+            res.json({ success: true, nodes, edges });
+        } catch (error) { res.status(500).json({ success: false, error: error.message }); }
+    });
+
+    
+    // ── ULTRAQUANT API: Knowledge Compaction ─────────────────────
+    app.post('/api/ultraquant/compact', async (req, res) => {
+        try {
+            const { partition } = req.body; // 'reflections' or 'archive'
+            if (!system.ultraQuant) return res.status(503).json({ error: 'UltraQuant Arbiter not available' });
+            
+            const targetPath = path.join(process.cwd(), 'data', 'vault', partition || 'reflections');
+            system.ultraQuant.compactPartition(targetPath).catch(err => console.error('[UltraQuant] Compaction error:', err));
+            
+            res.json({ success: true, message: 'Compaction of ' + (partition || 'reflections') + ' initiated.' });
+        } catch (error) { res.status(500).json({ success: false, error: error.message }); }
+    });
+// ── ARGUS API: Visual Frame Ingestion ──────────────────────────
+    app.post('/api/argus/frame', async (req, res) => {
+        try {
+            const { frameData, timestamp, source } = req.body;
+            if (!system.argus) return res.status(503).json({ error: 'Argus Arbiter not available' });
+            await system.argus.handleFrame({ frameData, timestamp, source });
+            res.json({ success: true });
+        } catch (error) { res.status(500).json({ success: false, error: error.message }); }
+    });
+// 4. STORAGE & FILE SYSTEM (Fixing Storage Tab)
     app.get('/api/fs/browse', checkReady, async (req, res) => {
         try {
             const targetPath = path.resolve(process.cwd(), req.query.path || '.');
@@ -1212,6 +1437,25 @@ export async function loadRoutes(app, system) {
     // 5b. ARBITERIUM
     safeMount('/api/arbiterium', checkReady, arbiteriumRoutes(system));
 
+    // 5c. CAPABILITY REGISTRY
+    app.get('/api/capabilities', (req, res) => {
+        const reg = system.capabilityRegistry;
+        if (!reg) return res.json({ capabilities: [], status: 'not_ready' });
+        res.json({ capabilities: reg.getStats(), status: 'ok' });
+    });
+    app.post('/api/capabilities/:name/enable', (req, res) => {
+        const reg = system.capabilityRegistry;
+        if (!reg) return res.status(503).json({ error: 'not ready' });
+        const ok = reg.enable(req.params.name);
+        res.json({ success: ok });
+    });
+    app.post('/api/capabilities/:name/disable', (req, res) => {
+        const reg = system.capabilityRegistry;
+        if (!reg) return res.status(503).json({ error: 'not ready' });
+        const ok = reg.disable(req.params.name);
+        res.json({ success: ok });
+    });
+
     // 6. FINANCE (Full Trading Stack)
     safeMount('/api/finance', checkReady, financeRoutes);
     safeMount('/api/market', checkReady, marketDataRoutes);
@@ -1230,16 +1474,16 @@ export async function loadRoutes(app, system) {
     safeMount('/api/guardian', checkReady, createGuardianRoutes(system.guardian || null));
     safeMount('/api/autonomous', checkReady, autonomousRoutes);
     safeMount('/api/gridbot',   checkReady, gridBotRoutes);
-    // Conceive module — optional, not always committed to repo
+    // Conceive module â€” optional, not always committed to repo
     try {
         const { default: conceiveRoutes } = await import('../../server/routes/conceiveRoutes.js');
         safeMount('/api/conceive', conceiveRoutes);
-        console.log('    ✅ Conceive routes mounted');
+        console.log('    âœ… Conceive routes mounted');
     } catch (e) {
-        console.warn('    ⚠️  conceiveRoutes.js not found — Conceive module disabled (safe to ignore)');
+        console.warn('    âš ï¸  conceiveRoutes.js not found â€” Conceive module disabled (safe to ignore)');
     }
 
-    // ── ASI System Routes ─────────────────────────────────────────────────
+    // â”€â”€ ASI System Routes â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     app.get('/api/asi/status', (req, res) => {
         try {
             res.json({
@@ -1285,11 +1529,26 @@ export async function loadRoutes(app, system) {
         } catch (e) { res.status(500).json({ error: e.message }); }
     });
 
-    // 7. MISSING COMPONENTS (Dream, Muse, etc.)
+    
+    // ── ORACLE API: Neural Predestination ───────────────────────
+    app.get('/api/oracle/forecast', (req, res) => {
+        // Access MAX through the system bridge
+        const oracle = system.max?.oracle || system.oracleKernel;
+        if (!oracle) return res.json({ success: false, error: 'Oracle Kernel offline' });
+        
+        const forecasts = Array.from(oracle.activeVoyages.entries()).map(([goalId, data]) => ({
+            goalId,
+            path: data.path,
+            confidence: data.confidence
+        }));
+        
+        res.json({ success: true, forecasts });
+    });
+// 7. MISSING COMPONENTS (Dream, Muse, etc.)
     app.get('/api/dream/insights', (req, res) => {
-        const raw = system.dreamArbiter?.getInsights?.() || [];
-        const insights = Array.isArray(raw) ? { recentInsights: raw } : raw;
-        res.json({ success: true, insights, narrative: system.dreamArbiter?.getNarrative?.() || null });
+        const raw = system.dreamArbiter?.getInsights?.() || { recentInsights: [] };
+        const insights = raw.recentInsights || [];
+        res.json({ success: true, recentInsights: insights, narrative: system.dreamArbiter?.getNarrative?.() || null });
     });
     app.get('/api/muse/sparks', (req, res) => res.json({ success: true, sparks: system.museArbiter?.getSparks?.() || [] }));
     app.get('/api/theory-of-mind/insights', (req, res) => {
@@ -1372,9 +1631,52 @@ export async function loadRoutes(app, system) {
     });
 
     app.get('/api/conversation/history', (req, res) => res.json({ success: true, history: system.conversationManager?.getHistory?.(req.query.count || 20) || [] }));
-    app.get('/api/soma/vision/last', (req, res) => res.json({ success: true, url: system.visionArbiter?.getLastImage?.() || null }));
+    app.get('/api/soma/vision/last', (req, res) => res.json({ success: true, url: system.argus?.getLastImage?.() || system.visionArbiter?.getLastImage?.() || null }));
 
-    // Plan viewer — reliable REST endpoint (bypasses WS sendMessage race conditions)
+    app.get('/api/soma/analytics', (req, res) => {
+        const quad = system.quadBrain;
+        const mem = system.mnemonicArbiter;
+        const arb = system.arbiterRegistry || system.arbiters;
+        const totalArbiters = arb ? (arb.size || Object.keys(arb).length || 0) : 0;
+        res.json({ success: true, summary: {
+            totalQueries:     quad?.totalQueries || 0,
+            successRate:      quad?.successRate != null ? Math.round(quad.successRate * 100) : 100,
+            activeArbiters:   totalArbiters,
+            totalArbiters:    totalArbiters,
+            avgResponseTime:  quad?.avgResponseTime || 0,
+            tokenUsage:       quad?.totalTokens || 0,
+            memoryUsage:      Math.round(process.memoryUsage().heapUsed / 1024 / 1024),
+            cacheHitRate:     quad?.cacheHitRate != null ? Math.round(quad.cacheHitRate * 100) : 0,
+            uptime:           Math.round(process.uptime()),
+        }});
+    });
+
+    app.get('/api/skills/stats', (req, res) => {
+        const sa = system.skillAcquisition || system.skillTracker;
+        if (sa?.getStats) {
+            const raw = sa.getStats();
+            return res.json({ success: true, stats: { ...raw, tracked: true } });
+        }
+        // Derive rough skill scores from available system metrics
+        const uptime = process.uptime();
+        const mem = system.mnemonicArbiter;
+        const quad = system.quadBrain;
+        const tracked = uptime > 300 && (mem || quad);
+        if (!tracked) return res.json({ success: true, stats: { tracked: false } });
+        const memCount = mem?.getStats?.()?.totalMemories || 0;
+        const queryCount = quad?.totalQueries || 0;
+        res.json({ success: true, stats: {
+            coding:    Math.min(100, Math.round(queryCount * 0.4)),
+            reasoning: Math.min(100, Math.round(queryCount * 0.5)),
+            memory:    Math.min(100, Math.round(memCount * 0.3)),
+            creativity:Math.min(100, Math.round(queryCount * 0.3)),
+            vision:    system.argus ? Math.min(100, 40) : 0,
+            strategy:  Math.min(100, Math.round(queryCount * 0.35)),
+            tracked: true
+        }});
+    });
+
+    // Plan viewer â€” reliable REST endpoint (bypasses WS sendMessage race conditions)
     app.get('/api/soma/plan', async (req, res) => {
         try {
             const planPath = path.join(process.cwd(), 'SOMA', 'plan.md');
@@ -1503,7 +1805,7 @@ export async function loadRoutes(app, system) {
         } catch (e) { res.status(500).json({ success: false, error: e.message }); }
     });
 
-    // ── Drive tension status ─────────────────────────────────────────────────
+    // â”€â”€ Drive tension status â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     app.get('/api/drive/status', (req, res) => {
         const drive = system.drive;
         if (!drive) return res.json({ success: false, error: 'DriveArbiter not loaded', tension: null, satisfaction: null });
@@ -1515,7 +1817,7 @@ export async function loadRoutes(app, system) {
         });
     });
 
-    // ── ORB: File context injection (@filename in OrbWidget queries) ──────
+    // â”€â”€ ORB: File context injection (@filename in OrbWidget queries) â”€â”€â”€â”€â”€â”€
     app.post('/api/fs/read', async (req, res) => {
         const { path: filePath } = req.body || {};
         if (!filePath) return res.status(400).json({ success: false, error: 'path is required' });
@@ -1530,7 +1832,7 @@ export async function loadRoutes(app, system) {
         }
     });
 
-    // ── Shared conversation history — used by CT, FloatingChat, Orb ──────────
+    // â”€â”€ Shared conversation history â€” used by CT, FloatingChat, Orb â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     // Note: messages are stored under the backend's internal session UUID (not the
     // frontend's soma_session_id). getRecentMessages() returns the active session.
     app.get('/api/soma/history', async (req, res) => {
@@ -1550,7 +1852,7 @@ export async function loadRoutes(app, system) {
         }
     });
 
-    // ── ORB: Conversation history (persist sessions across refreshes) ────
+    // â”€â”€ ORB: Conversation history (persist sessions across refreshes) â”€â”€â”€â”€
     app.get('/api/orb/history', async (req, res) => {
         const { limit = 30 } = req.query;
         try {
@@ -1571,5 +1873,12 @@ export async function loadRoutes(app, system) {
     const kevin = system.kevinArbiter || system.kevinManager;
     if (kevin) app.locals.kevinArbiter = kevin;
 
-    console.log('      ✅ All production routes mounted (Full Tab Coverage Active)');
+    console.log('      âœ… All production routes mounted (Full Tab Coverage Active)');
 }
+
+
+
+
+
+
+

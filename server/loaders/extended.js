@@ -23,6 +23,7 @@ import { EconomicCalendar } from '../../arbiters/EconomicCalendar.js';
 import { MarketRegimeDetector } from '../../arbiters/MarketRegimeDetector.js';
 import { FragmentRegistry } from '../../arbiters/FragmentRegistry.js';
 import MnemonicIndexerArbiter from '../../arbiters/MnemonicIndexerArbiter.js';
+import { ReflectionsArbiter } from '../../arbiters/ReflectionsArbiter.js';
 import CapabilityRegistry from '../../core/CapabilityRegistry.js';
 const HybridSearchArbiter = require('../../arbiters/HybridSearchArbiter.cjs');
 const TimekeeperArbiter = require('../../arbiters/TimekeeperArbiter.cjs');
@@ -485,6 +486,11 @@ export async function loadExtendedSystems(system) {
             watchPath: process.env.SOMA_INDEX_PATH || process.cwd()
         })
     );
+
+    ext.reflections = await safeLoad('ReflectionsArbiter', () =>
+        new ReflectionsArbiter('ReflectionsArbiter', { vaultPath: path.join(rootPath, 'data', 'vault', 'reflections') })
+    );
+    if (ext.reflections) { system.reflections = ext.reflections; console.log('    ✅ ReflectionsArbiter → system.reflections'); }
 
     // HybridSearchArbiter loads LocalEmbedder (all-MiniLM-L6-v2 transformer, ~290MB).
     // Even when it times out at 3s, the model load continues in background and kills the event loop.

@@ -1,4 +1,4 @@
-﻿import React, { useState, useEffect, useRef, useCallback } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import {
   Cpu, Activity, Brain, Zap, HardDrive, Wifi, CheckCircle,
   Archive, Workflow, Database, Play, Pause, RotateCw, Trash2,
@@ -6,7 +6,7 @@ import {
   Shield, User, Users, Lightbulb, ThermometerSun, ChevronLeft,
   ChevronRight, Sparkles, Terminal, Circle, BarChart3, Search, X, Clock,
   Download, TrendingUp, TrendingDown, Target, Server, Gauge, Mail, Mic,
-  Box, Share2, DollarSign, CircleDollarSign
+  Box, Share2, DollarSign, CircleDollarSign, Pencil
 } from 'lucide-react';
 import {
   LineChart, Line, RadarChart, Radar, PolarGrid,
@@ -20,7 +20,7 @@ import 'react-toastify/dist/ReactToastify.css';
 import somaBackend from './somaBackend';
 import { getSharedSessionId } from './utils/sharedSession';
 import SomaCT from '../command-ct/SomaCT';
-import Orb from './Orb';
+import Orb from './panels/Orb';
 import KevinInterface from './KevinInterface';
 // import KnowledgeGraph3D from '../../command-bridge/KnowledgeGraph3D';
 
@@ -56,14 +56,16 @@ import WorkflowSteve from './components/WorkflowSteve';
 import Marketplace from './Marketplace';
 import FileBrowser from './components/FileBrowser';
 // import PulseInterface from './components/PulseInterface';
-import PulseIDE from './components/pulse/App';
+import PulseIDE from './panels/pulse/App';
 import FinanceModule from './components/FinanceModule';
 import SocialModule from './components/SocialModule';
-import ForecasterApp from './components/Forecaster/ForecasterApp';
-import MissionControlApp from './components/MissionControl/MissionControlApp';
-import KnowledgeApp from './components/Knowledge/KnowledgeApp';
-import FileIntelligenceApp from './components/FileIntelligence/FileIntelligenceApp';
-import ArbiteriumApp from './components/arbiterium/ArbiteriumApp';
+import ForecasterApp from './panels/Forecaster/ForecasterApp';
+import MissionControlApp from './panels/MissionControl/MissionControlApp';
+import KnowledgeApp from './panels/Knowledge/KnowledgeApp';
+import FileIntelligenceApp from './panels/FileIntelligence/FileIntelligenceApp';
+import ArbiteriumApp from './panels/arbiterium/ArbiteriumApp';
+import ArgusEye from './components/ArgusEye';
+import ReflectionsTab from './components/ReflectionsTab';
 // import FinanceModule from './components/FinanceModule';
 import { generateId } from './lib/utils/id-generator';
 import { FloatingPanel } from './components/ui/floating-panel';
@@ -396,6 +398,7 @@ const SomaCommandBridge = () => {
   // Command Palette State
   const [isCommandPaletteOpen, setIsCommandPaletteOpen] = useState(false);
   const [isCharacterLabOpen, setIsCharacterLabOpen] = useState(false);
+  const [showQuickNote, setShowQuickNote] = useState(false);
 
   // Command Palette Shortcut
   useEffect(() => {
@@ -697,6 +700,18 @@ const SomaCommandBridge = () => {
       window.removeEventListener('mousemove', onActivity);
       window.removeEventListener('keypress', onActivity);
     };
+  }, []);
+
+  // Global Ctrl+Shift+N → toggle quick-note panel
+  useEffect(() => {
+    const handler = (e) => {
+      if ((e.ctrlKey || e.metaKey) && e.shiftKey && e.key === 'N') {
+        e.preventDefault();
+        setShowQuickNote(v => !v);
+      }
+    };
+    window.addEventListener('keydown', handler);
+    return () => window.removeEventListener('keydown', handler);
   }, []);
 
   // Fetch personality traits when backend connects
@@ -1356,7 +1371,7 @@ const SomaCommandBridge = () => {
     somaBackend.send('command', { action: 'restart_agent', params: { id: agentId } });
   };
 
-  const handleFloatingChatMessage = async (message, { history = [], activeModule: page } = {}) => {
+  const handleFloatingChatSubmit = async (message, { history = [], activeModule: page } = {}) => {
     try {
       const data = await somaBackend.fetch('/api/soma/chat', {
         method: 'POST',
@@ -1556,21 +1571,26 @@ const SomaCommandBridge = () => {
       />
 
       {/* Sidebar */}
-      <div className={`${sidebarCollapsed ? 'w-16' : 'w-64'} bg-[#09090b]/80 backdrop-blur-xl border-r border-white/5 flex flex-col transition-all duration-300 overflow-hidden z-50`}>
-        <div className="p-4 border-b border-white/5">
-          <div className="flex items-center justify-between mb-2">
-            {!sidebarCollapsed && <h1 className="text-xl font-bold text-transparent bg-clip-text bg-gradient-to-b from-white to-white/50 tracking-tight">SOMA</h1>}
-            <button
-              onClick={() => setSidebarCollapsed(!sidebarCollapsed)}
-              className="text-zinc-500 hover:text-white transition-colors"
-            >
-              {sidebarCollapsed ? <ChevronRight className="w-5 h-5" /> : <ChevronLeft className="w-5 h-5" />}
+      <div className={`${sidebarCollapsed ? 'w-16' : 'w-[199px]'} bg-[#09090b]/80 backdrop-blur-xl border-r border-white/5 flex flex-col transition-all duration-300 overflow-hidden z-50`}>
+        <div className="h-14 flex items-center border-b border-white/5">
+          {sidebarCollapsed ? (
+            /* Collapsed: logo centered both axes */
+            <button onClick={() => setSidebarCollapsed(false)} className="w-full h-full flex items-center justify-center opacity-50 hover:opacity-80 transition-opacity">
+              <svg width="28" height="28" viewBox="0 0 32 32" fill="none" xmlns="http://www.w3.org/2000/svg">
+                <rect width="32" height="32" rx="8" fill="#1a1a1f"/>
+                <g transform="translate(4,4)">
+                  <path d="M12 2C10.5 2 9 2.5 8 3.5C7 2.5 5.5 2 4 2C2.5 2 1 3 1 5C1 6.5 1.5 8 2.5 9C1.5 10 1 11.5 1 13C1 14.5 2 16 3.5 16.5C3 17.5 3 18.5 3.5 19.5C4 20.5 5 21 6 21.5C7 22 8.5 22 10 22H14C15.5 22 17 22 18 21.5C19 21 20 20.5 20.5 19.5C21 18.5 21 17.5 20.5 16.5C22 16 23 14.5 23 13C23 11.5 22.5 10 21.5 9C22.5 8 23 6.5 23 5C23 3 21.5 2 20 2C18.5 2 17 2.5 16 3.5C15 2.5 13.5 2 12 2Z" fill="#a1a1aa"/>
+                </g>
+              </svg>
             </button>
-          </div>
-          {!sidebarCollapsed && (
-            <>
-            <p className="text-zinc-600 text-[9px] font-mono uppercase tracking-[0.2em]">Bridge Terminal v7.4</p>
-            </>
+          ) : (
+            /* Expanded: SOMA text vertically centered, chevron on right */
+            <div className="w-full flex items-center justify-between px-4">
+              <h1 className="text-2xl font-bold text-transparent bg-clip-text bg-gradient-to-b from-white to-white/50 tracking-tight">SOMA</h1>
+              <button onClick={() => setSidebarCollapsed(true)} className="text-zinc-500 hover:text-white transition-colors">
+                <ChevronLeft className="w-4 h-4" />
+              </button>
+            </div>
           )}
         </div>
 
@@ -1584,13 +1604,11 @@ const SomaCommandBridge = () => {
 
             { id: 'simulation', label: 'Simulation', icon: Box, color: 'orange' },
 
-            { id: 'plan', label: "SOMA's Plan", icon: Target, color: 'violet' },
-            { id: 'analytics', label: 'Analytics', icon: BarChart3, color: 'indigo' },
             { id: 'forecaster', label: 'Forecaster', icon: TrendingUp, color: 'indigo' },
             { id: 'mission_control', label: 'Mission Control', icon: CircleDollarSign, color: 'rose' },
             { id: 'storage', label: 'Storage', icon: HardDrive, color: 'blue' },
             { id: 'knowledge', label: 'Knowledge', icon: Brain, color: 'cyan' },
-            { id: 'workflow', label: 'Workflow', icon: Workflow, color: 'lime' },
+            { id: 'reflections', label: 'Reflections', icon: Sparkles, color: 'purple' },
             { id: 'settings', label: 'Settings', icon: Settings, color: 'stone' },
             { id: 'arbiterium', label: 'Arbiterium', icon: Zap, color: 'fuchsia' },
           ].map(module => (
@@ -1619,12 +1637,15 @@ const SomaCommandBridge = () => {
       </div>
 
       {/* Main content */}
-      <div className={`flex-1 flex flex-col ${['terminal', 'orb', 'mission_control', 'knowledge'].includes(activeModule) ? 'overflow-hidden' : 'overflow-y-auto p-6'}`}>
+      <div className={`flex-1 flex flex-col ${['terminal', 'orb', 'mission_control', 'knowledge', 'reflections'].includes(activeModule) ? 'overflow-hidden' : 'overflow-y-auto p-6'}`}>
 
         {/* CORE SYSTEM MODULE */}
         {activeModule === 'core' && (
           <div className="space-y-6">
-            <h2 className="text-2xl font-bold text-white mb-4 tracking-tight">Core System</h2>
+            <div className="flex items-center justify-between mb-4">
+              <h2 className="text-2xl font-bold text-white tracking-tight">Core System</h2>
+              <ArgusEye isConnected={isConnected} />
+            </div>
 
             {/* Metric Grid */}
             <div className="grid grid-cols-4 gap-4">
@@ -1743,9 +1764,18 @@ const SomaCommandBridge = () => {
             >
               <div className="w-80 flex flex-col h-full">
                 <div className="p-6 border-b border-white/5">
-                  <h3 className="text-xs font-bold text-zinc-500 uppercase tracking-[0.2em] mb-4">Neural Session</h3>
-                  <EmotionIndicator 
-                    isTalking={isTalking} 
+                  <div className="flex items-center justify-between mb-4">
+                    <h3 className="text-xs font-bold text-zinc-500 uppercase tracking-[0.2em]">Neural Session</h3>
+                    <button
+                      onClick={() => setOrbSidebarCollapsed(true)}
+                      className="p-1.5 rounded-lg text-zinc-600 hover:text-zinc-300 hover:bg-white/5 transition-all"
+                      title="Collapse Neural Session"
+                    >
+                      <ChevronLeft className="w-4 h-4" />
+                    </button>
+                  </div>
+                  <EmotionIndicator
+                    isTalking={isTalking}
                     isThinking={isThinking} 
                     isConnected={isOrbConnected} 
                   />
@@ -1788,28 +1818,55 @@ const SomaCommandBridge = () => {
               </div>
             </motion.div>
 
-            {/* Collapse Toggle Button (Cute SOMA Logo Style) */}
-            <div className="absolute top-8 left-8 z-30">
-              <button 
-                onClick={() => setOrbSidebarCollapsed(!orbSidebarCollapsed)}
-                className={`p-2.5 rounded-full border transition-all duration-500 group relative ${
-                  orbSidebarCollapsed 
-                    ? 'bg-purple-500/10 border-purple-500/30 text-purple-400 hover:bg-purple-500/20' 
-                    : 'bg-white/5 border-white/10 text-zinc-500 hover:text-white'
-                }`}
-                title={orbSidebarCollapsed ? "Expand Neural Session" : "Collapse Neural Session"}
-              >
-                <div className={`absolute inset-0 rounded-full bg-purple-500/20 blur-md transition-opacity duration-500 ${orbSidebarCollapsed ? 'opacity-100 animate-pulse' : 'opacity-0'}`} />
-                <svg viewBox="0 0 24 24" fill="currentColor" className={`w-5 h-5 relative z-10 transition-transform duration-500 ${orbSidebarCollapsed ? 'scale-110 rotate-[360deg]' : 'group-hover:rotate-12'}`}>
-                  <path d="M12 2C10.5 2 9 2.5 8 3.5C7 2.5 5.5 2 4 2C2.5 2 1 3 1 5C1 6.5 1.5 8 2.5 9C1.5 10 1 11.5 1 13C1 14.5 2 16 3.5 16.5C3 17.5 3 18.5 3.5 19.5C4 20.5 5 21 6 21.5C7 22 8.5 22 10 22H14C15.5 22 17 22 18 21.5C19 21 20 20.5 20.5 19.5C21 18.5 21 17.5 20.5 16.5C22 16 23 14.5 23 13C23 11.5 22.5 10 21.5 9C22.5 8 23 6.5 23 5C23 3 21.5 2 20 2C18.5 2 17 2.5 16 3.5C15 2.5 13.5 2 12 2Z" />
-                </svg>
-                {orbSidebarCollapsed && (
-                  <span className="absolute left-full ml-3 px-2 py-1 bg-black/80 border border-white/10 rounded text-[9px] text-purple-300 uppercase tracking-widest whitespace-nowrap opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none">
-                    Session Logs
-                  </span>
-                )}
-              </button>
-            </div>
+            {/* Re-expand Button — only visible when sidebar is collapsed */}
+            <AnimatePresence>
+              {orbSidebarCollapsed && (
+                <motion.div
+                  className="absolute top-8 left-4 z-30"
+                  initial={{ scale: 0, opacity: 0 }}
+                  animate={{ scale: 1, opacity: 1 }}
+                  exit={{ scale: 0, opacity: 0 }}
+                  transition={{ type: "spring", damping: 15, stiffness: 250 }}
+                >
+                  <motion.button
+                    onClick={() => setOrbSidebarCollapsed(false)}
+                    className="p-3 rounded-full border bg-purple-500/10 border-purple-500/30 text-purple-400 group relative overflow-visible"
+                    whileHover={{ scale: 1.15 }}
+                    whileTap={{ scale: 0.88 }}
+                    title="Expand Neural Session"
+                  >
+                    {/* Ring 1 — slow expanding pulse */}
+                    <motion.div
+                      className="absolute inset-0 rounded-full border border-purple-400/50"
+                      animate={{ scale: [1, 2, 1], opacity: [0.7, 0, 0.7] }}
+                      transition={{ duration: 2.2, repeat: Infinity, ease: "easeOut" }}
+                    />
+                    {/* Ring 2 — offset pulse */}
+                    <motion.div
+                      className="absolute inset-0 rounded-full border border-fuchsia-500/30"
+                      animate={{ scale: [1, 2.6, 1], opacity: [0.5, 0, 0.5] }}
+                      transition={{ duration: 2.2, repeat: Infinity, ease: "easeOut", delay: 0.8 }}
+                    />
+                    {/* Soft glow core */}
+                    <div className="absolute inset-0 rounded-full bg-purple-500/25 blur-sm" />
+                    {/* Brain icon — gentle breathe */}
+                    <motion.svg
+                      viewBox="0 0 24 24"
+                      fill="currentColor"
+                      className="w-5 h-5 relative z-10"
+                      animate={{ scale: [1, 1.12, 1] }}
+                      transition={{ duration: 2.5, repeat: Infinity, ease: "easeInOut" }}
+                    >
+                      <path d="M12 2C10.5 2 9 2.5 8 3.5C7 2.5 5.5 2 4 2C2.5 2 1 3 1 5C1 6.5 1.5 8 2.5 9C1.5 10 1 11.5 1 13C1 14.5 2 16 3.5 16.5C3 17.5 3 18.5 3.5 19.5C4 20.5 5 21 6 21.5C7 22 8.5 22 10 22H14C15.5 22 17 22 18 21.5C19 21 20 20.5 20.5 19.5C21 18.5 21 17.5 20.5 16.5C22 16 23 14.5 23 13C23 11.5 22.5 10 21.5 9C22.5 8 23 6.5 23 5C23 3 21.5 2 20 2C18.5 2 17 2.5 16 3.5C15 2.5 13.5 2 12 2Z" />
+                    </motion.svg>
+                    {/* Hover label */}
+                    <span className="absolute left-full ml-3 px-2 py-1 bg-black/80 border border-white/10 rounded text-[9px] text-purple-300 uppercase tracking-widest whitespace-nowrap opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none">
+                      Session Logs
+                    </span>
+                  </motion.button>
+                </motion.div>
+              )}
+            </AnimatePresence>
 
             {/* Center: The Orb */}
             <div className="flex-1 flex flex-col items-center justify-center relative z-10">
@@ -2113,15 +2170,8 @@ const SomaCommandBridge = () => {
 
 
 
-        {/* PLAN MODULE */}
-        {activeModule === 'plan' && (
-          <div className="h-full">
-            <SomaPlanViewer isConnected={isConnected} />
-          </div>
-        )}
-
-        {/* ANALYTICS MODULE */}
-        {activeModule === 'analytics' && (
+        {/* ANALYTICS MODULE - removed, real metrics moved to Command Center */}
+        {false && (
           <div className="space-y-6">
             {/* Header with Time Range Controls and Export */}
             <div className="flex items-center justify-between">
@@ -2375,10 +2425,11 @@ const SomaCommandBridge = () => {
 
         {/* KNOWLEDGE MODULE */}
         {activeModule === 'knowledge' && <KnowledgeApp brainStats={brainStats} />}
+        {activeModule === 'reflections' && <ReflectionsTab />}
 
 
-        {/* WORKFLOW MODULE */}
-        {activeModule === 'workflow' && (
+        {/* WORKFLOW MODULE - removed, non-functional */}
+        {false && (
           <div className="h-full flex flex-col bg-[#09090b] text-zinc-200">
             {/* Header */}
             <div className="flex items-center justify-between p-4 border-b border-white/5 bg-[#151518]/50 backdrop-blur-sm">
@@ -2637,12 +2688,27 @@ const SomaCommandBridge = () => {
                     <span className="text-zinc-400 text-sm">Knowledge Fragments</span>
                     <span className="text-zinc-100 font-mono font-bold">{totalFragments}</span>
                   </div>
-                  <div className="flex items-center justify-between">
+                  <div className="flex items-center justify-between pb-3 border-b border-white/5">
                     <span className="text-zinc-400 text-sm">System Uptime</span>
                     <span className="text-zinc-100 font-mono font-bold">{formatUptime(systemMetrics.uptime)}</span>
                   </div>
+                  {analyticsSummary && <>
+                  <div className="flex items-center justify-between pb-3 border-b border-white/5">
+                    <span className="text-zinc-400 text-sm">Avg Response</span>
+                    <span className="text-zinc-100 font-mono font-bold">{analyticsSummary.avgResponseTime || 0} ms</span>
+                  </div>
+                  <div className="flex items-center justify-between">
+                    <span className="text-zinc-400 text-sm">Token Usage</span>
+                    <span className="text-zinc-100 font-mono font-bold">{(analyticsSummary.tokenUsage || 0).toLocaleString()}</span>
+                  </div>
+                  </>}
                 </div>
               </div>
+            </div>
+
+            {/* SOMA's Plan widget */}
+            <div className="bg-[#151518]/60 backdrop-blur-md border border-white/5 rounded-xl overflow-hidden shadow-lg" style={{ height: '340px' }}>
+              <SomaPlanViewer isConnected={isConnected} />
             </div>
 
             <div className="bg-[#151518]/60 backdrop-blur-md border border-white/5 rounded-xl p-5 shadow-lg">
@@ -2691,7 +2757,7 @@ const SomaCommandBridge = () => {
         )}
 
         {/* DEFAULT FALLBACK */}
-        {!['terminal', 'orb', 'kevin', 'simulation', 'core', 'arbiters', 'knowledge', 'analytics', 'storage', 'workflow', 'command', 'settings', 'mission_control', 'forecaster', 'marketplace', 'finance', 'arbiterium', 'plan'].includes(activeModule) && (
+        {!['terminal', 'orb', 'kevin', 'simulation', 'core', 'arbiters', 'knowledge', 'reflections', 'storage', 'command', 'settings', 'mission_control', 'forecaster', 'marketplace', 'finance', 'arbiterium'].includes(activeModule) && (
           <div className="flex items-center justify-center h-full text-zinc-600 italic">
             Integration for Module "{activeModule}" is ongoing...
           </div>
@@ -2703,12 +2769,36 @@ const SomaCommandBridge = () => {
         <FloatingChat
           isServerRunning={isConnected}
           isBusy={isSomaBusy}
-          onSendMessage={handleFloatingChatMessage}
+          onSendMessage={handleFloatingChatSubmit}
           activeModule={activeModule}
           activeQuestion={activeQuestion}
           onSendQuestionResponse={handleSendQuestionResponse}
           tensionLevel={tensionLevel}
         />
+      )}
+
+
+      {/* Floating Quick-Note button */}
+      {activeModule !== 'reflections' && activeModule !== 'terminal' && (
+        <button
+          onClick={() => setShowQuickNote(v => !v)}
+          title="Quick Note (Ctrl+Shift+N)"
+          className="fixed right-5 top-1/2 -translate-y-1/2 z-[90] w-11 h-11 rounded-2xl bg-zinc-900/90 backdrop-blur-sm border border-zinc-700/40 hover:border-fuchsia-500/50 shadow-lg hover:shadow-fuchsia-500/10 flex items-center justify-center transition-all duration-200 hover:scale-105 active:scale-90 group"
+        >
+          <Pencil className="w-4 h-4 text-zinc-500 group-hover:text-fuchsia-400 transition-colors duration-200" />
+        </button>
+      )}
+
+      {/* Quick-Note overlay panel */}
+      {showQuickNote && (
+        <div className="fixed right-0 top-0 bottom-0 w-[480px] z-[95] shadow-2xl border-l border-white/10">
+          <ReflectionsTab
+            mode="quick-note-only"
+            onClose={() => setShowQuickNote(false)}
+            context={activeModule}
+            onSendToSoma={(text) => handleFloatingChatSubmit(text, { history: [], activeModule })}
+          />
+        </div>
       )}
 
       {proposedGoals.length > 0 && (

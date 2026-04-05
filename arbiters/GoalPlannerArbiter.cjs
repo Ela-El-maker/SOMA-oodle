@@ -76,6 +76,10 @@ class GoalPlannerArbiter extends BaseArbiter {
     this.planPath = path.join(process.cwd(), 'SOMA', 'plan.md');
     this._dirty = false;
 
+    // Swarm outcome cache — populated by swarm.experience signals
+    this._swarmHistory = [];   // { success, filepath, ts }
+    this._cooldownCategories = new Map(); // category -> expiresAt — suppresses repeated failures
+
     // NEMESIS Phase 2.2: Reality check system
     this.nemesis = PrometheusNemesis ? new PrometheusNemesis({
       minFriction: 0.25,
@@ -141,6 +145,15 @@ class GoalPlannerArbiter extends BaseArbiter {
       this.runPlanningCycle().catch(() => {});
     });
 
+    // Swarm outcome feedback — EngineeringSwarmArbiter publishes here after every patch attempt
+    messageBroker.subscribe('swarm.experience', (envelope) => {
+      const data = envelope?.data || envelope;
+      if (data && typeof data.success === 'boolean') {
+        this._swarmHistory.push({ success: data.success, filepath: data.filepath, ts: Date.now() });
+        if (this._swarmHistory.length > 200) this._swarmHistory.shift();
+      }
+    });
+
     this.logger.info(`[${this.name}] Subscribed to broker topics`);
   }
 
@@ -160,6 +173,9 @@ class GoalPlannerArbiter extends BaseArbiter {
         
         case 'cancel_goal':
           return await this.cancelGoal(payload.goalId, payload.reason);
+
+        case 'swarm_goal_failed':
+          return await this._handleSwarmGoalFailure(payload.goalId, payload.reason);
         
         case 'approve_goal':
           return await this.approveGoal(payload.goalId);
@@ -243,6 +259,12 @@ class GoalPlannerArbiter extends BaseArbiter {
         if (duplicate) {
           this.logger.info(`[${this.name}] Skipping duplicate goal "${goalData.title}" — similar active goal exists: "${duplicate.title}"`);
           return { success: false, error: 'Duplicate goal exists', existingGoalId: duplicate.id };
+        }
+
+        // Cooldown check — don't regenerate categories that are on a failure streak
+        if (this._isCategoryOnCooldown(goalData.category)) {
+          this.logger.info(`[${this.name}] Category "${goalData.category}" is on failure cooldown — skipping "${goalData.title}"`);
+          return { success: false, error: `Category "${goalData.category}" on cooldown after repeated failures` };
         }
       }
 
@@ -478,6 +500,17 @@ class GoalPlannerArbiter extends BaseArbiter {
     
     this.logger.warn(`[${this.name}] ❌ Failed goal: ${goal.title} - ${reason}`);
 
+    // If this category has failed 3+ times recently, put it on a 2-hour cooldown
+    const catRate = this._getCategorySuccessRate(goal.category, 24 * 3600_000);
+    const recentFails = this.failedGoals.filter(g =>
+      g.category === goal.category && (g.completedAt || 0) >= Date.now() - 24 * 3600_000
+    ).length;
+    if (recentFails >= 3 && (catRate === null || catRate < 0.4)) {
+      const cooldownMs = 2 * 3600_000;
+      this._cooldownCategories.set(goal.category, Date.now() + cooldownMs);
+      this.logger.warn(`[${this.name}] ⏸ Category "${goal.category}" placed on 2h cooldown after ${recentFails} failures`);
+    }
+
     this._dirty = true;
     this._saveToDisk();
 
@@ -502,6 +535,49 @@ class GoalPlannerArbiter extends BaseArbiter {
     this.logger.info(`[${this.name}] ⏸️  Deferred goal: ${goal.title} - ${reason}`);
 
     return { success: true, goal };
+  }
+
+  /**
+   * Called when EngineeringSwarmArbiter fails to execute a goal.
+   * Retries up to 3 times with escalating priority and a post-mortem appended
+   * to the description so the next swarm attempt has failure context.
+   * On the 3rd failure, archives via failGoal() which applies category cooldowns.
+   */
+  async _handleSwarmGoalFailure(goalId, reason = 'unknown') {
+    const goal = this.goals.get(goalId);
+    if (!goal) return { success: false, error: 'Goal not found' };
+
+    const MAX_SWARM_ATTEMPTS = 3;
+    goal.metadata.swarmFailureCount = (goal.metadata.swarmFailureCount || 0) + 1;
+    const attempt = goal.metadata.swarmFailureCount;
+
+    if (attempt < MAX_SWARM_ATTEMPTS) {
+      // Escalate — bump priority and annotate description for next attempt
+      const oldPriority = goal.priority;
+      goal.priority = Math.min(95, goal.priority + 15);
+      goal.status = 'pending'; // Reset to pending so it gets picked up again
+
+      // Append post-mortem only if not already present for this attempt number
+      const marker = `[POST-MORTEM attempt ${attempt}]`;
+      if (!goal.description.includes(marker)) {
+        goal.description += `\n${marker}: Swarm execution failed. Reason: ${reason}. Adjust strategy.`;
+      }
+
+      this.logger.warn(
+        `[${this.name}] ⚠️  Swarm failure for "${goal.title}" (attempt ${attempt}/${MAX_SWARM_ATTEMPTS}) ` +
+        `— priority escalated ${oldPriority}→${goal.priority}, queued for retry`
+      );
+
+      this._dirty = true;
+      this._saveToDisk();
+      return { success: true, retrying: true, attempt, goal };
+    }
+
+    // 3rd failure — archive it properly (applies category cooldown logic)
+    this.logger.warn(
+      `[${this.name}] ❌ Goal "${goal.title}" exhausted ${MAX_SWARM_ATTEMPTS} swarm attempts — archiving`
+    );
+    return await this.failGoal(goalId, `Swarm exhausted ${MAX_SWARM_ATTEMPTS} attempts. Last error: ${reason}`);
   }
 
   getActiveGoals(filter = {}) {
@@ -597,10 +673,42 @@ class GoalPlannerArbiter extends BaseArbiter {
     // Base feasibility on dependencies and prerequisites
     const dependencyPenalty = goal.dependencies.length * 0.1;
     const prerequisitePenalty = goal.prerequisites.length * 0.15;
-    
-    const score = 1.0 - Math.min(0.5, dependencyPenalty + prerequisitePenalty);
-    
-    return Math.max(0.3, score);
+    let score = 1.0 - Math.min(0.5, dependencyPenalty + prerequisitePenalty);
+
+    // Outcome-aware adjustment: penalise categories that keep failing
+    const catRate = this._getCategorySuccessRate(goal.category, 7 * 24 * 3600_000);
+    if (catRate !== null) {
+      if (catRate < 0.3)       score -= 0.25;  // category is consistently failing
+      else if (catRate < 0.5)  score -= 0.10;
+      else if (catRate > 0.75) score += 0.10;  // category has a good track record
+    }
+
+    // Swarm-specific penalty: if the swarm is struggling and this goal needs it
+    const swarmCategories = ['optimization', 'quality', 'capability', 'learning'];
+    if (swarmCategories.includes(goal.category) && this._swarmHistory.length >= 5) {
+      const recent = this._swarmHistory.slice(-20);
+      const swarmRate = recent.filter(e => e.success).length / recent.length;
+      if (swarmRate < 0.4) score -= 0.15;
+    }
+
+    return Math.max(0.1, Math.min(1.0, score));
+  }
+
+  // Success rate for a category in the given window, null if no data
+  _getCategorySuccessRate(category, windowMs = 7 * 24 * 3600_000) {
+    const since = Date.now() - windowMs;
+    const wins  = this.completedGoals.filter(g => g.category === category && (g.completedAt || 0) >= since).length;
+    const fails = this.failedGoals.filter(g => g.category === category && (g.completedAt || 0) >= since).length;
+    const total = wins + fails;
+    return total >= 3 ? wins / total : null;   // need at least 3 data points to be meaningful
+  }
+
+  // Whether a category is on cooldown (too many recent failures)
+  _isCategoryOnCooldown(category) {
+    const exp = this._cooldownCategories.get(category);
+    if (!exp) return false;
+    if (Date.now() > exp) { this._cooldownCategories.delete(category); return false; }
+    return true;
   }
 
   calculateResourceCostScore(goal) {

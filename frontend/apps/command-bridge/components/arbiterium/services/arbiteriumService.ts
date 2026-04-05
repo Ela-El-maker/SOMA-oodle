@@ -8,12 +8,12 @@ const API_BASE = '';
 /**
  * Send a natural language goal to SOMA and get back an orchestrated workflow plan
  */
-export async function orchestrateGoal(goal: string): Promise<WorkflowPlan> {
+export async function orchestrateGoal(goal: string, deepThinking = false): Promise<WorkflowPlan> {
   try {
     const response = await fetch(`${API_BASE}/api/arbiterium/orchestrate`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ goal })
+      body: JSON.stringify({ goal, deepThinking })
     });
 
     if (!response.ok) {
@@ -37,6 +37,11 @@ export async function orchestrateGoal(goal: string): Promise<WorkflowPlan> {
     
     if (!data.success || !data.plan) {
       throw new Error('Invalid response from orchestration service');
+    }
+
+    // Surface backend warnings so they appear in the UI summary
+    if (data.warnings && data.warnings.length > 0) {
+      data.plan.warnings = data.warnings;
     }
 
     return data.plan;
@@ -243,12 +248,25 @@ export async function executeWorkflow(
     });
   };
 
+  const STEP_DEPENDENCY_TIMEOUT_MS = 30_000; // 30s max wait for any dependency
+
   // Execute steps in order, respecting dependencies
   for (const step of plan.steps) {
-    // Wait for dependencies
+    // Wait for dependencies — with timeout to prevent infinite deadlock
+    const depWaitStart = Date.now();
     while (!canExecuteStep(step)) {
+      if (Date.now() - depWaitStart > STEP_DEPENDENCY_TIMEOUT_MS) {
+        const unmet = step.dependencies.filter(dep => {
+          const depId = typeof dep === 'number' ? `step-${dep + 1}` : dep;
+          return !completedSteps.has(depId);
+        });
+        if (onStepFailed) onStepFailed(step, `Dependency timeout: steps [${unmet.join(', ')}] never completed`);
+        results.set(step.id, `FAILED: dependency timeout`);
+        break;
+      }
       await new Promise(resolve => setTimeout(resolve, 100));
     }
+    if (results.has(step.id)) continue; // was timed out above
 
     // Notify step start
     if (onStepStart) {

@@ -38,6 +38,7 @@ export async function reasonWithSoma(
       success: true,
       response: data.response || data.text || data.answer,
       thoughtProcess: data.thoughtProcess || data.reasoning,
+      reasoningTree: data.reasoningTree || data.thoughtProcess?.tree || null,
       conversationId: data.conversationId,
       confidence: data.confidence,
     };
@@ -201,7 +202,7 @@ export function formatResponseForSpeech(response) {
     .replace(/\*\*(.*?)\*\*/g, '$1') // Bold
     .replace(/\*(.*?)\*/g, '$1')     // Italic
     .replace(/`(.*?)`/g, '$1')       // Code
-    .replace(/\.*\[(.*?)](.*?)\)/g, '$1') // Links
+    .replace(/!?\[([^\]]*)\]\([^)]*\)/g, '$1') // Links
     .replace(/#{1,6}\s/g, '');       // Headers
 
   // Remove excessive newlines

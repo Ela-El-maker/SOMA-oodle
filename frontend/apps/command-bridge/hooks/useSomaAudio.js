@@ -150,6 +150,7 @@ export function useSomaAudio(onResponse) {
   const audioChunksRef = useRef([]);
   const isSpeaking = useRef(false);
   const isUserInterrupting = useRef(false);
+  const speakQueueRef = useRef(Promise.resolve());
   
   const acknowledgmentCacheRef = useRef(new Map());
   const useWebSpeechRef = useRef(false);       // true when Whisper is down
@@ -289,14 +290,6 @@ export function useSomaAudio(onResponse) {
       const source = inputContextRef.current.createMediaStreamSource(stream);
       source.connect(inputAnalyser);
       
-      try {
-        const cogStream = new SomaCognitiveStream();
-        await cogStream.connect();
-        cognitiveStreamRef.current = cogStream;
-      } catch (error) {
-        console.warn('Cognitive stream connection failed');
-      }
-      
       setIsConnected(true);
       
       const updateVolume = () => {
@@ -398,7 +391,8 @@ export function useSomaAudio(onResponse) {
 
       try {
         audioChunksRef.current = [];
-        const mediaRecorder = new MediaRecorder(streamRef.current, { mimeType: 'audio/webm;codecs=opus' });
+        const mimeType = MediaRecorder.isTypeSupported('audio/webm;codecs=opus') ? 'audio/webm;codecs=opus' : '';
+        const mediaRecorder = new MediaRecorder(streamRef.current, mimeType ? { mimeType } : {});
         mediaRecorderRef.current = mediaRecorder;
 
         mediaRecorder.ondataavailable = (event) => {
@@ -456,7 +450,7 @@ export function useSomaAudio(onResponse) {
       }
 
       const acknowledgment = generateAcknowledgment(query);
-      speakText(acknowledgment);
+      await speakText(acknowledgment);
 
       setIsThinking(true);
       const result = await reasonWithSoma(query, conversationIdRef.current);
@@ -489,25 +483,29 @@ export function useSomaAudio(onResponse) {
     }
   };
 
-  const speakWithNaturalPacing = async (text) => {
-    while (isSpeaking.current) await new Promise(r => setTimeout(r, 100));
-    isSpeaking.current = true;
-    try {
-      const sentences = text.match(/[^.!?]+[.!?]+/g) || [text];
-      for (let i = 0; i < sentences.length; i++) {
-        const sentence = sentences[i].trim();
-        if (isUserInterrupting.current) {
-          isUserInterrupting.current = false;
-          return;
+  const speakWithNaturalPacing = (text) => {
+    const run = async () => {
+      isSpeaking.current = true;
+      try {
+        const sentences = text.match(/[^.!?]+[.!?]+/g) || [text];
+        for (let i = 0; i < sentences.length; i++) {
+          const sentence = sentences[i].trim();
+          if (isUserInterrupting.current) {
+            isUserInterrupting.current = false;
+            return;
+          }
+          await speakText(sentence);
+          if (i < sentences.length - 1) {
+            await new Promise(r => setTimeout(r, sentence.includes('?') ? 400 : 250));
+          }
         }
-        await speakText(sentence);
-        if (i < sentences.length - 1) {
-          await new Promise(r => setTimeout(r, sentence.includes('?') ? 400 : 250));
-        }
+      } finally {
+        isSpeaking.current = false;
       }
-    } finally {
-      isSpeaking.current = false;
-    }
+    };
+    // Queue: each call waits for the previous to finish — no two voices at once
+    speakQueueRef.current = speakQueueRef.current.then(run, run);
+    return speakQueueRef.current;
   };
 
   const stopSpeaking = useCallback(() => {
@@ -521,27 +519,31 @@ export function useSomaAudio(onResponse) {
   }, []);
 
   const speakText = async (text) => {
-    return new Promise(async (resolve) => {
-      if (!audioContextRef.current || !analyserRef.current) return resolve();
-      
-      setIsTalking(true);
-      const ctx = audioContextRef.current;
-      let audioBuffer = null;
+    if (!audioContextRef.current || !analyserRef.current) return;
 
-      if (isElevenLabsEnabled()) {
+    setIsTalking(true);
+    const ctx = audioContextRef.current;
+    let audioBuffer = null;
+
+    if (isElevenLabsEnabled()) {
+      try {
         const result = await textToSpeech(text, ctx, elevenLabsVoiceIdRef.current);
         if (result.success) audioBuffer = result.audioBuffer;
-      }
+      } catch (e) { /* fall through to browser TTS */ }
+    }
 
-      if (!audioBuffer) {
+    if (!audioBuffer) {
+      await new Promise((resolve) => {
         const utterance = new SpeechSynthesisUtterance(text);
         utterance.rate = 1.1;
-        utterance.onend = () => { setIsTalking(false); resolve(); };
+        utterance.onend  = () => { setIsTalking(false); resolve(); };
         utterance.onerror = () => { setIsTalking(false); resolve(); };
         window.speechSynthesis.speak(utterance);
-        return;
-      }
+      });
+      return;
+    }
 
+    await new Promise((resolve) => {
       const source = ctx.createBufferSource();
       source.buffer = audioBuffer;
       source.connect(analyserRef.current);
@@ -557,19 +559,24 @@ export function useSomaAudio(onResponse) {
 
   const disconnect = useCallback(() => {
     if (mediaRecorderRef.current && mediaRecorderRef.current.state === 'recording') mediaRecorderRef.current.stop();
-    if (cognitiveStreamRef.current) cognitiveStreamRef.current.disconnect();
-    if (audioContextRef.current) audioContextRef.current.close();
-    if (inputContextRef.current) inputContextRef.current.close();
-    if (streamRef.current) streamRef.current.getTracks().forEach(t => t.stop());
+    if (webSpeechRecRef.current) { try { webSpeechRecRef.current.stop(); } catch (e) {} webSpeechRecRef.current = null; }
+    if (cognitiveStreamRef.current) { cognitiveStreamRef.current.disconnect(); cognitiveStreamRef.current = null; }
+    if (audioContextRef.current) { audioContextRef.current.close(); audioContextRef.current = null; }
+    if (inputContextRef.current) { inputContextRef.current.close(); inputContextRef.current = null; }
+    if (streamRef.current) { streamRef.current.getTracks().forEach(t => t.stop()); streamRef.current = null; }
     if (animationFrameRef.current) cancelAnimationFrame(animationFrameRef.current);
     sourcesRef.current.forEach(s => { try { s.stop(); } catch (e) {} });
     sourcesRef.current.clear();
     window.speechSynthesis.cancel();
+    speakQueueRef.current = Promise.resolve();
+    isSpeaking.current = false;
+    isUserInterrupting.current = false;
     setIsConnected(false);
     setIsTalking(false);
     setIsListening(false);
     setVolume(0);
     setInputVolume(0);
+    setSystemStatus({ somaBackend: 'disconnected', whisperServer: 'disconnected', elevenLabs: 'disabled' });
   }, []);
 
   const sendTextQuery = useCallback((text) => processWithSoma(text), []);

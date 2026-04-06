@@ -223,9 +223,15 @@ const CommandCenterPanel = ({
           </div>
 
           {/* Steve pills */}
-          <div className="flex gap-1.5 px-4 py-2 border-b border-white/5">
+          <div className="flex flex-wrap gap-1.5 px-4 py-2 border-b border-white/5">
+            <span className={`text-[10px] px-2 py-0.5 rounded-full ${steveStatus.heartbeatActive ? 'bg-emerald-500/10 text-emerald-400' : 'bg-zinc-800 text-zinc-500'}`}>
+              {steveStatus.heartbeatActive ? '💓 Active' : '💤 Dormant'}
+            </span>
             <span className="text-[10px] px-2 py-0.5 rounded-full bg-zinc-800 text-zinc-400">
-              {steveStatus.toolCount || 0} tools
+              {steveStatus.queueLength || 0} queued
+            </span>
+            <span className="text-[10px] px-2 py-0.5 rounded-full bg-zinc-800 text-zinc-400">
+              {steveStatus.stats?.tasksCompleted || 0} done
             </span>
             <span className={`text-[10px] px-2 py-0.5 rounded-full ${steveStatus.searchLinked ? 'bg-emerald-500/10 text-emerald-400' : 'bg-zinc-800 text-zinc-500'}`}>
               {steveStatus.searchLinked ? '✓ RAG' : '○ RAG'}
@@ -265,6 +271,22 @@ const CommandCenterPanel = ({
               </div>
             )}
           </div>
+
+          {/* Pending queue preview */}
+          {steveStatus.queue?.length > 0 && (
+            <div className="px-3 pb-2 border-t border-white/5 pt-2">
+              <div className="text-zinc-600 text-[10px] uppercase tracking-wider mb-1">Queued Tasks</div>
+              <div className="space-y-1">
+                {steveStatus.queue.slice(0, 3).map((t, i) => (
+                  <div key={t.id || i} className="flex items-center gap-1.5 text-[10px] text-zinc-500 bg-zinc-900/60 rounded px-2 py-1">
+                    <span className="text-amber-500 font-mono">{t.priority}</span>
+                    <span className="truncate">{t.description?.substring(0, 55)}</span>
+                    <span className="text-zinc-700 ml-auto whitespace-nowrap">{t.source}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
 
           {/* Steve input */}
           <form onSubmit={sendToSteve} className="flex items-center gap-2 p-3 border-t border-white/5">

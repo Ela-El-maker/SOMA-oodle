@@ -1553,6 +1553,11 @@ export async function loadExtendedSystems(system) {
 
         console.log(`    🔗 STEVE ← QuadBrain, ToolCreator, CodeObserver, LearningPipeline, Knowledge${ext.engineeringSwarm ? ', EngineeringSwarm (orchestrator)' : ''}`);
 
+        // Start Steve's autonomous heartbeat (every 10 min)
+        if (typeof steve.startHeartbeat === 'function' && !steve._heartbeatInterval) {
+            steve.startHeartbeat(10 * 60 * 1000);
+        }
+
         // Subscribe Steve to autonomous task signals from the broker
         // Any system component can now dispatch a task.steve signal and Steve will pick it up
         if (system.messageBroker && !steve._taskSubscribed) {

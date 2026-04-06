@@ -1463,15 +1463,19 @@ ${personaContext}${characterContext}`.trim()
     router.get('/steve/status', (req, res) => {
         const steve = system.steveArbiter;
         if (!steve) return res.json({ online: false, status: 'offline', mood: 'dormant' });
-        res.json({
-            online: true,
-            status: steve._currentTask ? 'working' : 'idle',
-            mood: steve._mood || 'idle',
-            currentTask: steve._currentTask || null,
-            toolCount: steve.toolRegistry?.listTools?.()?.length || 0,
-            learningLinked: !!(steve.learningPipeline),
-            searchLinked: !!(steve.orchestrator?.transmitters),
+        res.json(typeof steve.getStatus === 'function' ? steve.getStatus() : {
+            online: true, status: steve._currentTask ? 'working' : 'idle',
+            mood: steve._mood || 'idle', currentTask: steve._currentTask || null
         });
+    });
+
+    router.post('/steve/queue', (req, res) => {
+        const steve = system.steveArbiter;
+        if (!steve) return res.status(503).json({ error: 'Steve offline' });
+        const { description, source = 'user_queued', priority = 7 } = req.body;
+        if (!description) return res.status(400).json({ error: 'description required' });
+        steve.addTask({ description, source, priority });
+        res.json({ success: true, queueLength: steve._taskQueue?.length || 0 });
     });
 
     router.post('/steve/chat', async (req, res) => {

@@ -1552,6 +1552,29 @@ export async function loadExtendedSystems(system) {
         if (!steve.quadBrain && system.quadBrain) steve.quadBrain = system.quadBrain;
 
         console.log(`    🔗 STEVE ← QuadBrain, ToolCreator, CodeObserver, LearningPipeline, Knowledge${ext.engineeringSwarm ? ', EngineeringSwarm (orchestrator)' : ''}`);
+
+        // Subscribe Steve to autonomous task signals from the broker
+        // Any system component can now dispatch a task.steve signal and Steve will pick it up
+        if (system.messageBroker && !steve._taskSubscribed) {
+            system.messageBroker.subscribe('task.steve', async (signal) => {
+                const task = signal?.task || signal?.payload?.task || signal?.message;
+                if (!task || steve._currentTask) return; // ignore if already working
+                console.log(`[Steve] 📥 Autonomous task received: "${task.substring(0, 60)}"`);
+                steve._currentTask = task.substring(0, 80);
+                steve._mood = 'architecting';
+                try {
+                    const result = await steve.processChat(task, [], { source: 'autonomous', signal });
+                    system.messageBroker.publish('steve.task.complete', { task, response: result.response, actions: result.actions });
+                } catch (e) {
+                    console.error('[Steve] Autonomous task failed:', e.message);
+                } finally {
+                    steve._currentTask = null;
+                    steve._mood = 'idle';
+                }
+            });
+            steve._taskSubscribed = true;
+            console.log('    🔗 STEVE ← task.steve broker subscription (autonomous task intake)');
+        }
     }
 
     // ── IdolSenturianArbiter: AMBER PROTOCOL ──

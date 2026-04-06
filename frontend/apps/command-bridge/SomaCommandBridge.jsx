@@ -80,6 +80,280 @@ import CharacterCard from './components/CharacterCard';
 import CharacterGacha from './components/CharacterGacha';
 
 // ==========================================
+// Command Center Panel (Steve + Perception + Status)
+// ==========================================
+const STEVE_WITTY = [
+  "Rerouting synaptic pathways...", "Judging your request...",
+  "Allocating brilliance...", "Consulting the architecture gods...",
+  "Optimizing sarcasm module...", "Processing inefficiency report..."
+];
+
+const CommandCenterPanel = ({
+  executeCommand, setShowDiagnostics, setDiagnosticLogs,
+  activeArbiters, totalArbiters, activeMicroAgents, totalMicroAgents,
+  totalFragments, systemMetrics, analyticsSummary, activityStream,
+  isConnected, formatUptime
+}) => {
+  const [steveMessages, setSteveMessages] = React.useState([
+    { role: 'steve', content: "System online. I assume you've broken something already?", ts: Date.now() }
+  ]);
+  const [steveInput, setSteveInput] = React.useState('');
+  const [steveThinking, setSteveThinking] = React.useState(false);
+  const [steveStatus, setSteveStatus] = React.useState({ online: false, status: 'idle', mood: 'idle', toolCount: 0 });
+  const [daemons, setDaemons] = React.useState([]);
+  const [wittyPhrase, setWittyPhrase] = React.useState('');
+  const steveScrollRef = React.useRef(null);
+
+  // Poll Steve status + daemon health every 10s
+  React.useEffect(() => {
+    const fetchStatus = async () => {
+      try {
+        const [sRes, dRes] = await Promise.all([
+          fetch('/api/soma/steve/status'),
+          fetch('/api/daemon/status')
+        ]);
+        if (sRes.ok) setSteveStatus(await sRes.json());
+        if (dRes.ok) {
+          const d = await dRes.json();
+          setDaemons(d.daemon?.daemons || []);
+        }
+      } catch {}
+    };
+    fetchStatus();
+    const t = setInterval(fetchStatus, 10000);
+    return () => clearInterval(t);
+  }, []);
+
+  // Auto-scroll Steve chat
+  React.useEffect(() => {
+    if (steveScrollRef.current) steveScrollRef.current.scrollTop = steveScrollRef.current.scrollHeight;
+  }, [steveMessages]);
+
+  // Cycle witty phrases while thinking
+  React.useEffect(() => {
+    if (!steveThinking) return;
+    setWittyPhrase(STEVE_WITTY[Math.floor(Math.random() * STEVE_WITTY.length)]);
+    const t = setInterval(() => setWittyPhrase(STEVE_WITTY[Math.floor(Math.random() * STEVE_WITTY.length)]), 2500);
+    return () => clearInterval(t);
+  }, [steveThinking]);
+
+  const sendToSteve = async (e) => {
+    e?.preventDefault();
+    const msg = steveInput.trim();
+    if (!msg || steveThinking) return;
+    setSteveInput('');
+    setSteveMessages(prev => [...prev, { role: 'user', content: msg, ts: Date.now() }]);
+    setSteveThinking(true);
+    try {
+      const history = steveMessages.slice(-8).map(m => ({ role: m.role === 'steve' ? 'assistant' : 'user', content: m.content }));
+      const res = await fetch('/api/soma/steve/chat', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ message: msg, history })
+      });
+      const data = await res.json();
+      const reply = data.response || data.error || "My cognitive link is severed.";
+      setSteveMessages(prev => [...prev, { role: 'steve', content: reply, ts: Date.now(), actions: data.actions }]);
+    } catch {
+      setSteveMessages(prev => [...prev, { role: 'steve', content: "Architectural link interrupted.", ts: Date.now() }]);
+    } finally {
+      setSteveThinking(false);
+    }
+  };
+
+  const moodColor = { idle: 'emerald', architecting: 'amber', thinking: 'blue' }[steveStatus.mood] || 'emerald';
+  const moodDot = { idle: 'bg-emerald-400', architecting: 'bg-amber-400 animate-pulse', thinking: 'bg-blue-400 animate-pulse' }[steveStatus.mood] || 'bg-emerald-400';
+
+  return (
+    <div className="flex flex-col gap-4 h-full">
+      {/* ── Quick Actions Toolbar ── */}
+      <div className="flex items-center gap-2 flex-wrap">
+        <button onClick={() => executeCommand('start_all', 'Start All Agents')}
+          className="flex items-center gap-2 px-3 py-2 rounded-lg bg-fuchsia-500/10 hover:bg-fuchsia-500/20 border border-fuchsia-500/20 text-fuchsia-400 text-xs font-semibold transition-all">
+          <Play className="w-3.5 h-3.5" /> Start All
+        </button>
+        <button onClick={() => executeCommand('stop_all', 'Pause All Agents')}
+          className="flex items-center gap-2 px-3 py-2 rounded-lg bg-amber-500/10 hover:bg-amber-500/20 border border-amber-500/20 text-amber-400 text-xs font-semibold transition-all">
+          <Pause className="w-3.5 h-3.5" /> Pause All
+        </button>
+        <button onClick={() => executeCommand('reset_system', 'Reset System', 'warning')}
+          className="flex items-center gap-2 px-3 py-2 rounded-lg bg-blue-500/10 hover:bg-blue-500/20 border border-blue-500/20 text-blue-400 text-xs font-semibold transition-all">
+          <RotateCw className="w-3.5 h-3.5" /> Reset
+        </button>
+        <button onClick={() => { executeCommand('run_diagnostics', 'Diagnostics'); setShowDiagnostics(true); setDiagnosticLogs([]); }}
+          className="flex items-center gap-2 px-3 py-2 rounded-lg bg-zinc-500/10 hover:bg-zinc-500/20 border border-zinc-500/20 text-zinc-400 text-xs font-semibold transition-all">
+          <Search className="w-3.5 h-3.5" /> Diagnostics
+        </button>
+        <button onClick={() => executeCommand('clear_cache', 'Clear Cache')}
+          className="flex items-center gap-2 px-3 py-2 rounded-lg bg-zinc-500/10 hover:bg-zinc-500/20 border border-zinc-500/20 text-zinc-400 text-xs font-semibold transition-all">
+          <Trash2 className="w-3.5 h-3.5" /> Clear Cache
+        </button>
+        <button onClick={() => executeCommand('create_backup', 'Backup')}
+          className="flex items-center gap-2 px-3 py-2 rounded-lg bg-zinc-500/10 hover:bg-zinc-500/20 border border-zinc-500/20 text-zinc-400 text-xs font-semibold transition-all">
+          <Database className="w-3.5 h-3.5" /> Backup
+        </button>
+        <button onClick={() => executeCommand('optimize_system', 'Optimize')}
+          className="flex items-center gap-2 px-3 py-2 rounded-lg bg-purple-500/10 hover:bg-purple-500/20 border border-purple-500/20 text-purple-400 text-xs font-semibold transition-all">
+          <Zap className="w-3.5 h-3.5" /> Optimize
+        </button>
+      </div>
+
+      {/* ── Main 2-column layout ── */}
+      <div className="grid grid-cols-5 gap-4 flex-1 min-h-0">
+
+        {/* LEFT: Steve Worker Panel (2/5) */}
+        <div className="col-span-2 flex flex-col bg-[#0e0e11] border border-emerald-500/15 rounded-xl overflow-hidden shadow-lg">
+          {/* Steve header */}
+          <div className="flex items-center gap-3 px-4 py-3 border-b border-emerald-500/10 bg-emerald-500/5">
+            <div className="relative w-8 h-8 rounded-full overflow-hidden border border-emerald-500/30 bg-emerald-500/10 flex-shrink-0">
+              <img src="/steve_profile.gif" alt="Steve" className="w-full h-full object-cover"
+                onError={e => { e.target.style.display = 'none'; }} />
+              <div className="absolute inset-0 flex items-center justify-center text-emerald-400 text-xs font-bold">S</div>
+            </div>
+            <div className="flex-1 min-w-0">
+              <div className="text-emerald-300 font-semibold text-sm leading-none">STEVE</div>
+              <div className="text-zinc-500 text-[10px] mt-0.5 truncate">
+                {steveStatus.currentTask ? `Working: ${steveStatus.currentTask}` : 'Senior Architect · Autonomous'}
+              </div>
+            </div>
+            <div className="flex items-center gap-1.5">
+              <div className={`w-2 h-2 rounded-full ${moodDot}`} />
+              <span className={`text-${moodColor}-400 text-xs font-mono`}>{steveStatus.status || 'offline'}</span>
+            </div>
+          </div>
+
+          {/* Steve pills */}
+          <div className="flex gap-1.5 px-4 py-2 border-b border-white/5">
+            <span className="text-[10px] px-2 py-0.5 rounded-full bg-zinc-800 text-zinc-400">
+              {steveStatus.toolCount || 0} tools
+            </span>
+            <span className={`text-[10px] px-2 py-0.5 rounded-full ${steveStatus.searchLinked ? 'bg-emerald-500/10 text-emerald-400' : 'bg-zinc-800 text-zinc-500'}`}>
+              {steveStatus.searchLinked ? '✓ RAG' : '○ RAG'}
+            </span>
+            <span className={`text-[10px] px-2 py-0.5 rounded-full ${steveStatus.learningLinked ? 'bg-emerald-500/10 text-emerald-400' : 'bg-zinc-800 text-zinc-500'}`}>
+              {steveStatus.learningLinked ? '✓ Learning' : '○ Learning'}
+            </span>
+          </div>
+
+          {/* Chat messages */}
+          <div ref={steveScrollRef} className="flex-1 overflow-y-auto custom-scrollbar p-3 space-y-2 min-h-0">
+            {steveMessages.map((m, i) => (
+              <div key={i} className={`flex ${m.role === 'user' ? 'justify-end' : 'justify-start'}`}>
+                <div className={`max-w-[85%] rounded-xl px-3 py-2 text-xs leading-relaxed ${
+                  m.role === 'user'
+                    ? 'bg-fuchsia-500/15 text-fuchsia-100 border border-fuchsia-500/20'
+                    : 'bg-zinc-800/80 text-zinc-200 border border-emerald-500/10'
+                }`}>
+                  {m.content}
+                  {m.actions?.length > 0 && (
+                    <div className="mt-1.5 pt-1.5 border-t border-white/10">
+                      {m.actions.map((a, j) => (
+                        <div key={j} className={`text-[10px] font-mono mt-0.5 ${a.success ? 'text-emerald-400' : 'text-rose-400'}`}>
+                          {a.success ? '✓' : '✗'} {a.cmd?.substring(0, 50)}
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              </div>
+            ))}
+            {steveThinking && (
+              <div className="flex justify-start">
+                <div className="bg-zinc-800/80 border border-emerald-500/10 rounded-xl px-3 py-2 text-xs text-emerald-400 animate-pulse">
+                  {wittyPhrase}
+                </div>
+              </div>
+            )}
+          </div>
+
+          {/* Steve input */}
+          <form onSubmit={sendToSteve} className="flex items-center gap-2 p-3 border-t border-white/5">
+            <input
+              value={steveInput}
+              onChange={e => setSteveInput(e.target.value)}
+              placeholder="Give Steve a task or question..."
+              className="flex-1 bg-zinc-800/60 border border-zinc-700/50 rounded-lg px-3 py-2 text-xs text-zinc-200 placeholder-zinc-600 focus:outline-none focus:border-emerald-500/40"
+            />
+            <button type="submit" disabled={steveThinking || !steveInput.trim()}
+              className="p-2 rounded-lg bg-emerald-500/15 hover:bg-emerald-500/25 border border-emerald-500/20 text-emerald-400 disabled:opacity-40 transition-all">
+              <Zap className="w-3.5 h-3.5" />
+            </button>
+          </form>
+        </div>
+
+        {/* RIGHT: Status + Perception + Plan + Stream (3/5) */}
+        <div className="col-span-3 flex flex-col gap-3 min-h-0">
+
+          {/* System Health Grid */}
+          <div className="grid grid-cols-3 gap-3">
+            {[
+              { label: 'Arbiters', value: `${activeArbiters}/${totalArbiters}`, color: 'blue', icon: Cpu },
+              { label: 'Micro-Agents', value: `${activeMicroAgents}/${totalMicroAgents}`, color: 'purple', icon: Network },
+              { label: 'Fragments', value: totalFragments, color: 'fuchsia', icon: Database },
+              { label: 'Uptime', value: formatUptime(systemMetrics.uptime), color: 'emerald', icon: Clock },
+              { label: 'Avg Response', value: `${analyticsSummary?.avgResponseTime || 0}ms`, color: 'amber', icon: Activity },
+              { label: 'Tokens', value: (analyticsSummary?.tokenUsage || 0).toLocaleString(), color: 'zinc', icon: Zap },
+            ].map(({ label, value, color, icon: Icon }) => (
+              <div key={label} className={`bg-${color}-500/5 border border-${color}-500/15 rounded-lg px-3 py-2.5 flex items-center gap-2.5`}>
+                <Icon className={`w-3.5 h-3.5 text-${color}-400 flex-shrink-0`} />
+                <div className="min-w-0">
+                  <div className="text-zinc-500 text-[10px]">{label}</div>
+                  <div className="text-zinc-100 font-mono text-xs font-semibold truncate">{value}</div>
+                </div>
+              </div>
+            ))}
+          </div>
+
+          {/* Perception: Daemon Health */}
+          {daemons.length > 0 && (
+            <div className="bg-[#151518]/60 border border-white/5 rounded-xl p-3">
+              <div className="text-zinc-400 text-[10px] uppercase tracking-wider mb-2 font-semibold">Perception Layer — Daemons</div>
+              <div className="grid grid-cols-2 gap-1.5">
+                {daemons.map(d => (
+                  <div key={d.name} className="flex items-center gap-2 bg-zinc-900/50 rounded-lg px-2.5 py-1.5">
+                    <div className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${d.active ? 'bg-emerald-400' : 'bg-rose-500'}`} />
+                    <span className="text-zinc-300 text-[11px] truncate flex-1">{d.name?.replace('Daemon', '')}</span>
+                    {d.restartCount > 0 && (
+                      <span className="text-amber-400 text-[10px] font-mono">{d.restartCount}↺</span>
+                    )}
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* SOMA Plan */}
+          <div className="bg-[#151518]/60 border border-white/5 rounded-xl overflow-hidden" style={{ height: '200px' }}>
+            <SomaPlanViewer isConnected={isConnected} />
+          </div>
+
+          {/* Activity Stream */}
+          <div className="flex-1 bg-[#151518]/60 border border-white/5 rounded-xl p-3 min-h-0 overflow-hidden flex flex-col">
+            <div className="text-zinc-400 text-[10px] uppercase tracking-wider mb-2 font-semibold">Activity Stream</div>
+            <div className="flex-1 overflow-y-auto custom-scrollbar space-y-1 pr-1">
+              {activityStream.map(log => (
+                <div key={log.id} className={`px-2.5 py-1.5 rounded-lg text-xs border flex items-start gap-2 ${
+                  log.type === 'success' ? 'bg-fuchsia-500/5 border-fuchsia-500/10 text-fuchsia-400' :
+                  log.type === 'error' ? 'bg-rose-500/5 border-rose-500/10 text-rose-400' :
+                  log.type === 'warning' ? 'bg-amber-500/5 border-amber-500/10 text-amber-400' :
+                  'bg-blue-500/5 border-blue-500/10 text-blue-400'}`}>
+                  <div className={`mt-1 w-1.5 h-1.5 rounded-full flex-shrink-0 ${
+                    log.type === 'success' ? 'bg-fuchsia-500' : log.type === 'error' ? 'bg-rose-500' :
+                    log.type === 'warning' ? 'bg-amber-500' : 'bg-blue-500'}`} />
+                  <span className="flex-1 leading-relaxed">{log.message}</span>
+                  <span className="text-[10px] opacity-50 font-mono whitespace-nowrap">{new Date(log.timestamp).toLocaleTimeString()}</span>
+                </div>
+              ))}
+            </div>
+          </div>
+
+        </div>
+      </div>
+    </div>
+  );
+};
+
+// ==========================================
 // Process Monitor Modal (Task Manager)
 // ==========================================
 const ProcessMonitor = ({ agents, onClose }) => (
@@ -2564,176 +2838,21 @@ const SomaCommandBridge = () => {
         )}
 
         {activeModule === 'command' && (
-          <div>
-            <h2 className="text-2xl font-bold text-white mb-2 tracking-tight">Command Center</h2>
-            <p className="text-zinc-500 mb-6 text-sm">Central control hub for system-wide operations</p>
-
-            <div className="grid grid-cols-3 gap-4 mb-6">
-              <button
-                onClick={() => {
-                  executeCommand('start_all', 'Start All Agents');
-                }}
-                className="bg-fuchsia-500/10 hover:bg-fuchsia-500/20 border border-fuchsia-500/20 text-fuchsia-400 p-5 rounded-xl flex flex-col items-center justify-center space-y-3 transition-all hover:scale-[1.02] active:scale-[0.98]"
-              >
-                <div className="p-3 bg-fuchsia-500/20 rounded-full">
-                  <Play className="w-6 h-6" />
-                </div>
-                <span className="font-semibold text-sm">Start All Agents</span>
-              </button>
-
-              <button
-                onClick={() => {
-                  executeCommand('stop_all', 'Pause All Agents');
-                }}
-                className="bg-amber-500/10 hover:bg-amber-500/20 border border-amber-500/20 text-amber-400 p-5 rounded-xl flex flex-col items-center justify-center space-y-3 transition-all hover:scale-[1.02] active:scale-[0.98]"
-              >
-                <div className="p-3 bg-amber-500/20 rounded-full">
-                  <Pause className="w-6 h-6" />
-                </div>
-                <span className="font-semibold text-sm">Pause All Agents</span>
-              </button>
-
-              <button
-                onClick={() => {
-                  executeCommand('reset_system', 'Reset System', 'warning');
-                }}
-                className="bg-blue-500/10 hover:bg-blue-500/20 border border-blue-500/20 text-blue-400 p-5 rounded-xl flex flex-col items-center justify-center space-y-3 transition-all hover:scale-[1.02] active:scale-[0.98]"
-              >
-                <div className="p-3 bg-blue-500/20 rounded-full">
-                  <RotateCw className="w-6 h-6" />
-                </div>
-                <span className="font-semibold text-sm">Reset System</span>
-              </button>
-            </div>
-
-            <div className="grid grid-cols-2 gap-6 mb-6">
-              <div className="col-span-2">
-                <h3 className="text-zinc-100 font-semibold mb-4 text-sm uppercase tracking-wider">Quick Actions</h3>
-                <div className="grid grid-cols-4 gap-4 mb-4">
-                  <div className="card-wrapper p-[1px]">
-                    <button
-                      onClick={() => {
-                        executeCommand('run_diagnostics', 'System Diagnostics');
-                        setShowDiagnostics(true);
-                        setDiagnosticLogs([]); // Clear previous logs
-                      }}
-                      className="card-inner p-4 shadow-lg flex flex-col h-full text-left group"
-                    >
-                      <div className="p-2.5 rounded-lg bg-blue-500/10 w-fit mb-3 group-hover:bg-blue-500/20 transition-colors">
-                        <Search className="w-5 h-5 text-blue-400" />
-                      </div>
-                      <div className="text-zinc-200 font-semibold text-sm">System Diagnostics</div>
-                      <div className="text-zinc-500 text-xs mt-1">Run full health check</div>
-                    </button>
-                  </div>
-
-                  <div className="card-wrapper p-[1px]">
-                    <button
-                      onClick={() => executeCommand('clear_cache', 'Clear Cache')}
-                      className="card-inner p-4 shadow-lg flex flex-col h-full text-left group"
-                    >
-                      <div className="p-2.5 rounded-lg bg-amber-500/10 w-fit mb-3 group-hover:bg-amber-500/20 transition-colors">
-                        <Trash2 className="w-5 h-5 text-amber-400" />
-                      </div>
-                      <div className="text-zinc-200 font-semibold text-sm">Clear Cache</div>
-                      <div className="text-zinc-500 text-xs mt-1">Free up memory resources</div>
-                    </button>
-                  </div>
-
-                  <div className="card-wrapper p-[1px]">
-                    <button
-                      onClick={() => executeCommand('create_backup', 'Create Backup')}
-                      className="card-inner p-4 shadow-lg flex flex-col h-full text-left group"
-                    >
-                      <div className="p-2.5 rounded-lg bg-fuchsia-500/10 w-fit mb-3 group-hover:bg-fuchsia-500/20 transition-colors">
-                        <Database className="w-5 h-5 text-fuchsia-400" />
-                      </div>
-                      <div className="text-zinc-200 font-semibold text-sm">Create Backup</div>
-                      <div className="text-zinc-500 text-xs mt-1">Snapshot current state</div>
-                    </button>
-                  </div>
-
-                  <div className="card-wrapper p-[1px]">
-                    <button
-                      onClick={() => executeCommand('optimize_system', 'Optimize System')}
-                      className="card-inner p-4 shadow-lg flex flex-col h-full text-left group"
-                    >
-                      <div className="p-2.5 rounded-lg bg-purple-500/10 w-fit mb-3 group-hover:bg-purple-500/20 transition-colors">
-                        <Zap className="w-5 h-5 text-purple-400" />
-                      </div>
-                      <div className="text-zinc-200 font-semibold text-sm">Optimize System</div>
-                      <div className="text-zinc-500 text-xs mt-1">Tune performance metrics</div>
-                    </button>
-                  </div>
-                </div>
-
-              </div>
-
-              <div className="bg-[#151518]/60 backdrop-blur-md border border-white/5 rounded-xl p-5 shadow-lg col-span-2">
-                <h3 className="text-zinc-100 font-semibold mb-4 text-sm uppercase tracking-wider">System Status</h3>
-                <div className="space-y-4">
-                  <div className="flex items-center justify-between pb-3 border-b border-white/5">
-                    <span className="text-zinc-400 text-sm">Arbiters</span>
-                    <span className="text-zinc-100 font-mono font-bold">
-                      {activeArbiters}/{totalArbiters}
-                    </span>
-                  </div>
-                  <div className="flex items-center justify-between pb-3 border-b border-white/5">
-                    <span className="text-zinc-400 text-sm">Micro-Agents</span>
-                    <span className="text-zinc-100 font-mono font-bold">
-                      {activeMicroAgents}/{totalMicroAgents}
-                    </span>
-                  </div>
-                  <div className="flex items-center justify-between pb-3 border-b border-white/5">
-                    <span className="text-zinc-400 text-sm">Knowledge Fragments</span>
-                    <span className="text-zinc-100 font-mono font-bold">{totalFragments}</span>
-                  </div>
-                  <div className="flex items-center justify-between pb-3 border-b border-white/5">
-                    <span className="text-zinc-400 text-sm">System Uptime</span>
-                    <span className="text-zinc-100 font-mono font-bold">{formatUptime(systemMetrics.uptime)}</span>
-                  </div>
-                  {analyticsSummary && <>
-                  <div className="flex items-center justify-between pb-3 border-b border-white/5">
-                    <span className="text-zinc-400 text-sm">Avg Response</span>
-                    <span className="text-zinc-100 font-mono font-bold">{analyticsSummary.avgResponseTime || 0} ms</span>
-                  </div>
-                  <div className="flex items-center justify-between">
-                    <span className="text-zinc-400 text-sm">Token Usage</span>
-                    <span className="text-zinc-100 font-mono font-bold">{(analyticsSummary.tokenUsage || 0).toLocaleString()}</span>
-                  </div>
-                  </>}
-                </div>
-              </div>
-            </div>
-
-            {/* SOMA's Plan widget */}
-            <div className="bg-[#151518]/60 backdrop-blur-md border border-white/5 rounded-xl overflow-hidden shadow-lg" style={{ height: '340px' }}>
-              <SomaPlanViewer isConnected={isConnected} />
-            </div>
-
-            <div className="bg-[#151518]/60 backdrop-blur-md border border-white/5 rounded-xl p-5 shadow-lg">
-              <h3 className="text-zinc-100 font-semibold mb-4 text-sm uppercase tracking-wider">Activity Stream</h3>
-              <div className="space-y-2 max-h-96 overflow-y-auto custom-scrollbar pr-2">
-                {activityStream.map(log => (
-                  <div key={log.id} className={`p-3 rounded-lg text-sm border flex items-start space-x-3 ${log.type === 'success' ? 'bg-fuchsia-500/5 border-fuchsia-500/10 text-fuchsia-400' :
-                    log.type === 'error' ? 'bg-rose-500/5 border-rose-500/10 text-rose-400' :
-                      log.type === 'warning' ? 'bg-amber-500/5 border-amber-500/10 text-amber-400' :
-                        'bg-blue-500/5 border-blue-500/10 text-blue-400'
-                    }`}>
-                    <div className={`mt-0.5 w-1.5 h-1.5 rounded-full flex-shrink-0 ${log.type === 'success' ? 'bg-fuchsia-500' :
-                      log.type === 'error' ? 'bg-rose-500' :
-                        log.type === 'warning' ? 'bg-amber-500' :
-                          'bg-blue-500'
-                      }`} />
-                    <div className="flex-1 flex justify-between items-start">
-                      <span>{log.message}</span>
-                      <span className="text-[10px] opacity-60 font-mono whitespace-nowrap ml-4">{new Date(log.timestamp).toLocaleTimeString()}</span>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </div>
-          </div>
+          <CommandCenterPanel
+            executeCommand={executeCommand}
+            setShowDiagnostics={setShowDiagnostics}
+            setDiagnosticLogs={setDiagnosticLogs}
+            activeArbiters={activeArbiters}
+            totalArbiters={totalArbiters}
+            activeMicroAgents={activeMicroAgents}
+            totalMicroAgents={totalMicroAgents}
+            totalFragments={totalFragments}
+            systemMetrics={systemMetrics}
+            analyticsSummary={analyticsSummary}
+            activityStream={activityStream}
+            isConnected={isConnected}
+            formatUptime={formatUptime}
+          />
         )}
 
         {activeModule === 'settings' && (

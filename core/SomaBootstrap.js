@@ -1438,7 +1438,7 @@ export class SomaBootstrap {
         this.system.steveArbiter = new SteveArbiter(this.system.messageBroker, {
             kevinManager: this.system.kevinManager,
             learningPipeline: this.system.learningPipeline,
-            orchestrator: { population: new Map() } // Minimal orchestrator stub
+            orchestrator: { population: this.system.arbiters || new Map() } // Wire live arbiter registry so Steve can find agents
         });
         await this.system.steveArbiter.initialize();
         this.system.messageBroker.registerArbiter('SteveArbiter', { instance: this.system.steveArbiter, role: 'toolmaker' });

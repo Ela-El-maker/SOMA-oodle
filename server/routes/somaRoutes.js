@@ -1459,5 +1459,83 @@ ${personaContext}${characterContext}`.trim()
         }
     });
 
+    // ── Steve Worker Routes ────────────────────────────────────────────
+    router.get('/steve/status', (req, res) => {
+        const steve = system.steveArbiter;
+        if (!steve) return res.json({ online: false, status: 'offline', mood: 'dormant' });
+        res.json({
+            online: true,
+            status: steve._currentTask ? 'working' : 'idle',
+            mood: steve._mood || 'idle',
+            currentTask: steve._currentTask || null,
+            toolCount: steve.toolRegistry?.listTools?.()?.length || 0,
+            learningLinked: !!(steve.learningPipeline),
+            searchLinked: !!(steve.orchestrator?.transmitters),
+        });
+    });
+
+    router.post('/steve/chat', async (req, res) => {
+        const steve = system.steveArbiter;
+        if (!steve) return res.status(503).json({ success: false, error: 'Steve offline' });
+
+        const { message, history = [], context = {} } = req.body;
+        if (!message) return res.status(400).json({ error: 'message required' });
+
+        try {
+            steve._currentTask = message.substring(0, 80);
+            steve._mood = 'architecting';
+            const result = await steve.processChat(message, history, context);
+            steve._currentTask = null;
+            steve._mood = 'idle';
+
+            // Execute any shell actions Steve proposed (capped at 3, 30s timeout each)
+            const actionResults = [];
+            if (Array.isArray(result.actions) && result.actions.length > 0) {
+                const { exec } = await import('child_process');
+                const { promisify } = await import('util');
+                const execAsync = promisify(exec);
+                for (const cmd of result.actions.slice(0, 3)) {
+                    try {
+                        const { stdout, stderr } = await Promise.race([
+                            execAsync(cmd, { cwd: process.cwd(), timeout: 30000 }),
+                            new Promise((_, r) => setTimeout(() => r(new Error('timeout')), 30000))
+                        ]);
+                        actionResults.push({ cmd, stdout: stdout?.slice(0, 500), stderr: stderr?.slice(0, 200), success: true });
+                    } catch (e) {
+                        actionResults.push({ cmd, error: e.message, success: false });
+                    }
+                }
+            }
+
+            res.json({ success: true, response: result.response, actions: actionResults, updatedFiles: result.updatedFiles || [] });
+        } catch (e) {
+            steve._currentTask = null;
+            steve._mood = 'idle';
+            res.status(500).json({ success: false, error: e.message, response: "My cognitive link is severed." });
+        }
+    });
+
+    router.post('/steve/task', async (req, res) => {
+        const steve = system.steveArbiter;
+        if (!steve) return res.status(503).json({ success: false, error: 'Steve offline' });
+        const { task, source = 'system' } = req.body;
+        if (!task) return res.status(400).json({ error: 'task required' });
+        // Fire and forget — Steve works async
+        steve._currentTask = task.substring(0, 80);
+        steve._mood = 'architecting';
+        steve.processChat(task, [], { source, autonomous: true })
+            .then(r => {
+                steve._currentTask = null;
+                steve._mood = 'idle';
+                system.messageBroker?.publish('steve.task.complete', { task, response: r.response, actions: r.actions });
+            })
+            .catch(e => {
+                steve._currentTask = null;
+                steve._mood = 'idle';
+                console.error('[Steve] Async task failed:', e.message);
+            });
+        res.json({ success: true, message: 'Task accepted', taskPreview: task.substring(0, 80) });
+    });
+
     return router;
 }

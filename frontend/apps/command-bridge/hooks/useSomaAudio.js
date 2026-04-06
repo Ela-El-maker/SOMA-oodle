@@ -581,6 +581,9 @@ export function useSomaAudio(onResponse) {
 
   const sendTextQuery = useCallback((text) => processWithSoma(text), []);
 
+  // Unmount cleanup — stop mic, close audio contexts, cancel rAF loop
+  useEffect(() => () => disconnect(), [disconnect]);
+
   return {
     isConnected, connect, disconnect, volume, inputVolume,
     isTalking, isListening, isThinking, systemStatus,

@@ -537,8 +537,28 @@ ${contextStr}`;
                 } catch (e) {}
             }
 
+            // ── RecursiveSelfModel: inject SOMA's live self-model into every prompt ──
+            // This is what lets SOMA answer "what can you do?" / "how are you feeling?"
+            // with real introspective data rather than canned text.
+            let selfModelContext = '';
+            if (system.recursiveSelfModel?.getSelfModel) {
+                try {
+                    const sm = system.recursiveSelfModel.getSelfModel();
+                    const componentSummary = (sm.components || [])
+                        .filter(c => c.health !== 'unknown')
+                        .slice(0, 5)
+                        .map(c => `${c.name}(${c.health})`)
+                        .join(', ');
+                    selfModelContext = `\n[SELF-MODEL]\n` +
+                        `- Architecture: ${sm.identity?.architecture || 'QuadBrain'}\n` +
+                        `- Active Components: ${componentSummary || 'loading...'}\n` +
+                        `- Introspections: ${sm.stats?.introspectionCount || 0}, Synthesis Events: ${sm.stats?.synthesisCount || 0}\n` +
+                        `[/SELF-MODEL]\n`;
+                } catch { /* non-blocking */ }
+            }
+
             let result;
-            const finalPrompt = `${personaContext}${characterContext}${awarenessContext}${userContext}${memoryContext}\n${prompt}`;
+            const finalPrompt = `${personaContext}${characterContext}${awarenessContext}${selfModelContext}${userContext}${memoryContext}\n${prompt}`;
 
             // Server-side timeout: respond well BEFORE the frontend gives up (frontend = 60s)
             // 45s gives a 15s buffer â€” pre-processing (memory recall, fingerprinting) can eat 3-5s

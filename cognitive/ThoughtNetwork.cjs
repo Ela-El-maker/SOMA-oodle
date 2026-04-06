@@ -313,6 +313,19 @@ class ThoughtNetwork {
                     this.connectConcepts(newNode, nodeB, 'synthesized_from', 0.8);
                     
                     console.log(`[${this.name}] ✨ CREATED SYNTHESIS: ${decision.synthesis} (${decision.rationale})`);
+
+                    // Persist synthesis to long-term memory so SOMA remembers it across restarts
+                    if (this.mnemonicArbiter) {
+                        this.mnemonicArbiter.store(decision.synthesis, {
+                            type: 'synthesis',
+                            source: 'thought_network',
+                            rationale: decision.rationale || '',
+                            parentA: nodeA.content,
+                            parentB: nodeB.content,
+                            tags: ['synthesis', 'thought_network', nodeA.content, nodeB.content]
+                        }).catch(e => console.warn(`[${this.name}] Failed to persist synthesis:`, e.message));
+                    }
+
                     return newNode;
                 } else {
                     console.log(`[${this.name}] Synthesis rejected: Incompatible concepts`);

@@ -207,12 +207,22 @@ export class ConversationCuriosityExtractor extends EventEmitter {
   }
 
   /**
-   * Extract concepts from state
+   * Extract concepts from state — reads actual message text, not JSON structure
    */
   _extractConcepts(state) {
-    const text = JSON.stringify(state);
-    const keywords = this._extractKeywords(text);
-    return keywords.slice(0, 5); // Top 5 keywords
+    if (!state) return [];
+    // Pull the human-readable text from the state, not the serialized JSON object.
+    // JSON.stringify was returning field names (timestamp, sessionId, emotionalState)
+    // as the top "keywords", sending the curiosity engine off to research metadata noise.
+    const text =
+      state.query ||
+      state.request ||
+      state.message ||
+      state.text ||
+      state.content ||
+      (typeof state === 'string' ? state : '');
+    if (!text) return [];
+    return this._extractKeywords(text).slice(0, 5);
   }
 
   /**
@@ -272,9 +282,19 @@ export class ConversationCuriosityExtractor extends EventEmitter {
    */
   _isStopWord(word) {
     const stopWords = new Set([
+      // Common English stop words
       'this', 'that', 'with', 'from', 'have', 'what', 'when', 'where',
       'which', 'will', 'would', 'could', 'should', 'there', 'their',
-      'about', 'into', 'through', 'during', 'before', 'after'
+      'about', 'into', 'through', 'during', 'before', 'after',
+      'then', 'than', 'also', 'just', 'like', 'some', 'more', 'very',
+      'your', 'they', 'them', 'been', 'were', 'said', 'each', 'does',
+      'much', 'make', 'such', 'even', 'most', 'tell', 'does', 'want',
+      'know', 'need', 'look', 'come', 'here', 'back', 'good', 'well',
+      // JSON / state field names that were leaking through before the fix
+      'query', 'request', 'message', 'timestamp', 'sessionid', 'session',
+      'emotionalstate', 'emotional', 'state', 'metadata', 'payload',
+      'response', 'result', 'error', 'status', 'data', 'type', 'null',
+      'true', 'false', 'undefined', 'object', 'array', 'string', 'number',
     ]);
     return stopWords.has(word);
   }

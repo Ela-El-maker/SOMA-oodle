@@ -2355,7 +2355,11 @@ export class SomaBootstrap {
                 this.system.messageBroker.attentionEngine = this.system.attentionArbiter;
                 console.log('   \u2705 AttentionArbiter wired as CNS gate (prevents arbiter storms)');
             } catch (err) {
-                console.warn(`   \u26A0\uFE0F  AttentionArbiter skipped: ${err.message}`);
+                console.warn(`   ⚠️  AttentionArbiter skipped: ${err.message}`);
+            }
+            // Assert: if attentionEngine isn't wired, the CNS gate is gone — log loudly
+            if (!this.system.messageBroker.attentionEngine) {
+                console.error('[CRITICAL] AttentionArbiter NOT wired — CNS gate is absent. Arbiter storms are possible under load. Check arbiters/AttentionArbiter.js and BaseArbiter.js import.');
             }
 
             // 3. EngineeringSwarmArbiter — full research/plan/debate/synthesis cycle

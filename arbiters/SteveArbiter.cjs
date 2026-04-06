@@ -525,18 +525,36 @@ Make it safe, useful, and practical. Return ONLY the JSON, no markdown.
     this.logger.info(`[STEVE] ⚙️  Working on: "${this._currentTask}" (src: ${task.source})`);
 
     try {
-      // Build autonomous context — Steve knows this is his own initiative
-      const autonomousContext = `[AUTONOMOUS MODE]
-Steve is working independently on a self-assigned task.
-He does not wait for user approval for reasonable, safe actions.
-Source: ${task.source} | Priority: ${task.priority} | Task ID: ${task.id}`;
+      // Autonomous tasks use local Ollama — no DeepSeek spend on housekeeping.
+      // processChat() is reserved for user-facing chat (full cascade).
+      const stevePrompt = `${this.engine.systemPrompts.base}
 
-      const result = await this.processChat(task.description, [], {
-        autonomous: true,
-        source: task.source,
-        taskId: task.id,
-        systemContext: autonomousContext
-      });
+[AUTONOMOUS TASK — self-assigned]
+Source: ${task.source} | Priority: ${task.priority}
+
+Task: ${task.description}
+
+Respond as STEVE. Be direct and grumpy. If you can execute shell commands to investigate,
+list them in the actions array. If you can propose a file change, list it in updatedFiles.
+
+Return JSON: { "response": "Steve's analysis/commentary", "actions": ["shell cmd"], "updatedFiles": [] }
+Return ONLY the JSON. No markdown wrapping.`;
+
+      let parsedResult = { response: '', actions: [], updatedFiles: [] };
+      try {
+        const rawText = await this._callLocal(stevePrompt, { temperature: 0.4, maxTokens: 800 });
+        const jsonMatch = rawText.match(/\{[\s\S]*\}/);
+        if (jsonMatch) {
+          parsedResult = JSON.parse(jsonMatch[0]);
+        } else {
+          parsedResult.response = rawText.trim();
+        }
+      } catch (localErr) {
+        this.logger.warn(`[STEVE] Local brain failed (${localErr.message}), falling back to full cascade`);
+        parsedResult = await this.processChat(task.description, [], { autonomous: true, source: task.source });
+      }
+
+      const result = parsedResult;
 
       // Execute any shell actions Steve proposed (capped at 3, 30s timeout each)
       const actionResults = [];
@@ -610,39 +628,61 @@ Source: ${task.source} | Priority: ${task.priority} | Task ID: ${task.id}`;
     }
   }
 
+  // ─────────────────────────────────────────────────────────────────────
+  // LOCAL BRAIN — Steve uses Ollama for all autonomous/background work.
+  // Never hits DeepSeek for heartbeat tasks — that's reserved for user chat.
+  // ─────────────────────────────────────────────────────────────────────
+
+  /**
+   * Call local Ollama directly. Fast, free, good enough for housekeeping.
+   */
+  async _callLocal(prompt, opts = {}) {
+    const endpoint = process.env.OLLAMA_ENDPOINT || 'http://localhost:11434';
+    const model    = process.env.OLLAMA_MODEL    || 'gemma3:4b';
+    const temperature = opts.temperature ?? 0.5;
+    const maxTokens   = opts.maxTokens   ?? 1024;
+
+    const response = await fetch(`${endpoint}/api/generate`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        model,
+        prompt,
+        stream: false,
+        options: { temperature, num_predict: maxTokens }
+      })
+    });
+
+    if (!response.ok) throw new Error(`Ollama HTTP ${response.status}`);
+    const data = await response.json();
+    if (!data.response) throw new Error('Ollama returned empty response');
+    return data.response;
+  }
+
   /**
    * Generate a curiosity task when queue is empty.
-   * Steve scans the system and decides what annoys him most right now.
+   * Uses local Ollama — this should never cost an API call.
    */
   async _generateCuriosityTask() {
-    const somaArbiter = Array.from(this.orchestrator?.population?.values() || [])
-      .find(a => a.name === 'QuadBrain' || a.constructor?.name?.includes('QuadBrain') || a.constructor?.name?.includes('SOMArbiter'));
-    if (!somaArbiter) return;
-
     try {
-      const prompt = `You are STEVE, a grumpy but brilliant senior architect AI.
-You have some free time and want to find something to improve in the SOMA system.
+      const prompt = `You are STEVE, a grumpy but brilliant senior architect AI embedded in the SOMA system.
+You have some free time. Pick ONE specific thing to investigate or improve.
 
-Think like a senior engineer doing a code review or system health scan.
-Return ONLY a JSON object (no markdown) with this structure:
+Return ONLY a JSON object (no markdown):
 {
-  "task": "one concrete thing to investigate or improve, described precisely",
-  "type": "code|architecture|performance|configuration|documentation",
+  "task": "one concrete thing to investigate or improve, described precisely in one sentence",
+  "type": "code|architecture|performance|configuration",
   "reasoning": "one sentence on why this matters"
 }
 
-Examples of good tasks:
+Good examples:
 - "Review error handling in the MessageBroker publish path for uncaught promise rejections"
-- "Check if the CuriosityEngine is actually triggering research or silently failing"
-- "Look at the GoalPlanner active goals and see if any are stuck or blocked"
+- "Check if the CuriosityEngine is actually queuing research topics or silently failing"
+- "Look at GoalPlanner active goals and see if any are stuck or blocked"
 - "Verify the ThoughtNetwork synthesis loop is running and producing output"`;
 
-      const callFn = somaArbiter.callLOGOS || somaArbiter.reason?.bind(somaArbiter);
-      if (!callFn) return;
-
-      const result = await callFn(prompt, { temperature: 0.7 });
-      const text = result?.response || result?.text || '';
-      const jsonMatch = text.match(/\{[\s\S]*\}/);
+      const text = await this._callLocal(prompt, { temperature: 0.7, maxTokens: 300 });
+      const jsonMatch = text.match(/\{[\s\S]*?\}/);
       if (!jsonMatch) return;
 
       const parsed = JSON.parse(jsonMatch[0]);
@@ -652,7 +692,7 @@ Examples of good tasks:
           source: `curiosity:${parsed.type || 'general'}`,
           priority: 4
         });
-        this.logger.info(`[STEVE] 💡 Curiosity task generated (${parsed.type}): "${parsed.task.substring(0, 60)}"`);
+        this.logger.info(`[STEVE] 💡 Curiosity task (local): "${parsed.task.substring(0, 60)}"`);
       }
     } catch (e) {
       this.logger.warn(`[STEVE] Curiosity generation failed: ${e.message}`);

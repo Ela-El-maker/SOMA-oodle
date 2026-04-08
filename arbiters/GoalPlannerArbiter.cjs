@@ -35,7 +35,7 @@ class GoalPlannerArbiter extends BaseArbiter {
     this.maxActiveGoals = config.maxActiveGoals || 20;
     this.maxCompletedHistory = config.maxCompletedHistory || 100;
     this.stalledThresholdDays = config.stalledThresholdDays || 7;
-    this.planningIntervalHours = config.planningIntervalHours || 6;
+    this.planningIntervalHours = config.planningIntervalHours || 0.5; // every 30 min
     
     // Prioritization weights
     this.priorityWeights = {
@@ -253,8 +253,8 @@ class GoalPlannerArbiter extends BaseArbiter {
         throw new Error('Goal must have title and category');
       }
 
-      // Deduplication — reject if a similar active goal already exists
-      if (source === 'autonomous') {
+      // Deduplication — reject if a similar active goal already exists (all non-user sources)
+      if (source !== 'user') {
         const duplicate = this._findSimilarActiveGoal(goalData.category, goalData.title);
         if (duplicate) {
           this.logger.info(`[${this.name}] Skipping duplicate goal "${goalData.title}" — similar active goal exists: "${duplicate.title}"`);
@@ -346,13 +346,22 @@ class GoalPlannerArbiter extends BaseArbiter {
         this.stats.autonomousGoals++;
       }
       
-      // Broadcast goal creation
+      // Broadcast goal creation (direct message to arbiters)
       await messageBroker.sendMessage({
         from: this.name,
         to: 'broadcast',
         type: 'goal_created',
         payload: { goal }
       });
+
+      // Emit typed signal to CNS pub/sub (SignalSchema: goal.created)
+      messageBroker.publish('goal.created', {
+        goalId: goal.id,
+        title: goal.title,
+        category: goal.category,
+        source,
+        priority: goal.priority
+      }).catch(() => {});
       
       this.logger.info(`[${this.name}] 🎯 Created goal: ${goal.title} (${goal.id.slice(0, 8)})`);
       this.logger.info(`[${this.name}]    Type: ${goal.type}, Category: ${goal.category}, Priority: ${goal.priority}`);

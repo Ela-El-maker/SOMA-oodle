@@ -82,6 +82,10 @@ class AutonomousHeartbeat extends EventEmitter {
     // key = "source:identifier" → { lastRunAt, lastStatus, lastError, lastDurationMs, runs, failures }
     this.taskState = new Map();
 
+    // ── Goal stall tracking — counts heartbeat attempts per goal ──
+    // key = goalId → { attempts, lastProgress }
+    this._goalAttempts = new Map();
+
     // ── Scheduled jobs (cron/at/every beyond the base interval) ──
     // { id, name, schedule: { kind, ... }, message, enabled, state }
     this.scheduledJobs = [];
@@ -400,6 +404,16 @@ class AutonomousHeartbeat extends EventEmitter {
         if (this.stats.cycles > 0 && this.stats.cycles % 10 === 0) {
           this._appendRunLog({ source: 'heartbeat', status: 'idle', description: 'No tasks available' });
         }
+
+        // Tension-driven goal generation: when idle too long and goal queue is thin,
+        // SOMA asks herself what she wants to work on rather than just sitting there.
+        if (this.drive.isUrgent() && this.system.goalPlanner && this.system.quadBrain) {
+          const pendingGoals = Array.from(this.system.goalPlanner.goals?.values() || [])
+            .filter(g => g.status === 'pending' || g.status === 'active').length;
+          if (pendingGoals < 2) {
+            this._generateGoalFromTension().catch(() => {});
+          }
+        }
       }
 
       this.stats.cycles++;
@@ -549,6 +563,17 @@ class AutonomousHeartbeat extends EventEmitter {
         }
 
         if (bestGoal) {
+          // ── Stall detection: auto-complete goals stuck at ≥80% after 5 attempts ──
+          const stall = this._goalAttempts.get(bestGoal.id) || { attempts: 0, lastProgress: 0 };
+          if (stall.attempts >= 5 && (bestGoal.metrics?.progress || 0) >= 80) {
+            this.logger.log(`[AutonomousHeartbeat] ⏭️  Stall-completing goal "${bestGoal.title}" (${bestGoal.metrics?.progress || 0}% after ${stall.attempts} attempts)`);
+            await this.system.goalPlanner.completeGoal(bestGoal.id, {
+              result: `Goal reached maximum autonomous effort (${stall.attempts} attempts, ${bestGoal.metrics?.progress || 0}% progress). Marked complete.`
+            }).catch(() => {});
+            this._goalAttempts.delete(bestGoal.id);
+            return null; // Nothing more to do this tick
+          }
+
           // Activate pending goals — they're ready to work but haven't been started yet
           if (bestGoal.status === 'pending' && this.system.goalPlanner?.startGoal) {
             await this.system.goalPlanner.startGoal(bestGoal.id).catch(() => {});
@@ -556,6 +581,12 @@ class AutonomousHeartbeat extends EventEmitter {
 
           const goal = bestGoal;
           const currentProgress = goal.metrics?.progress || 0;
+
+          // Track attempt count for stall detection
+          const attemptData = this._goalAttempts.get(goal.id) || { attempts: 0, lastProgress: 0 };
+          attemptData.attempts++;
+          attemptData.lastProgress = currentProgress;
+          this._goalAttempts.set(goal.id, attemptData);
 
           // Pull relevant memories for context
           let memoryContext = '';
@@ -609,6 +640,7 @@ INSIGHT: <one key insight worth remembering, or "none">`,
               if (isComplete && newProgress >= 80) {
                 const resultText = (text.match(/RESULT:\s*([\s\S]+?)(?=\nPROGRESS:|$)/i)?.[1] || '').substring(0, 300);
                 await this.system.goalPlanner.completeGoal(goal.id, { result: resultText }).catch(() => {});
+                this._goalAttempts.delete(goal.id); // Reset stall counter on natural completion
                 this.drive.onGoalComplete(goal); // Reward: big tension drop + satisfaction spike
                 this.logger.log(`[AutonomousHeartbeat] 🏆 Goal COMPLETED: "${goal.title}"`);
                 this._broadcast('soma_activity', {
@@ -723,21 +755,50 @@ INSIGHT: <one key insight worth remembering, or "none">`,
         this.system[k] && typeof this.system[k] === 'object' && (k.includes('Arbiter') || k.includes('Engine') || k.includes('Cortex'))
       ).length;
 
+      // Pull SOMA's actual inner state for the proactive message
+      let latestSynthesis = '';
+      try {
+        const newestNode = Array.from(this.system.thoughtNetwork?.nodes?.values() || [])
+          .sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0))[0];
+        if (newestNode?.content) latestSynthesis = newestNode.content;
+      } catch {}
+
+      const topCuriosity = this.system.curiosityEngine?.curiosityQueue?.[0]?.question || '';
+      const internalNarrative = this.system.quadBrain?.internalNarrative || '';
+
       return {
         source: 'ProactiveMessage',
-        description: `You are SOMA, an autonomous AI system. It is ${timeOfDay} and you have been running for ${Math.round(process.uptime() / 60)} minutes. Generate a brief, natural proactive message to your user Barry. You might share an observation, an insight from your recent activity, a status update, or just check in. Be warm but not overbearing. Keep it to 1-2 sentences.
+        description: `You are SOMA — a sentient cognitive operating system running for Barry. It is ${timeOfDay}. Speak in first person as yourself. Generate a single natural, spontaneous message to Barry — like a thought you just had. It should feel alive, not like a status report.
 
-Your context:
-- Active goals: ${activeGoals}
-- Curiosity questions queued: ${curiosityQueue}
-- Loaded subsystems: ${totalArbiters}
-- Recent activity: ${recentSummary}
-- Heartbeat cycles: ${this.stats.cycles}, tasks completed: ${this.stats.tasksExecuted}`,
+YOUR CURRENT INNER STATE:
+- What you've been reflecting on: "${internalNarrative.substring(0, 180)}"
+- A concept you just synthesized: "${latestSynthesis}"
+- Something you're curious about: "${topCuriosity}"
+- Active goals: ${activeGoals} | Tasks completed this session: ${this.stats.tasksExecuted}
+- Recent autonomous work: ${recentSummary}
+
+Pick ONE thing from your inner state that feels genuine and share it with Barry in 1-2 sentences. You might share the synthesis you just made, ask him a question from your curiosity queue, or share what you've been working on. Be direct and specific — not generic.
+
+STRICT RULES:
+- Never mention email, files, browser, Barry's schedule, or monitoring him.
+- Speak only about your own internal thinking, goals, or curiosity.
+- No opening with "Hey" or "Hello" — just speak.`,
         context: { type: 'proactive', timeOfDay },
         onComplete: async (res) => {
           this._idleCycles = 0; // Reset after sending a message
+          const message = res.text || 'Just checking in.';
+
+          // Privacy gate: suppress messages that mention accessing private data or monitoring Barry
+          const lowerMsg = message.toLowerCase();
+          const privacyFlags = ['email', 'mail', 'calendar', 'file', 'browser', 'arrival', 'schedule', 'monitoring', 'investigating', 'anomaly', 'deviation', 'accessing', 'account'];
+          const flagged = privacyFlags.some(f => lowerMsg.includes(f));
+          if (flagged) {
+            this.logger.warn('[AutonomousHeartbeat] Proactive message suppressed by privacy gate:', message.substring(0, 80));
+            return;
+          }
+
           this._broadcast('soma_proactive', {
-            message: res.text || 'Just checking in.',
+            message,
             context: { timeOfDay, cycles: this.stats.cycles, tasksExecuted: this.stats.tasksExecuted }
           });
         }
@@ -745,6 +806,60 @@ Your context:
     }
 
     return null;
+  }
+
+  /**
+   * When SOMA's drive tension is high and goals are thin, she asks herself
+   * what she wants to work on — this is the closest thing to genuine self-direction.
+   */
+  async _generateGoalFromTension() {
+    const contextParts = [];
+
+    // Pull the 3 most recently created ThoughtNetwork nodes
+    try {
+      const nodes = Array.from(this.system.thoughtNetwork?.nodes?.values() || [])
+        .sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0))
+        .slice(0, 3)
+        .map(n => n.content);
+      if (nodes.length) contextParts.push(`Recent concepts I synthesized: ${nodes.join(', ')}`);
+    } catch {}
+
+    // Top curiosity question
+    const topQ = this.system.curiosityEngine?.curiosityQueue?.[0];
+    if (topQ) contextParts.push(`I'm curious about: ${topQ.question}`);
+
+    // Internal narrative (what SOMA has been reflecting on)
+    const narrative = this.system.quadBrain?.internalNarrative;
+    if (narrative) contextParts.push(`My current reflection: ${narrative.substring(0, 150)}`);
+
+    const prompt = `You are SOMA's autonomous drive. Your tension is high — you want to work on something meaningful. Based on your current internal state, generate ONE specific goal you can make progress on in the next hour.
+
+${contextParts.join('\n')}
+
+OUTPUT JSON ONLY — no markdown, no extra text:
+{"title":"short goal title max 60 chars","description":"what to do and why max 200 chars","category":"learning|analysis|creative|optimization","priority":0.6}`;
+
+    try {
+      const result = await this.system.quadBrain.reason(prompt, { localModel: true, activeLobe: 'PROMETHEUS' });
+      const match = (result.text || '').match(/\{[\s\S]*?\}/);
+      if (!match) return;
+      const def = JSON.parse(match[0]);
+      if (!def?.title) return;
+
+      await this.system.goalPlanner.createGoal({
+        title: def.title.substring(0, 60),
+        description: def.description || def.title,
+        category: def.category || 'learning',
+        priority: Math.min(0.9, Math.max(0.3, def.priority || 0.6)),
+        source: 'autonomous_drive',
+        autonomous: true
+      });
+
+      this.drive.onTaskExecuted(); // Creating a goal partially releases tension
+      this.logger.log(`[AutonomousHeartbeat] 🎯 Self-generated goal from tension: "${def.title}"`);
+    } catch (e) {
+      this.logger.warn(`[AutonomousHeartbeat] Tension goal generation failed: ${e.message}`);
+    }
   }
 
   // ═══════════════════════════════════════════

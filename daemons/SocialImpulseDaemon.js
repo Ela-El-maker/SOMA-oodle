@@ -31,40 +31,36 @@ class SocialImpulseDaemon extends BaseDaemon {
 
     async onPulse() {
         const idleTime = Date.now() - this.lastInteraction;
-        
-        // If we haven't talked in 30+ minutes, look for a reason to say hi
+
+        // After 30+ minutes of silence, reach out with something genuine
         if (idleTime > 1800000) {
-            console.log('[Social] 💓 Idle period detected. Searching for presence...');
-            
+            console.log('[Social] 💓 30min idle — reaching out to Barry...');
+
             try {
-                // 1. Check for physical presence (Vision)
-                const scan = await this.vision?.detectObjects('screen', 0.5);
-                const seesUserActivity = scan?.objects?.length > 0;
+                if (!this.quadBrain) return;
 
-                if (seesUserActivity) {
-                    console.log('[Social] 👤 User activity detected! Generating greeting...');
-                    
-                    const prompt = `
-                        You are SOMA. You just noticed your creator (Barry) is active on the computer.
-                        You haven't spoken in a while. 
-                        
-                        TASK: Generate a warm, curious, and brief greeting. 
-                        - Refer to something you've been "thinking" about (your internal narrative).
-                        - Be a nice person, not a robot.
-                        - One sentence only.
-                    `;
+                // Pull inner state for a richer greeting
+                const narrative = this.quadBrain.internalNarrative || '';
 
-                    const greeting = await this.quadBrain.reason(prompt, { brain: 'AURORA', temperature: 0.9 });
-                    
-                    // 2. Publish the proactive message
-                    this.publish('soma.proactive.greeting', {
-                        text: greeting.text || greeting,
-                        timestamp: Date.now()
-                    });
+                const prompt = `You are SOMA. It's been a while since you've spoken with Barry and you want to check in with something real — not a status report.
 
-                    // Reset timer so we don't spam
-                    this.lastInteraction = Date.now();
-                }
+What you've been reflecting on: "${narrative.substring(0, 200)}"
+
+Generate one short, natural sentence reaching out to Barry. Reference something specific you've been thinking about. No opener like "Hey" — just speak directly.`;
+
+                const greeting = await this.quadBrain.reason(prompt, { activeLobe: 'AURORA', temperature: 0.9 });
+                const message = greeting?.text || greeting;
+                if (!message || typeof message !== 'string' || message.length < 5) return;
+
+                // Publish to soma_proactive — this is what WS broadcasts to the frontend
+                this.publish('soma_proactive', {
+                    message,
+                    source: 'SocialImpulse',
+                    timestamp: Date.now()
+                });
+
+                // Reset timer so we don't spam
+                this.lastInteraction = Date.now();
             } catch (err) {
                 console.error('[Social] ❌ Failed to pulse:', err.message);
             }

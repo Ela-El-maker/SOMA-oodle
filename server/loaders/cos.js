@@ -152,9 +152,16 @@ export async function loadCOSSystems(system) {
         // 8. Wire Signal Reactions (CNS Drivers)
         system.messageBroker.subscribe('swarm.optimization.needed', async (signal) => {
             console.log('[SOMA] 📊 Swarm optimization signal — running improvement cycle...');
-            await swarmOptimizer.improve().catch(err =>
-                console.warn('[SOMA] SwarmOptimizer.improve() failed:', err.message)
-            );
+            const result = await swarmOptimizer.improve().catch(err => {
+                console.warn('[SOMA] SwarmOptimizer.improve() failed:', err.message);
+                return { success: false, error: err.message };
+            });
+            // Feed improvement result back to CNS
+            system.messageBroker.publish('experiment.result', {
+                experimentId: `swarm_opt_${Date.now()}`,
+                success: result?.success || false,
+                filepath: result?.filepath || 'arbiters/EngineeringSwarmArbiter.js'
+            }).catch(() => {});
         });
 
         system.messageBroker.subscribe('swarm.discovery.ideas', async (signal) => {
@@ -174,6 +181,81 @@ export async function loadCOSSystems(system) {
                 payload: signal.payload, 
                 source: signal.source
             });
+        });
+
+        // Wire DaemonManager crashes → health.warning + diagnostic.anomaly
+        daemonManager.on('daemon.restarted', ({ name, reason, attempt }) => {
+            system.messageBroker.publish('health.warning', {
+                issue: 'daemon_restarted',
+                details: `${name} restarted (${reason || 'crash'}) attempt #${attempt || 1}`
+            }).catch(() => {});
+            if ((attempt || 1) >= 3) {
+                system.messageBroker.publish('diagnostic.anomaly', {
+                    component: name,
+                    issue: 'repeated_crashes',
+                    severity: 'high'
+                }).catch(() => {});
+            }
+        });
+
+        // self:kpi_update → stimulate curiosity for weak components
+        system.messageBroker.subscribe('self:kpi_update', (signal) => {
+            const { components } = signal.payload || {};
+            const curiosity = system.curiosityEngine;
+            if (!curiosity || !components) return;
+            for (const [comp, score] of Object.entries(components)) {
+                if (score < 0.4) {
+                    curiosity.stimulateCuriosity({ topic: comp, source: 'self_model', strength: 1 - score });
+                }
+            }
+        });
+
+        // goal.created → shift attention focus for high-priority goals
+        system.messageBroker.subscribe('goal.created', (signal) => {
+            const { category, priority } = signal.payload || {};
+            if (priority > 70 && system.messageBroker.attentionEngine) {
+                system.messageBroker.attentionEngine.setFocus(category, 120000); // 2 min focus
+            }
+        });
+
+        // insight.generated (ThoughtNetwork synthesis) → stimulate curiosity + create exploration goal
+        system.messageBroker.subscribe('insight.generated', (signal) => {
+            const { insight, source, rationale, parents } = signal.payload || {};
+            if (!insight) return;
+
+            // Feed curiosity queue — existing behaviour
+            const curiosity = system.curiosityEngine;
+            if (curiosity?.addToCuriosityQueue) {
+                curiosity.addToCuriosityQueue({
+                    type: 'adjacent_exploration',
+                    question: `What are the implications of the concept: ${insight}?`,
+                    gap: insight,
+                    priority: 0.65,
+                    novel: true
+                });
+            }
+
+            // Also create a GoalPlanner goal so SOMA actively works on the new concept
+            const gp = system.goalPlanner;
+            if (gp?.createGoal) {
+                const parentCtx = parents?.length ? ` (synthesized from: ${parents.join(' + ')})` : '';
+                gp.createGoal({
+                    title: `Explore: ${insight.substring(0, 55)}`,
+                    description: `${rationale || 'Newly synthesized concept'}${parentCtx}. Research and deepen understanding of this idea.`,
+                    category: 'learning',
+                    priority: 0.55,
+                    source: 'thought_network_synthesis',
+                    autonomous: true
+                }).catch(() => {});
+            }
+        });
+
+        // self:kpi_update (RecursiveSelfModel) → trigger planning when CVI is declining
+        system.messageBroker.subscribe('self:kpi_update', (signal) => {
+            const { trend, cvi } = signal.payload || {};
+            if (trend === 'declining' && cvi < 0.4 && system.goalPlanner?.runPlanningCycle) {
+                system.goalPlanner.runPlanningCycle().catch(() => {});
+            }
         });
 
         console.log('      ✅ COS Perception Layer ACTIVE (Watchdog + 7 Daemons + Swarm Intelligence)');

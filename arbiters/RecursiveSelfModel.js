@@ -629,6 +629,35 @@ export class RecursiveSelfModel extends EventEmitter {
     setInterval(async () => {
       await this.performHealthCheck();
     }, this.config.healthCheckInterval);
+
+    // Periodic capability re-assessment — update scores from actual calibration history
+    // instead of keeping the hardcoded bootstrap values forever.
+    setInterval(() => {
+      this._updateCapabilitiesFromHistory();
+    }, 60 * 60 * 1000); // every hour
+  }
+
+  /**
+   * Update capability scores using actual NEMESIS-fed calibration history.
+   * After enough data accumulates, the self-model reflects real performance
+   * rather than bootstrap assumptions.
+   */
+  _updateCapabilitiesFromHistory() {
+    let updated = 0;
+    for (const [domain, history] of this.confidenceHistory) {
+      if (history.length < 3) continue; // Need at least 3 data points
+      const avgActual = history.reduce((s, h) => s + h.actual, 0) / history.length;
+      const current = this.capabilities.get(domain) || 0.5;
+      // Nudge toward observed performance (weighted 70% history, 30% current estimate)
+      const updated_score = (avgActual * 0.7) + (current * 0.3);
+      this.capabilities.set(domain, Math.max(0.1, Math.min(1.0, updated_score)));
+      updated++;
+    }
+    if (updated > 0) {
+      console.log(`[RecursiveSelfModel] Updated ${updated} capability scores from calibration history`);
+      // Re-identify gaps and notify GoalPlanner so new learning goals are created
+      this._assessCapabilities().catch(() => {});
+    }
   }
 
   /**

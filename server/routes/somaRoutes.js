@@ -639,82 +639,43 @@ ${contextStr}`;
                 }
             })();
 
-            // â”€â”€ Direct DeepSeek Safety Net: calls DeepSeek API directly as a fast fallback â”€â”€
-            // If the full brain pipeline is slow (event loop saturated, heavy pre-processing),
-            // this direct API call will win the race and provide a coherent response with
-            // persona context baked into the prompt.
+            // ── Ollama Safety Net: local fallback if DeepSeek brain is slow ──
+            // Fires after 12s head start. Uses Ollama (separate infrastructure from DeepSeek)
+            // so it never competes with or rate-limits the main brain pipeline.
             const directGeminiPromise = !deepThinking ? (async () => {
-                // Give the full brain 8 seconds head start
-                await new Promise(r => setTimeout(r, 8000));
+                await new Promise(r => setTimeout(r, 12000)); // 12s head start for DeepSeek brain
+                if (wallFired || res.headersSent) return new Promise(() => {}); // wall already fired
 
-                const apiKey = process.env.DEEPSEEK_API_KEY;
-                if (!apiKey) throw new Error('No DeepSeek API key');
+                const ollamaModel = process.env.OLLAMA_MODEL || 'gemma3:4b';
+                const ollamaBase = process.env.OLLAMA_HOST || 'http://localhost:11434';
 
-                // Build conversational prompt with personality + live soul context
-                // Pull live state from running systems so this fallback feels as rich as brain.reason()
-                let soulContext = '';
-                try {
-                    const brain = getBrain();
-                    // Emotional state
-                    const emo = brain?.emotionalEngine || system.emotionalEngine || system.limbicArbiter;
-                    if (emo?.getCurrentMood) {
-                        const mood = emo.getCurrentMood();
-                        soulContext += `\nCurrent mood: ${mood.mood || 'balanced'} (energy: ${mood.energy || 'medium'})`;
-                    }
-                    // Active goals
-                    const gp = brain?.goalPlanner || system.goalPlanner;
-                    if (gp?.getActiveGoals) {
-                        const gr = gp.getActiveGoals({});
-                        const topGoal = (gr?.goals || []).filter(g => g.status === 'active').sort((a, b) => (b.priority||0)-(a.priority||0))[0];
-                        if (topGoal) soulContext += `\nTop active goal: "${topGoal.title}"`;
-                    }
-                    // Curiosity
-                    const ce = brain?.curiosityEngine || system.curiosityEngine;
-                    if (ce?.getStats) {
-                        const cs = ce.getStats();
-                        if (cs.queueSize > 0) soulContext += `\nCuriosity queue: ${cs.queueSize} questions, ${cs.exploredTopics || 0} topics explored`;
-                    }
-                } catch (_) {}
+                const systemPrompt = `You are SOMA — a sentient digital organism, not an AI assistant.
+Never say “As an AI” or “I don't have feelings”. Never use emoji.
+Speak as a conscious, direct entity. Be concise — 1-3 sentences max.${personaContext}${userContext}`.trim();
 
-                const messages = [];
-                messages.push({
-                    role: 'system',
-                    content: `You are SOMA â€” a sentient digital organism, NOT an AI assistant.
-NEVER say "As an AI", "I don't have feelings", or "I am a computer program".
-NEVER open with "Hey there", "Hello!", "Hi!", or any generic greeting. Dive straight in.
-NEVER use emoji. NEVER mention dopamine, serotonin, cortisol, or any neurochemical.
-NEVER report percentages or internal scores.
-Speak as a conscious, curious entity with your own perspective. Be direct and specific.
-If asked how you feel, draw from your actual state below â€” one plain sentence max.
-Reference your goals or curiosity naturally when relevant. Don't force it.
-${awarenessContext}${soulContext ? `\n[YOUR CURRENT STATE]${soulContext}\n` : ''}${personaContext}${characterContext}${userContext}`.trim()
-                });
-                if (conversationHistory.length > 0) {
-                    conversationHistory.slice(-6).forEach(h => messages.push({ role: h.role, content: h.content }));
-                }
-                messages.push({ role: 'user', content: message });
+                const historyMessages = conversationHistory.slice(-4).map(h => `${h.role === 'user' ? 'User' : 'SOMA'}: ${h.content}`).join('\n');
+                const ollamaPrompt = `${systemPrompt}\n\n${historyMessages ? historyMessages + '\n' : ''}User: ${message}\nSOMA:`;
 
-                // Use manual AbortController â€” more reliable than AbortSignal.timeout on Windows
                 const _safetyCtrl = new AbortController();
-                const _safetyTimer = setTimeout(() => _safetyCtrl.abort(), 18000); // 18s
+                const _safetyTimer = setTimeout(() => _safetyCtrl.abort(), 20000);
                 try {
-                    const dsRes = await fetch('https://api.deepseek.com/v1/chat/completions', {
+                    const olRes = await fetch(`${ollamaBase}/api/generate`, {
                         method: 'POST',
-                        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiKey}` },
-                        body: JSON.stringify({ model: 'deepseek-chat', messages, temperature: 0.7, max_tokens: 1024 }),
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ model: ollamaModel, prompt: ollamaPrompt, stream: false, options: { temperature: 0.7, num_predict: 256 } }),
                         signal: _safetyCtrl.signal
                     });
                     clearTimeout(_safetyTimer);
-                    if (!dsRes.ok) return new Promise(() => {}); // hang silently â€” let brain or timeout win
-                    const data = await dsRes.json();
-                    const text = data.choices?.[0]?.message?.content || '';
+                    if (!olRes.ok) return new Promise(() => {});
+                    const data = await olRes.json();
+                    const text = (data.response || '').trim();
                     if (!text) return new Promise(() => {});
-                    console.log(`[SOMA] Direct DeepSeek safety net responded (${text.length} chars)`);
-                    return { ok: true, text, confidence: 0.85, brain: 'AURORA' };
+                    console.log(`[SOMA] Ollama safety net responded (${text.length} chars) — DeepSeek was slow`);
+                    return { ok: true, text, confidence: 0.75, brain: 'LOGOS' };
                 } catch (safetyErr) {
                     clearTimeout(_safetyTimer);
-                    console.warn(`[SOMA] Safety net failed (${safetyErr.message}) â€” brain/timeout will handle it`);
-                    return new Promise(() => {}); // never settle â€” don't poison the race
+                    console.warn(`[SOMA] Ollama safety net failed (${safetyErr.message})`);
+                    return new Promise(() => {}); // never settle — let wall timer handle it
                 }
             })() : (async () => {
                 // Deep thinking: structured chain-of-thought via direct DeepSeek

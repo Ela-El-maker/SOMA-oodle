@@ -21,6 +21,8 @@ import somaBackend from './somaBackend';
 import { getSharedSessionId } from './utils/sharedSession';
 import SomaCT from '../command-ct/SomaCT';
 import Orb from './panels/Orb';
+import SynthWave from './components/SynthWave';
+import { RobotFace } from './components/RobotFace';
 import KevinInterface from './KevinInterface';
 // import KnowledgeGraph3D from '../../command-bridge/KnowledgeGraph3D';
 
@@ -101,6 +103,7 @@ const CommandCenterPanel = ({
   const [steveThinking, setSteveThinking] = React.useState(false);
   const [steveStatus, setSteveStatus] = React.useState({ online: false, status: 'idle', mood: 'idle', toolCount: 0 });
   const [daemons, setDaemons] = React.useState([]);
+  const [perceptionData, setPerceptionData] = React.useState({ attention: null, recentSignals: [] });
   const [wittyPhrase, setWittyPhrase] = React.useState('');
   const steveScrollRef = React.useRef(null);
 
@@ -108,14 +111,19 @@ const CommandCenterPanel = ({
   React.useEffect(() => {
     const fetchStatus = async () => {
       try {
-        const [sRes, dRes] = await Promise.all([
+        const [sRes, dRes, pRes] = await Promise.all([
           fetch('/api/soma/steve/status'),
-          fetch('/api/daemon/status')
+          fetch('/api/daemon/status'),
+          fetch('/api/perception/health')
         ]);
         if (sRes.ok) setSteveStatus(await sRes.json());
         if (dRes.ok) {
           const d = await dRes.json();
           setDaemons(d.daemon?.daemons || []);
+        }
+        if (pRes.ok) {
+          const p = await pRes.json();
+          setPerceptionData({ attention: p.attention, recentSignals: p.recentSignals || [] });
         }
       } catch {}
     };
@@ -146,12 +154,20 @@ const CommandCenterPanel = ({
     setSteveThinking(true);
     try {
       const history = steveMessages.slice(-8).map(m => ({ role: m.role === 'steve' ? 'assistant' : 'user', content: m.content }));
-      const res = await fetch('/api/soma/steve/chat', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ message: msg, history })
-      });
-      const data = await res.json();
+      const ctrl = new AbortController();
+      const timer = setTimeout(() => ctrl.abort(), 30000);
+      let data;
+      try {
+        const res = await fetch('/api/soma/steve/chat', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ message: msg, history }),
+          signal: ctrl.signal
+        });
+        data = await res.json();
+      } finally {
+        clearTimeout(timer);
+      }
       const reply = data.response || data.error || "My cognitive link is severed.";
       setSteveMessages(prev => [...prev, { role: 'steve', content: reply, ts: Date.now(), actions: data.actions }]);
     } catch {
@@ -199,10 +215,10 @@ const CommandCenterPanel = ({
       </div>
 
       {/* ── Main 2-column layout ── */}
-      <div className="grid grid-cols-5 gap-4 flex-1 min-h-0">
+      <div className="grid grid-cols-5 gap-4 flex-1 min-h-0 overflow-hidden">
 
         {/* LEFT: Steve Worker Panel (2/5) */}
-        <div className="col-span-2 flex flex-col bg-[#0e0e11] border border-emerald-500/15 rounded-xl overflow-hidden shadow-lg">
+        <div className="col-span-2 flex flex-col min-h-0 bg-[#0e0e11] border border-emerald-500/15 rounded-xl overflow-hidden shadow-lg">
           {/* Steve header */}
           <div className="flex items-center gap-3 px-4 py-3 border-b border-emerald-500/10 bg-emerald-500/5">
             <div className="relative w-8 h-8 rounded-full overflow-hidden border border-emerald-500/30 bg-emerald-500/10 flex-shrink-0">
@@ -304,7 +320,7 @@ const CommandCenterPanel = ({
         </div>
 
         {/* RIGHT: Status + Perception + Plan + Stream (3/5) */}
-        <div className="col-span-3 flex flex-col gap-3 min-h-0">
+        <div className="col-span-3 flex flex-col gap-3 min-h-0 overflow-y-auto custom-scrollbar pr-1">
 
           {/* System Health Grid */}
           <div className="grid grid-cols-3 gap-3">
@@ -326,21 +342,52 @@ const CommandCenterPanel = ({
             ))}
           </div>
 
-          {/* Perception: Daemon Health */}
-          {daemons.length > 0 && (
-            <div className="bg-[#151518]/60 border border-white/5 rounded-xl p-3">
-              <div className="text-zinc-400 text-[10px] uppercase tracking-wider mb-2 font-semibold">Perception Layer — Daemons</div>
-              <div className="grid grid-cols-2 gap-1.5">
-                {daemons.map(d => (
-                  <div key={d.name} className="flex items-center gap-2 bg-zinc-900/50 rounded-lg px-2.5 py-1.5">
-                    <div className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${d.active ? 'bg-emerald-400' : 'bg-rose-500'}`} />
-                    <span className="text-zinc-300 text-[11px] truncate flex-1">{d.name?.replace('Daemon', '')}</span>
-                    {d.restartCount > 0 && (
-                      <span className="text-amber-400 text-[10px] font-mono">{d.restartCount}↺</span>
-                    )}
-                  </div>
-                ))}
-              </div>
+          {/* Perception: Daemon Health + Attention + Signals */}
+          {(daemons.length > 0 || perceptionData.attention || perceptionData.recentSignals.length > 0) && (
+            <div className="bg-[#151518]/60 border border-white/5 rounded-xl p-3 space-y-2">
+              <div className="text-zinc-400 text-[10px] uppercase tracking-wider font-semibold">Perception Layer</div>
+
+              {/* Daemons */}
+              {daemons.length > 0 && (
+                <div className="grid grid-cols-2 gap-1.5">
+                  {daemons.map(d => (
+                    <div key={d.name} className="flex items-center gap-2 bg-zinc-900/50 rounded-lg px-2.5 py-1.5">
+                      <div className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${d.active ? 'bg-emerald-400' : 'bg-rose-500'}`} />
+                      <span className="text-zinc-300 text-[11px] truncate flex-1">{d.name?.replace('Daemon', '')}</span>
+                      {d.restartCount > 0 && (
+                        <span className="text-amber-400 text-[10px] font-mono">{d.restartCount}↺</span>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              {/* Attention Focus */}
+              {perceptionData.attention && (
+                <div className="flex items-center gap-2 border-t border-white/5 pt-2">
+                  <span className="text-zinc-500 text-[10px] uppercase tracking-wider flex-shrink-0">Focus</span>
+                  <span className="text-fuchsia-300 text-[11px] font-mono truncate">{perceptionData.attention.focus}</span>
+                  {perceptionData.attention.expires && (
+                    <span className="text-zinc-600 text-[10px] ml-auto font-mono">
+                      {Math.max(0, Math.round((perceptionData.attention.expires - Date.now()) / 1000))}s
+                    </span>
+                  )}
+                </div>
+              )}
+
+              {/* Recent Signals */}
+              {perceptionData.recentSignals.length > 0 && (
+                <div className="border-t border-white/5 pt-2 space-y-1">
+                  <div className="text-zinc-600 text-[10px] uppercase tracking-wider">CNS — Recent Signals</div>
+                  {perceptionData.recentSignals.slice(0, 5).map((s, i) => (
+                    <div key={i} className="flex items-center gap-2">
+                      <span className="text-blue-400/70 text-[10px] font-mono flex-shrink-0 truncate max-w-[100px]">{s.topic}</span>
+                      <span className="text-zinc-600 text-[10px] truncate flex-1">{s.preview}</span>
+                      <span className="text-zinc-700 text-[9px] font-mono flex-shrink-0">{new Date(s.ts).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })}</span>
+                    </div>
+                  ))}
+                </div>
+              )}
             </div>
           )}
 
@@ -350,9 +397,9 @@ const CommandCenterPanel = ({
           </div>
 
           {/* Activity Stream */}
-          <div className="flex-1 bg-[#151518]/60 border border-white/5 rounded-xl p-3 min-h-0 overflow-hidden flex flex-col">
+          <div className="bg-[#151518]/60 border border-white/5 rounded-xl p-3 flex flex-col" style={{ minHeight: '240px' }}>
             <div className="text-zinc-400 text-[10px] uppercase tracking-wider mb-2 font-semibold">Activity Stream</div>
-            <div className="flex-1 overflow-y-auto custom-scrollbar space-y-1 pr-1">
+            <div className="overflow-y-auto custom-scrollbar space-y-1 pr-1" style={{ maxHeight: '320px' }}>
               {activityStream.map(log => (
                 <div key={log.id} className={`px-2.5 py-1.5 rounded-lg text-xs border flex items-start gap-2 ${
                   log.type === 'success' ? 'bg-fuchsia-500/5 border-fuchsia-500/10 text-fuchsia-400' :
@@ -819,6 +866,7 @@ const SomaCommandBridge = () => {
   const [orbConversation, setOrbConversation] = useState([]);
   const [activeReasoningTree, setActiveReasoningTree] = useState(null);
   const [orbSidebarCollapsed, setOrbSidebarCollapsed] = useState(false);
+  const [showOrbFace, setShowOrbFace] = useState(false);
 
   // ------------------------------------------
   // RESTORED STATES (Cognitive & SLC)
@@ -1933,7 +1981,7 @@ const SomaCommandBridge = () => {
       </div>
 
       {/* Main content */}
-      <div className={`flex-1 flex flex-col ${['terminal', 'orb', 'mission_control', 'knowledge', 'reflections'].includes(activeModule) ? 'overflow-hidden' : 'overflow-y-auto p-6'}`}>
+      <div className={`flex-1 flex flex-col ${['terminal', 'orb', 'mission_control', 'knowledge', 'reflections'].includes(activeModule) ? 'overflow-hidden' : activeModule === 'command' ? 'overflow-hidden p-6' : 'overflow-y-auto p-6'}`}>
 
         {/* CORE SYSTEM MODULE */}
         {activeModule === 'core' && (
@@ -2164,13 +2212,47 @@ const SomaCommandBridge = () => {
               )}
             </AnimatePresence>
 
-            {/* Center: The Orb */}
+            {/* Center: The Orb / Face */}
             <div className="flex-1 flex flex-col items-center justify-center relative z-10">
               <div className="h-[400px] w-full flex items-center justify-center">
-                <Orb volume={volume} isActive={isOrbConnected} isTalking={isTalking} isListening={isListening} isThinking={isThinking} />
+                {showOrbFace ? (
+                  <RobotFace
+                    volume={volume}
+                    isConnected={isOrbConnected}
+                    isTalking={isTalking}
+                    isListening={isListening}
+                    isThinking={isThinking}
+                  />
+                ) : (
+                  <Orb volume={volume} isActive={isOrbConnected} isTalking={isTalking} isListening={isListening} isThinking={isThinking} />
+                )}
               </div>
 
-              <div className="mt-8 flex flex-col items-center gap-4 w-full max-w-xl px-10">
+              {/* Orb / Face toggle */}
+              <div className="flex items-center gap-3 mb-3">
+                <span className="text-zinc-600 text-[10px] font-mono uppercase tracking-widest select-none">Orb</span>
+                <button
+                  onClick={() => setShowOrbFace(v => !v)}
+                  className="relative w-10 h-5 rounded-full transition-colors duration-300 focus:outline-none flex-shrink-0"
+                  style={{
+                    backgroundColor: showOrbFace ? '#d946ef' : '#27272a',
+                    boxShadow: showOrbFace ? '0 0 8px #d946ef50' : 'none',
+                  }}
+                >
+                  <span
+                    className="absolute top-0.5 w-4 h-4 rounded-full bg-white shadow transition-all duration-300"
+                    style={{ left: showOrbFace ? '1.375rem' : '0.125rem' }}
+                  />
+                </button>
+                <span className="text-zinc-600 text-[10px] font-mono uppercase tracking-widest select-none">Face</span>
+              </div>
+
+              {/* Synth Wave — reacts to SOMA's voice in black/purple */}
+              <div className="flex items-center justify-center mb-4">
+                <SynthWave volume={volume} isTalking={isTalking} isActive={isOrbConnected} />
+              </div>
+
+              <div className="mt-4 flex flex-col items-center gap-4 w-full max-w-xl px-10">
                 {/* Neural Link Button */}
                 <button
                   className={`px-10 py-3 rounded-full font-bold uppercase tracking-[0.2em] text-xs transition-all shadow-lg ${isOrbConnected 

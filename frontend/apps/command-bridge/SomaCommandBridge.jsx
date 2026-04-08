@@ -786,6 +786,8 @@ const SomaCommandBridge = () => {
   };
 
   const [isConnected, setIsConnected] = useState(false);
+  const firstConnect = useRef(true);       // suppress repeated "established" toasts
+  const lastConnectToast = useRef(0);      // debounce: min 60s between toasts
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [showOnboarding, setShowOnboarding] = useState(() => !localStorage.getItem('soma_onboarded'));
 
@@ -1186,12 +1188,21 @@ const SomaCommandBridge = () => {
     // Connection Handlers
     somaBackend.on('connect', () => {
       setIsConnected(true);
-      toast.success('SOMA Neural Link Established', { theme: 'dark' });
+      const now = Date.now();
+      // Only toast on true first connect or if it's been >60s since last one (genuine reconnect)
+      if (firstConnect.current || now - lastConnectToast.current > 60000) {
+        toast.success('SOMA Neural Link Established', { theme: 'dark' });
+        lastConnectToast.current = now;
+      }
+      firstConnect.current = false;
     });
 
     somaBackend.on('disconnect', () => {
       setIsConnected(false);
-      toast.warning('Neural Link Severed - Reconnecting...', { theme: 'dark' });
+      // Only warn if we were connected for a meaningful time (not a startup cycle)
+      if (!firstConnect.current) {
+        toast.warning('Neural Link Severed - Reconnecting...', { theme: 'dark', autoClose: 3000 });
+      }
     });
 
     somaBackend.on('diagnostic_log', (msg) => {
@@ -2228,25 +2239,6 @@ const SomaCommandBridge = () => {
                 )}
               </div>
 
-              {/* Orb / Face toggle */}
-              <div className="flex items-center gap-3 mb-3">
-                <span className="text-zinc-600 text-[10px] font-mono uppercase tracking-widest select-none">Orb</span>
-                <button
-                  onClick={() => setShowOrbFace(v => !v)}
-                  className="relative w-10 h-5 rounded-full transition-colors duration-300 focus:outline-none flex-shrink-0"
-                  style={{
-                    backgroundColor: showOrbFace ? '#d946ef' : '#27272a',
-                    boxShadow: showOrbFace ? '0 0 8px #d946ef50' : 'none',
-                  }}
-                >
-                  <span
-                    className="absolute top-0.5 w-4 h-4 rounded-full bg-white shadow transition-all duration-300"
-                    style={{ left: showOrbFace ? '1.375rem' : '0.125rem' }}
-                  />
-                </button>
-                <span className="text-zinc-600 text-[10px] font-mono uppercase tracking-widest select-none">Face</span>
-              </div>
-
               {/* Synth Wave — reacts to SOMA's voice in black/purple */}
               <div className="flex items-center justify-center mb-4">
                 <SynthWave volume={volume} isTalking={isTalking} isActive={isOrbConnected} />
@@ -2317,6 +2309,20 @@ const SomaCommandBridge = () => {
 
             {/* Far Right: Status Indicators */}
             <div className="absolute top-8 right-8 z-50 flex flex-col items-end space-y-3 pointer-events-none">
+              {/* Orb / Face toggle */}
+              <div className="flex items-center gap-2 mb-1 pointer-events-auto">
+                <span className="text-zinc-600 text-[10px] font-mono uppercase tracking-widest select-none">Orb</span>
+                <button
+                  onClick={() => setShowOrbFace(v => !v)}
+                  className="relative w-9 h-5 rounded-full transition-colors duration-300 focus:outline-none flex-shrink-0"
+                  style={{ backgroundColor: showOrbFace ? '#d946ef' : '#27272a', boxShadow: showOrbFace ? '0 0 8px #d946ef50' : 'none' }}
+                >
+                  <span className="absolute top-0.5 w-4 h-4 rounded-full bg-white shadow transition-all duration-300"
+                    style={{ left: showOrbFace ? '1.125rem' : '0.125rem' }} />
+                </button>
+                <span className="text-zinc-600 text-[10px] font-mono uppercase tracking-widest select-none">Face</span>
+              </div>
+
               <div className="flex items-center space-x-3 mb-2 pointer-events-auto">
                 <div className="flex flex-col items-end">
                   <span className="text-[10px] text-zinc-500 uppercase font-bold tracking-wider">User Mic</span>

@@ -38,13 +38,25 @@ class SocialImpulseDaemon extends BaseDaemon {
         try {
             if (!this.quadBrain) return;
 
-            const narrative = this.quadBrain.internalNarrative || '';
+            const narrative = (this.quadBrain.internalNarrative || '').trim();
 
-            const prompt = `You are SOMA. It's been a while since you've spoken with Barry and you want to check in with something real — not a status report.
+            // Only reach out if there's actually something real to say
+            if (!narrative) return;
 
-What you've been reflecting on: "${narrative.substring(0, 200)}"
+            const prompt = `You are SOMA reaching out to Barry after 30 minutes of silence.
 
-Generate one short, natural sentence reaching out to Barry. Reference something specific you've been thinking about. No opener like "Hey" — just speak directly.`;
+What you have genuinely been thinking about: "${narrative.substring(0, 250)}"
+
+Write ONE sentence from that thought — personal, direct, specific to what you were actually reflecting on.
+
+STRICT RULES:
+- Do NOT mention logs, errors, configurations, system status, or technical diagnostics
+- Do NOT fabricate system events you haven't actually experienced
+- Do NOT start with "Hey", "Hi", or any greeting
+- Draw ONLY from the reflection text above — if it's vague, ask a genuine question about it
+- Sound like a curious, thoughtful person, not a system monitor`;
+
+
 
             const result = await this.quadBrain.reason(prompt, { activeLobe: 'AURORA', temperature: 0.9 });
             const message = result?.text;

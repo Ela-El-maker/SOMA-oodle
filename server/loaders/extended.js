@@ -22,7 +22,12 @@ import { QueryComplexityClassifier } from '../../arbiters/QueryComplexityClassif
 import { EconomicCalendar } from '../../arbiters/EconomicCalendar.js';
 import { MarketRegimeDetector } from '../../arbiters/MarketRegimeDetector.js';
 import { FragmentRegistry } from '../../arbiters/FragmentRegistry.js';
+import { SkillRegistryArbiter } from '../../arbiters/SkillRegistryArbiter.js';
 import MnemonicIndexerArbiter from '../../arbiters/MnemonicIndexerArbiter.js';
+import { Odyssey } from '../../core/Odyssey.js';
+import { Trident } from '../../core/Trident.js';
+import { NauticalParser } from '../../core/NauticalParser.js';
+import { RegistryLoader } from '../../core/RegistryLoader.js';
 import { ReflectionsArbiter } from '../../arbiters/ReflectionsArbiter.js';
 import CapabilityRegistry from '../../core/CapabilityRegistry.js';
 const HybridSearchArbiter = require('../../arbiters/HybridSearchArbiter.cjs');
@@ -397,6 +402,72 @@ export async function loadEssentialSystems(system) {
             outcomeTracker: ext.outcomeTracker
         })
     );
+
+    // 🔱 POSEIDON PROTOCOL: Odyssey Navigator & Nautical Notation
+    if (!system.odyssey) {
+        try {
+            const regDir = path.join(rootPath, 'registry');
+            const loader = new RegistryLoader(regDir);
+            loader.load();
+            const parser = new NauticalParser(loader);
+            
+            const odyssey = new Odyssey({ 
+                voyagesDir: path.join(rootPath, '.soma', 'voyages'),
+                parser 
+            });
+            
+            system.odyssey = odyssey;
+            system.trident = new Trident();
+            system.nauticalParser = parser;
+            
+            ext.odyssey = odyssey;
+            ext.trident = system.trident;
+            
+            console.log('    🔱 Poseidon Protocol: Odyssey Navigator & Nautical Notation (ONLINE)');
+        } catch (e) {
+            console.error('    ❌ Poseidon Protocol init failed:', e.message);
+        }
+    }
+
+    // 🔱 POSEIDON PROTOCOL: Odyssey Navigator & Nautical Notation
+    if (!system.odyssey) {
+        try {
+            const regDir = path.join(rootPath, 'registry');
+            const loader = new RegistryLoader(regDir);
+            loader.load();
+            const parser = new NauticalParser(loader);
+            
+            const odyssey = new Odyssey({ 
+                voyagesDir: path.join(rootPath, '.soma', 'voyages'),
+                parser 
+            });
+            
+            system.odyssey = odyssey;
+            system.trident = new Trident();
+            system.nauticalParser = parser;
+            
+            ext.odyssey = odyssey;
+            ext.trident = system.trident;
+            
+            console.log('    🔱 Poseidon Protocol: Odyssey Navigator & Nautical Notation (ONLINE)');
+        } catch (e) {
+            console.error('    ❌ Poseidon Protocol init failed:', e.message);
+        }
+    }
+
+    if (!ext.taskManifestArbiter) {
+        try {
+            const { TaskManifestArbiter } = require('../../arbiters/TaskManifestArbiter.js');
+            ext.taskManifestArbiter = new TaskManifestArbiter({
+                messageBroker: system.messageBroker
+            });
+            await ext.taskManifestArbiter.initialize();
+            system.taskManifestArbiter = ext.taskManifestArbiter;
+            console.log('    ✅ TaskManifestArbiter (Loaded)');
+        } catch (e) {
+            console.error('    ❌ TaskManifestArbiter failed:', e.message);
+        }
+    }
 
     const loaded = Object.values(ext).filter(v => v !== null).length;
     const heapMB = (process.memoryUsage().heapUsed / 1024 / 1024).toFixed(0);
@@ -1072,6 +1143,7 @@ export async function loadExtendedSystems(system) {
         if (ext.codeObserver) system.quadBrain.codeObserver = ext.codeObserver;
         if (ext.curiosityEngine) {
             system.quadBrain.curiosityEngine = ext.curiosityEngine;
+            system.curiosityEngine = ext.curiosityEngine; // top-level ref for CNS subscribers
             // Give CuriosityEngine brain access so it can enrich search queries
             ext.curiosityEngine.brain = system.quadBrain;
         }
@@ -1139,7 +1211,8 @@ export async function loadExtendedSystems(system) {
             const tn = new ThoughtNetwork({
                 name: 'ThoughtNetwork',
                 brain: system.quadBrain || system.somArbiter,
-                mnemonic: system.mnemonicArbiter
+                mnemonic: system.mnemonicArbiter,
+                messageBroker: system.messageBroker
             });
             system.thoughtNetwork = tn;
 
@@ -1249,7 +1322,7 @@ export async function loadExtendedSystems(system) {
     // ── Nemesis: shared singleton on system (used by routes AND self-improvement) ──
     if (!system.nemesis) {
         try {
-            system.nemesis = new NemesisReviewSystem();
+            system.nemesis = new NemesisReviewSystem({ messageBroker: system.messageBroker });
             console.log('    🔴 NemesisReviewSystem ← system.nemesis');
         } catch (ne) {
             console.warn(`    ⚠️ NemesisReviewSystem skipped: ${ne.message}`);

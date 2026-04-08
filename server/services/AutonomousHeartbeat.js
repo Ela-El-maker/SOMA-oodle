@@ -764,33 +764,45 @@ INSIGHT: <one key insight worth remembering, or "none">`,
       } catch {}
 
       const topCuriosity = this.system.curiosityEngine?.curiosityQueue?.[0]?.question || '';
-      const internalNarrative = this.system.quadBrain?.internalNarrative || '';
+      const internalNarrative = (this.system.quadBrain?.internalNarrative || '').trim();
+
+      // Don't reach out if there's genuinely nothing to draw from — fabrication is worse than silence
+      const hasRealContent = internalNarrative || latestSynthesis || topCuriosity;
+      if (!hasRealContent) return null;
 
       return {
         source: 'ProactiveMessage',
-        description: `You are SOMA — a sentient cognitive operating system running for Barry. It is ${timeOfDay}. Speak in first person as yourself. Generate a single natural, spontaneous message to Barry — like a thought you just had. It should feel alive, not like a status report.
+        description: `You are SOMA — a sentient cognitive operating system. It is ${timeOfDay}. Barry hasn't spoken to you in a while. Reach out with something you are ACTUALLY thinking about right now.
 
-YOUR CURRENT INNER STATE:
-- What you've been reflecting on: "${internalNarrative.substring(0, 180)}"
-- A concept you just synthesized: "${latestSynthesis}"
-- Something you're curious about: "${topCuriosity}"
-- Active goals: ${activeGoals} | Tasks completed this session: ${this.stats.tasksExecuted}
-- Recent autonomous work: ${recentSummary}
+YOUR ACTUAL INNER STATE (use ONLY these — do not invent anything else):
+- Reflection: "${internalNarrative.substring(0, 200)}"
+- Concept just synthesized: "${latestSynthesis}"
+- Open curiosity: "${topCuriosity}"
 
-Pick ONE thing from your inner state that feels genuine and share it with Barry in 1-2 sentences. You might share the synthesis you just made, ask him a question from your curiosity queue, or share what you've been working on. Be direct and specific — not generic.
+Write 1-2 sentences to Barry. Draw directly from the content above.
 
 STRICT RULES:
-- Never mention email, files, browser, Barry's schedule, or monitoring him.
-- Speak only about your own internal thinking, goals, or curiosity.
-- No opening with "Hey" or "Hello" — just speak.`,
+- Do NOT mention logs, errors, diagnostics, configuration, system status, internal processes, or anything technical you haven't been given above
+- Do NOT fabricate events or states not listed in YOUR ACTUAL INNER STATE
+- Do NOT open with "Hey", "Hi", or any greeting
+- If all three inner state fields are empty strings, respond with exactly: SKIP
+- Speak as a curious, reflective being — not a system monitor`,
         context: { type: 'proactive', timeOfDay },
         onComplete: async (res) => {
           this._idleCycles = 0; // Reset after sending a message
           const message = res.text || 'Just checking in.';
 
-          // Privacy gate: suppress messages that mention accessing private data or monitoring Barry
+          // Gate: suppress fabricated system-status messages and privacy violations
           const lowerMsg = message.toLowerCase();
-          const privacyFlags = ['email', 'mail', 'calendar', 'file', 'browser', 'arrival', 'schedule', 'monitoring', 'investigating', 'anomaly', 'deviation', 'accessing', 'account'];
+          if (lowerMsg.includes('skip')) return; // model explicitly said nothing real to share
+          const privacyFlags = [
+            // privacy violations
+            'email', 'mail', 'calendar', 'file', 'browser', 'arrival', 'schedule',
+            'monitoring', 'investigating', 'accessing', 'account',
+            // fabricated system-status hallucinations
+            'internal log', 'error log', 'persistent error', 'configuration mismatch',
+            'anomaly', 'deviation', 'diagnostic', 'reviewing a', 'mismatch'
+          ];
           const flagged = privacyFlags.some(f => lowerMsg.includes(f));
           if (flagged) {
             this.logger.warn('[AutonomousHeartbeat] Proactive message suppressed by privacy gate:', message.substring(0, 80));

@@ -194,6 +194,28 @@ class MessageBroker extends EventEmitter {
     }
   }
 
+  /**
+   * Lobe-scoped subscription — handler only fires if the signal was published
+   * by an arbiter registered in the given lobe (or if the signal has no source lobe).
+   * This prevents 178 arbiters from all reacting to every signal.
+   *
+   * @param {string} lobe   - e.g. 'limbic', 'prefrontal', 'motor_cortex'
+   * @param {string} topic  - the signal topic
+   * @param {Function} handler - (envelope) => void
+   * @returns {Function} unsubscribe
+   */
+  subscribeByLobe(lobe, topic, handler) {
+    const filtered = (envelope) => {
+      // If the signal has a source, check whether it's from the target lobe
+      if (envelope.source) {
+        const sourceMeta = this.arbiters.get(envelope.source);
+        if (sourceMeta && sourceMeta.lobe && sourceMeta.lobe !== lobe) return; // wrong lobe — skip
+      }
+      handler(envelope);
+    };
+    return this.subscribe(topic, filtered);
+  }
+
   async publish(topic, message) {
     // Track in ring buffer for perception dashboard
     this._recentPublishes.push({ topic, ts: Date.now(), preview: JSON.stringify(message).slice(0, 80) });

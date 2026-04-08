@@ -43,7 +43,8 @@ export async function loadCOSSystems(system) {
         const engineeringSwarm = new EngineeringSwarmArbiter({
             name: 'EngineeringSwarmArbiter',
             quadBrain: system.quadBrain,
-            rootPath: process.cwd()
+            rootPath: process.cwd(),
+            mnemonicArbiter: system.mnemonic || system.mnemonicArbiter  // experience ledger → long-term memory
         });
         await engineeringSwarm.initialize();
         system.messageBroker.registerArbiter('EngineeringSwarmArbiter', {

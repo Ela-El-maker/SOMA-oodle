@@ -1589,5 +1589,99 @@ ${personaContext}${characterContext}`.trim()
         res.json({ success: true, message: 'Task accepted', taskPreview: task.substring(0, 80) });
     });
 
+    // ── Autonomous Heartbeat status & manual tick ─────────────────────────────
+    router.get('/api/soma/autopilot/status', (req, res) => {
+        const hb = system.autonomousHeartbeat;
+        if (!hb) return res.json({ heartbeat: false, enabled: false });
+        const drive = hb.getDriveStatus?.() || {};
+        res.json({
+            heartbeat: hb.isRunning,
+            enabled:   hb.config?.enabled ?? hb.isRunning,
+            heartbeatStats: {
+                cycles:        hb.stats?.cycles        ?? 0,
+                tasksExecuted: hb.stats?.tasksExecuted ?? 0,
+                failures:      hb.stats?.failures      ?? 0,
+                lastRun:       hb.stats?.lastRun       ?? null,
+                lastTask:      hb.stats?.lastTask      ?? null,
+                tension:       drive.tension            ?? 0,
+                urgency:       drive.urgency            ?? false,
+                satisfaction:  drive.satisfaction       ?? 0
+            },
+            scheduledJobs: (hb.scheduledJobs || []).map(j => ({
+                id: j.id, name: j.name, enabled: j.enabled,
+                schedule: j.schedule, nextRunAt: j.state?.nextRunAt
+            }))
+        });
+    });
+
+    router.post('/api/soma/autopilot/tick', async (req, res) => {
+        const hb = system.autonomousHeartbeat;
+        if (!hb) return res.status(503).json({ success: false, error: 'Heartbeat not running' });
+        try {
+            await hb._tick();
+            res.json({ success: true, message: 'Tick executed', cycles: hb.stats?.cycles });
+        } catch (e) {
+            res.status(500).json({ success: false, error: e.message });
+        }
+    });
+
+    // ── Goals ─────────────────────────────────────────────────────────────────
+    router.get('/api/soma/goals', (req, res) => {
+        const gp = system.goalPlanner || system.goalPlannerArbiter;
+        if (!gp) return res.json({ goals: [], activeCount: 0 });
+        const activeIds  = Array.from(gp.activeGoals || []);
+        const activeGoals = activeIds.map(id => gp.goals?.get(id)).filter(Boolean);
+        const allGoals   = Array.from(gp.goals?.values() || []);
+        res.json({
+            goals:       allGoals,
+            activeGoals: activeGoals,
+            activeCount: activeGoals.length,
+            totalCount:  allGoals.length,
+            stats:       gp.metrics || {}
+        });
+    });
+
+    // ── ThoughtNetwork knowledge graph ────────────────────────────────────────
+    router.get('/api/soma/knowledge/graph', (req, res) => {
+        const tn = system.thoughtNetwork;
+        if (!tn) return res.json({ nodes: [], totalNodes: 0, edges: [] });
+        const nodes = Array.from(tn.nodes?.values() || []).map(n => ({
+            id:        n.id,
+            content:   n.content,
+            type:      n.type,
+            createdAt: n.createdAt,
+            connections: n.connections?.length ?? 0
+        }));
+        res.json({ nodes, totalNodes: nodes.length, edges: [] });
+    });
+
+    // ── EngineeringSwarm: modify code (SSE streaming) ─────────────────────────
+    router.post('/api/soma/engineering/modify', async (req, res) => {
+        const swarm = system.engineeringSwarm;
+        if (!swarm) return res.status(503).json({ success: false, error: 'EngineeringSwarm not loaded' });
+        const { filepath, request: modRequest } = req.body;
+        if (!filepath || !modRequest) return res.status(400).json({ error: 'filepath and request required' });
+
+        // Set up SSE
+        res.setHeader('Content-Type', 'text/event-stream');
+        res.setHeader('Cache-Control', 'no-cache');
+        res.setHeader('Connection', 'keep-alive');
+        res.setHeader('X-Accel-Buffering', 'no');
+        res.flushHeaders?.();
+
+        const send = (phase, message, data = {}) => {
+            res.write(`data: ${JSON.stringify({ phase, message, ...data, ts: Date.now() })}\n\n`);
+        };
+
+        try {
+            send('start', `Engineering swarm initializing for: ${filepath}`);
+            const result = await swarm.modifyCode(filepath, modRequest, (phase, msg) => send(phase, msg));
+            send('done', result.success ? 'Modification complete' : (result.error || 'Failed'), result);
+        } catch (e) {
+            send('error', e.message);
+        }
+        res.end();
+    });
+
     return router;
 }

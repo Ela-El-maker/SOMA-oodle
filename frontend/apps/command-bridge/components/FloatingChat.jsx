@@ -4,6 +4,29 @@ import MarkdownIt from 'markdown-it';
 import { parseEmotes } from '../lib/emotes';
 import PixelAvatar from './PixelAvatar';
 import somaBackend from '../somaBackend.js';
+import { textToSpeech, isElevenLabsEnabled } from '../utils/elevenLabsTTS.js';
+
+// Speak text via ElevenLabs (if enabled) → Web Speech API fallback
+async function speakProactive(text, audioCtxRef) {
+  if (!text) return;
+  try {
+    if (isElevenLabsEnabled()) {
+      if (!audioCtxRef.current) audioCtxRef.current = new AudioContext();
+      const r = await textToSpeech(text, audioCtxRef.current, null, null);
+      if (r.success) {
+        const src = audioCtxRef.current.createBufferSource();
+        src.buffer = r.audioBuffer;
+        src.connect(audioCtxRef.current.destination);
+        src.start(0);
+        return;
+      }
+    }
+    // Web Speech API fallback
+    const utt = new SpeechSynthesisUtterance(text);
+    utt.rate = 1.05;
+    window.speechSynthesis.speak(utt);
+  } catch { /* non-fatal */ }
+}
 
 const md = new MarkdownIt({
   highlight: (str) =>
@@ -75,6 +98,7 @@ const FloatingChat = ({
   // ── DOM refs ───────────────────────────────────────────────────────────────
   const orbRef      = useRef(null);
   const messagesEnd = useRef(null);
+  const audioCtxRef = useRef(null); // for proactive TTS
 
   // ── Drag refs (no state = no re-render during drag) ────────────────────────
   const drag    = useRef({ active: false, startX: 0, startY: 0, origX: 0, origY: 0 });
@@ -92,21 +116,11 @@ const FloatingChat = ({
       if (!text) return;
       setMessages(prev => [...prev, { id: Date.now(), text, sender: 'system', autonomous: true }]);
       setIsVisible(prev => { if (!prev) setUnreadCount(c => c + 1); return prev; });
-    };
-    const onActivity = ({ source, description, output, status }) => {
-      if (status !== 'ok') return;
-      const txt = output
-        ? `_[${source}] ${description} → ${output.substring(0, 120)}_`
-        : `_[${source}] ${description}_`;
-      setMessages(prev => [...prev, { id: Date.now(), text: txt, sender: 'system', autonomous: true }]);
-      setIsVisible(prev => { if (!prev) setUnreadCount(c => c + 1); return prev; });
+      // Speak the proactive message
+      speakProactive(text, audioCtxRef);
     };
     somaBackend.on('soma_proactive', onProactive);
-    somaBackend.on('soma_activity',  onActivity);
-    return () => {
-      somaBackend.off('soma_proactive', onProactive);
-      somaBackend.off('soma_activity',  onActivity);
-    };
+    return () => somaBackend.off('soma_proactive', onProactive);
   }, []);
 
   // ── Active-question badge ─────────────────────────────────────────────────

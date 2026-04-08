@@ -322,7 +322,12 @@ class AutonomousHeartbeat extends EventEmitter {
         // Fallback: plain QuadBrain.reason() for curiosity / learning tasks
         // localModel: true → routes to soma (3.2B Ollama) — these are background tasks,
         // not user-facing, so the small local model is the right tool here.
+        // Yield to user chat: if Barry is actively talking to SOMA, skip this cycle.
         if (!result) {
+          if (global.__SOMA_CHAT_ACTIVE) {
+            this.logger.log('[AutonomousHeartbeat] ⏸  Yielding Ollama to active user chat — skipping task this cycle');
+            return null;
+          }
           result = await this.system.quadBrain.reason(task.description, {
             localModel: true,
             source: 'autonomous_heartbeat',

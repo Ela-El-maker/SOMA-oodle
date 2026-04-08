@@ -362,12 +362,31 @@ Write a closing thought â€” 1-2 sentences. Something genuine that shows you
 
     // POST /api/soma/chat
     router.post('/chat', async (req, res) => {
+        // ── Overall request deadline: fires BEFORE the client's 60s wall ──
+        // This covers pre-processing time (memory, fingerprint, ThoughtNetwork, etc.)
+        // that happens before the per-reasoning SERVER_TIMEOUT even starts.
+        const reqStart = Date.now();
+        const WALL_LIMIT = req.body?.deepThinking ? 110000 : 50000;
+        let wallFired = false;
+        const wallTimer = setTimeout(() => {
+            wallFired = true;
+            if (!res.headersSent) {
+                res.json({
+                    success: true,
+                    message: “I'm thinking hard but taking too long — my AI providers may be slow right now. Try again in a moment.”,
+                    response: “I'm thinking hard but taking too long — my AI providers may be slow right now. Try again in a moment.”,
+                    metadata: { confidence: 0.3, brain: 'TIMEOUT' }
+                });
+            }
+        }, WALL_LIMIT);
+        const clearWall = () => clearTimeout(wallTimer);
+
         try {
             const { message, deepThinking, sessionId, contextFiles, history } = req.body;
-            if (!message) return res.status(400).json({ success: false, error: 'Message is required' });
+            if (!message) { clearWall(); return res.status(400).json({ success: false, error: 'Message is required' }); }
 
             const brain = getBrain();
-            if (!brain) return res.json({ success: true, message: "I'm still waking up â€” my brain modules are loading. Try again in a few seconds.", response: "I'm still waking up â€” my brain modules are loading. Try again in a few seconds.", metadata: { confidence: 1, brain: 'SYSTEM' } });
+            if (!brain) { clearWall(); return res.json({ success: true, message: “I'm still waking up — my brain modules are loading. Try again in a few seconds.”, response: “I'm still waking up — my brain modules are loading. Try again in a few seconds.”, metadata: { confidence: 1, brain: 'SYSTEM' } }); }
 
             // Detect simple queries to enable fast path (skip mnemonic/KG/causal pre-processing)
             // Also treat all regular (non-deepThinking) chat as quickResponse to avoid probe_top2
@@ -519,7 +538,10 @@ ${contextStr}`;
             let awarenessContext = '';
             if (system.commandBridge) {
                 try {
-                    const awareness = await system.commandBridge.getSelfAwareness();
+                    const awareness = await Promise.race([
+                        system.commandBridge.getSelfAwareness(),
+                        new Promise((_, r) => setTimeout(() => r(new Error('awareness timeout')), 2000))
+                    ]);
                     awarenessContext = `\n[ABSOLUTE AWARENESS - SYSTEM SNAPSHOT]\n` +
                         `- Metrics: CPU ${awareness.metrics?.cpu}%, RAM ${awareness.metrics?.memory?.usage}%, Uptime ${Math.round(awareness.metrics?.uptime/3600)}h\n` +
                         `- Arbiters: ${awareness.arbiters?.active}/${awareness.arbiters?.total} active\n` +
@@ -560,8 +582,13 @@ ${contextStr}`;
             // 📚 SKILL REGISTRY: Filter tools based on intent (ECC Context Preservation)
             let dynamicTools = null;
             if (system.skillRegistry?.getActiveToolDefinitions) {
-                dynamicTools = await system.skillRegistry.getActiveToolDefinitions(message);
-                console.log(`[SkillRegistry] 📚 Dynamically selected ${dynamicTools.length} tools for this intent.`);
+                try {
+                    dynamicTools = await Promise.race([
+                        system.skillRegistry.getActiveToolDefinitions(message),
+                        new Promise((_, r) => setTimeout(() => r(new Error('skillregistry timeout')), 2000))
+                    ]);
+                    console.log(`[SkillRegistry] 📚 Dynamically selected ${dynamicTools.length} tools for this intent.`);
+                } catch { /* non-blocking — tools are advisory */ }
             }
 
             // ── ThoughtNetwork: inject SOMA's live knowledge graph into every prompt ──
@@ -582,10 +609,13 @@ ${contextStr}`;
             let result;
             const finalPrompt = `${personaContext}${characterContext}${awarenessContext}${selfModelContext}${thoughtContext}${blueprintContext}${userContext}${memoryContext}\n${prompt}`;
 
-            // Server-side timeout: respond well BEFORE the frontend gives up (frontend = 60s)
-            // 45s gives a 15s buffer â€” pre-processing (memory recall, fingerprinting) can eat 3-5s
-            // before this timer even starts, so 55s was too close to the 60s client wall.
-            const SERVER_TIMEOUT = deepThinking ? 100000 : 45000; // 45s normal, 100s deep
+            // Server-side timeout: adaptive — uses remaining wall-clock budget so total
+            // request time (pre-processing + reasoning) always stays under the wall limit.
+            // This prevents pre-processing eating into the 60s client window.
+            if (wallFired || res.headersSent) return; // wall already fired, bail out
+            const elapsed = Date.now() - reqStart;
+            const SERVER_TIMEOUT = Math.max(5000, WALL_LIMIT - elapsed - 2000); // 2s send buffer
+            console.log(`[SOMA] Pre-processing took ${elapsed}ms, reasoning budget: ${SERVER_TIMEOUT}ms`);
             const timeoutPromise = new Promise((_, reject) =>
                 setTimeout(() => reject(new Error('Brain reasoning timed out')), SERVER_TIMEOUT)
             );
@@ -746,19 +776,18 @@ ${personaContext}${characterContext}`.trim()
             try {
                 result = await Promise.race([reasonPromise, directGeminiPromise, timeoutPromise, clientGonePromise].filter(Boolean));
             } catch (timeoutErr) {
-                // If client left, just stop â€” no point sending a response
+                clearWall();
+                global.__SOMA_CHAT_ACTIVE = false;
                 if (timeoutErr.message === 'client disconnected') {
-                    global.__SOMA_CHAT_ACTIVE = false;
-                    console.warn(`[SOMA] Client disconnected mid-request, dropping: "${message.substring(0, 40)}"`);
+                    console.warn(`[SOMA] Client disconnected mid-request, dropping: “${message.substring(0, 40)}”`);
                     return;
                 }
-                global.__SOMA_CHAT_ACTIVE = false;
-                console.warn(`[SOMA] Chat timeout after ${SERVER_TIMEOUT}ms for: "${message.substring(0, 40)}"`);
-                // Return a graceful timeout response instead of letting the frontend time out
+                console.warn(`[SOMA] Reasoning timeout after ${Date.now() - reqStart}ms for: “${message.substring(0, 40)}”`);
+                if (res.headersSent) return; // wall already responded
                 return res.json({
                     success: true,
-                    message: "I'm thinking hard but taking too long â€” my AI providers may be slow right now. Try again or ask something simpler.",
-                    response: "I'm thinking hard but taking too long â€” my AI providers may be slow right now. Try again or ask something simpler.",
+                    message: “I'm thinking hard but taking too long — my AI providers may be slow right now. Try again in a moment.”,
+                    response: “I'm thinking hard but taking too long — my AI providers may be slow right now. Try again in a moment.”,
                     metadata: { confidence: 0.3, brain: 'TIMEOUT', error: timeoutErr.message }
                 });
             }
@@ -922,6 +951,8 @@ ${personaContext}${characterContext}`.trim()
                 }
             }
 
+            clearWall(); // cancel wall timer — we're responding normally
+            if (res.headersSent) return; // wall fired between NEMESIS and here
             res.json({
                 success: true,
                 message: responseText,

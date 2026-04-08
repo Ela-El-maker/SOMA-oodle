@@ -19,6 +19,7 @@ class ThoughtNetwork {
         // Integration with existing SOMA systems
         this.mnemonicArbiter = config.mnemonicArbiter || null; // Memory storage
         this.archivistArbiter = config.archivistArbiter || null; // Long-term archiving
+        this.messageBroker = config.messageBroker || null; // CNS pub/sub for synthesis signals
         
         // Network stats
         this.stats = {
@@ -31,6 +32,10 @@ class ThoughtNetwork {
 
         this.autonomousSynthesisTimer = null;  // Timer cleanup
         this.brain = null; // Reference to QuadBrain/TriBrain
+
+        // TF-IDF index for semantic similarity (replaces Jaccard word-overlap)
+        this._tfidfCache = null;   // { vectors, nodeIds, idf }
+        this._indexDirty = true;   // rebuild on next findSimilar call
 
         console.log(`[${this.name}] Initialized (integrated with ${this.mnemonicArbiter ? 'MnemonicArbiter' : 'standalone'})`);
     }
@@ -59,41 +64,108 @@ class ThoughtNetwork {
         }
         
         this.stats.totalNodes++;
+        this._indexDirty = true; // invalidate TF-IDF cache
         this.updateStats();
-        
+
         return node;
     }
-    
+
     /**
-     * Find nodes by content similarity (simple text match for now)
+     * Find nodes by content similarity using TF-IDF cosine similarity.
+     * Dramatically better than Jaccard — "machine learning" matches "neural networks"
+     * because rare shared terms get high IDF weight.
      */
-    findSimilar(query, threshold = 0.5, limit = 10) {
+    findSimilar(query, threshold = 0.08, limit = 10) {
+        if (this.nodes.size === 0) return [];
+
+        // Rebuild index if stale
+        if (this._indexDirty || !this._tfidfCache) {
+            this._buildTfIdfIndex();
+        }
+
+        const { vectors, nodeIds, idf } = this._tfidfCache;
+
+        // Vectorize the query using the corpus IDF
+        const qTokens = this._tokenize(query);
+        const qTf = new Map();
+        for (const t of qTokens) qTf.set(t, (qTf.get(t) || 0) + 1);
+        const qVec = new Map();
+        for (const [term, count] of qTf) {
+            const idfVal = idf.get(term) || Math.log(this.nodes.size + 1); // unseen terms get high IDF
+            qVec.set(term, (count / qTokens.length) * idfVal);
+        }
+
         const results = [];
-        
-        for (const node of this.nodes.values()) {
-            const similarity = this.calculateSimilarity(query, node.content);
-            if (similarity >= threshold) {
-                results.push({ node, similarity });
+        for (let i = 0; i < nodeIds.length; i++) {
+            const sim = this._cosineSimilarity(qVec, vectors[i]);
+            if (sim >= threshold) {
+                results.push({ node: this.nodes.get(nodeIds[i]), similarity: sim });
             }
         }
-        
+
         return results
             .sort((a, b) => b.similarity - a.similarity)
             .slice(0, limit)
             .map(r => r.node);
     }
-    
-    /**
-     * Simple text similarity (can be replaced with embedding similarity)
-     */
-    calculateSimilarity(text1, text2) {
-        const words1 = new Set(text1.toLowerCase().split(/\s+/));
-        const words2 = new Set(text2.toLowerCase().split(/\s+/));
-        
-        const intersection = new Set([...words1].filter(w => words2.has(w)));
-        const union = new Set([...words1, ...words2]);
-        
-        return intersection.size / union.size; // Jaccard similarity
+
+    // ── TF-IDF Index ──────────────────────────────────────────────────────────
+
+    _buildTfIdfIndex() {
+        const stopwords = new Set(['a','an','the','is','are','was','were','be','been','being','have','has','had','do','does','did','will','would','could','should','may','might','shall','can','of','to','in','for','on','with','at','by','from','up','about','into','through','during','before','after','above','below','between','each','other','than','and','but','or','nor','so','yet','both','either','neither','not','no','if','then','that','this','these','those','am','its','it','i','you','he','she','we','they','them','their','what','which','who','when','where','why','how']);
+
+        const docs = [];
+        const nodeIds = [];
+        for (const [id, node] of this.nodes) {
+            const tokens = this._tokenize(node.content, stopwords);
+            docs.push(tokens);
+            nodeIds.push(id);
+        }
+
+        const N = docs.length;
+        // Compute document frequencies
+        const df = new Map();
+        for (const tokens of docs) {
+            const seen = new Set(tokens);
+            for (const term of seen) df.set(term, (df.get(term) || 0) + 1);
+        }
+        // Compute smoothed IDF
+        const idf = new Map();
+        for (const [term, freq] of df) {
+            idf.set(term, Math.log((N + 1) / (freq + 1)) + 1);
+        }
+        // Compute TF-IDF vectors per document
+        const vectors = docs.map(tokens => {
+            const tf = new Map();
+            for (const t of tokens) tf.set(t, (tf.get(t) || 0) + 1);
+            const vec = new Map();
+            for (const [term, count] of tf) {
+                vec.set(term, (count / Math.max(tokens.length, 1)) * (idf.get(term) || 1));
+            }
+            return vec;
+        });
+
+        this._tfidfCache = { vectors, nodeIds, idf };
+        this._indexDirty = false;
+    }
+
+    _tokenize(text, stopwords = null) {
+        const _stops = stopwords || new Set(['a','an','the','is','are','was','of','to','in','for','on','with','and','but','or','it','i','you','we','they']);
+        return text.toLowerCase()
+            .replace(/[^a-z0-9\s]/g, ' ')
+            .split(/\s+/)
+            .filter(t => t.length > 2 && !_stops.has(t));
+    }
+
+    _cosineSimilarity(vecA, vecB) {
+        let dot = 0, magA = 0, magB = 0;
+        for (const [term, valA] of vecA) {
+            dot += valA * (vecB.get(term) || 0);
+            magA += valA * valA;
+        }
+        for (const val of vecB.values()) magB += val * val;
+        if (magA === 0 || magB === 0) return 0;
+        return dot / (Math.sqrt(magA) * Math.sqrt(magB));
     }
     
     /**
@@ -313,6 +385,16 @@ class ThoughtNetwork {
                     this.connectConcepts(newNode, nodeB, 'synthesized_from', 0.8);
                     
                     console.log(`[${this.name}] ✨ CREATED SYNTHESIS: ${decision.synthesis} (${decision.rationale})`);
+
+                    // Broadcast synthesis to CNS — CuriosityEngine can explore the new concept
+                    if (this.messageBroker) {
+                        this.messageBroker.publish('insight.generated', {
+                            insight: decision.synthesis,
+                            source: 'thought_network',
+                            rationale: decision.rationale || '',
+                            parents: [nodeA.content, nodeB.content]
+                        }).catch(() => {});
+                    }
 
                     // Persist synthesis to long-term memory so SOMA remembers it across restarts
                     if (this.mnemonicArbiter) {

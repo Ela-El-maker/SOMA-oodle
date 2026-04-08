@@ -23,6 +23,9 @@ class SteveArbiter extends BaseArbiter {
     // Link to ORCHESTRATOR (for full swarm access)
     this.orchestrator = config.orchestrator || (global.SOMA ? global.SOMA.orchestrator : null);
 
+    // Link to GOAL ENGINE — Steve pulls pending goals when his queue is empty
+    this.goalEngine = config.goalEngine || (global.SOMA ? global.SOMA.goalPlanner : null);
+
     // Link to LEARNING PIPELINE (so SOMA learns from STEVE)
     this.learningPipeline = config.learningPipeline || (global.SOMA ? global.SOMA.learningPipeline : null);
 
@@ -173,8 +176,11 @@ class SteveArbiter extends BaseArbiter {
       }
     }
 
-    // 2. Check for special commands (mask/changeling mode)
-    const engineResponse = await this.engine.chat(message, { ...context, retrievedContext });
+    // 2. Check for special commands (mask/changeling mode) — 5s timeout since result only used for [SYSTEM] prefix detection
+    const engineResponse = await Promise.race([
+      this.engine.chat(message, { ...context, retrievedContext }),
+      new Promise(resolve => setTimeout(() => resolve(''), 5000))
+    ]);
 
     // 3. If engine returns a system message (mask engaged/detached), return it immediately
     if (engineResponse && typeof engineResponse === 'string' && engineResponse.startsWith('[SYSTEM]')) {
@@ -185,17 +191,21 @@ class SteveArbiter extends BaseArbiter {
         };
     }
 
-    // 4. Get File Structure
-    const fileStructure = this.getFileStructure(process.cwd());
+    // 4. Get File Structure (capped — full SOMA tree is too large for a prompt)
+    const rawStructure = this.getFileStructure(process.cwd(), 0, 1);
+    const fileStructure = rawStructure.length > 2000 ? rawStructure.slice(0, 2000) + '\n... (truncated)' : rawStructure;
 
     // 5. Format History
     const historyText = history.map(h => `${h.role.toUpperCase()}: ${h.content}`).join('\n');
 
     // 6. REAL GENERATION: If it's a normal chat, use SOMA's brain with Steve's persona
-    const somaArbiter = Array.from(this.orchestrator.population.values())
-      .find(a => a.constructor.name === 'SOMArbiterV3' || a.constructor.name === 'SOMArbiterV2');
+    // Prefer the directly-wired quadBrain; fall back to orchestrator population search
+    const brain = this.quadBrain ||
+      (this.orchestrator?.population?.size > 0 &&
+        Array.from(this.orchestrator.population.values())
+          .find(a => a.constructor?.name === 'SOMArbiterV3' || a.constructor?.name === 'SOMArbiterV2_QuadBrain'));
 
-    if (somaArbiter && somaArbiter.callAURORA) {
+    if (brain) {
       let personalityPrompt = this.engine.systemPrompts.base;
       let maskIndicator = "";
 
@@ -243,7 +253,17 @@ class SteveArbiter extends BaseArbiter {
             DO NOT wrap the JSON in markdown code blocks. Just return the raw JSON string.
           `;
 
-      const result = await somaArbiter.callAURORA(stevePrompt, { temperature: 0.2 });
+      // callBrain('AURORA') returns {text, brain, ...}; reason() also returns {text, ...}
+      // Hard 25s timeout — no timeout here means Steve hangs indefinitely if the brain is slow
+      const brainCall = brain.callBrain
+        ? brain.callBrain('AURORA', stevePrompt, { temperature: 0.2 })
+        : brain.reason(stevePrompt, { temperature: 0.2 });
+      const raw = await Promise.race([
+        brainCall,
+        new Promise((_, reject) => setTimeout(() => reject(new Error('Steve brain timeout (25s)')), 25000))
+      ]);
+      // Normalize to {response} shape that the JSON parser below expects
+      const result = { ...raw, response: raw.text || raw.response || '' };
       let parsedResponse;
       
       try {
@@ -475,12 +495,54 @@ Make it safe, useful, and practical. Return ONLY the JSON, no markdown.
       return;
     }
 
-    // Queue empty — generate a curiosity task every other tick
+    // Queue empty — check GoalEngine first, fall back to curiosity
     if (this._tickCount % 2 === 0) {
-      this.logger.info('[STEVE] 🔍 Queue empty. Generating curiosity task...');
-      await this._generateCuriosityTask();
+      const goalInjected = await this._checkGoalEngine();
+      if (goalInjected) {
+        // Goal was injected — next tick will execute it
+        const task = this._taskQueue.shift();
+        if (task) {
+          this._saveQueue();
+          await this._executeAutonomousTask(task);
+        }
+      } else {
+        this.logger.info('[STEVE] 🔍 No goals pending. Generating curiosity task...');
+        await this._generateCuriosityTask();
+      }
     } else {
       this.logger.info('[STEVE] 😒 Queue empty. Taking a reluctant break.');
+    }
+  }
+
+  /**
+   * Pull the highest-priority pending goal from GoalEngine and convert it
+   * to a Steve task. Returns true if a goal was found and queued.
+   */
+  async _checkGoalEngine() {
+    const ge = this.goalEngine || (global.SOMA ? global.SOMA.goalPlanner : null);
+    if (!ge?.getActiveGoals) return false;
+
+    try {
+      const gr = ge.getActiveGoals({});
+      const pending = (gr?.goals || [])
+        .filter(g => g.status === 'active' || g.status === 'pending')
+        .sort((a, b) => (b.priority || 0) - (a.priority || 0))
+        .slice(0, 1);
+
+      if (pending.length === 0) return false;
+
+      const goal = pending[0];
+      this.addTask({
+        description: `Execute SOMA goal: "${goal.title}" — ${goal.description || goal.title}. Think through the best approach and take action within your capabilities.`,
+        source: 'goal_engine',
+        priority: Math.min(9, Math.round((goal.priority || 0.5) * 10))
+      });
+
+      this.logger.info(`[STEVE] 🎯 Goal Engine → task: "${goal.title}" (priority ${goal.priority})`);
+      return true;
+    } catch (e) {
+      this.logger.warn(`[STEVE] Goal Engine check failed: ${e.message}`);
+      return false;
     }
   }
 

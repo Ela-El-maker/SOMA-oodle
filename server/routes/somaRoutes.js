@@ -497,14 +497,7 @@ ${contextStr}`;
                 // Get natural-language context about who this person is
                 const ctx = fingerprint.getUserContext(userId);
                 if (ctx) {
-                    userContext = `\n[WHO YOU'RE TALKING TO]\n${ctx}\n`;
-
-                    // Flag possible different user if fingerprint diverges significantly
-                    const confidence = fingerprint.getSameUserConfidence(userId,
-                        history?.slice(-3).map(h => h.content || h.text || '') || [message]);
-                    if (confidence < 0.5) {
-                        userContext += `Note: behavioral patterns feel different from the usual profile â€” may be a different person.\n`;
-                    }
+                    userContext = `\n[ABOUT BARRY]\n${ctx}\n`;
                 }
             } catch { /* fingerprinting is never blocking */ }
 
@@ -557,8 +550,37 @@ ${contextStr}`;
                 } catch { /* non-blocking */ }
             }
 
+            // 🏗️ BLUEPRINT: Inject technical save-state (ECC Strategic Compaction)
+            let blueprintContext = '';
+            if (system.gistArbiter?.getBlueprint) {
+                const blueprint = system.gistArbiter.getBlueprint();
+                blueprintContext = `\n[STRATEGIC BLUEPRINT]\nMission: ${blueprint.mission}\nArchitecture: ${JSON.stringify(blueprint.architecture)}\nNext Milestone: ${blueprint.nextMilestone}\nProgress: ${blueprint.progress}\n[/STRATEGIC BLUEPRINT]\n`;
+            }
+
+            // 📚 SKILL REGISTRY: Filter tools based on intent (ECC Context Preservation)
+            let dynamicTools = null;
+            if (system.skillRegistry?.getActiveToolDefinitions) {
+                dynamicTools = await system.skillRegistry.getActiveToolDefinitions(message);
+                console.log(`[SkillRegistry] 📚 Dynamically selected ${dynamicTools.length} tools for this intent.`);
+            }
+
+            // ── ThoughtNetwork: inject SOMA's live knowledge graph into every prompt ──
+            // These are concepts SOMA has synthesized autonomously — they inform the
+            // answer without being part of any hardcoded knowledge base.
+            let thoughtContext = '';
+            if (system.thoughtNetwork?.nodes?.size > 0) {
+                try {
+                    const relatedNodes = system.thoughtNetwork.findSimilar(message, 0.08, 5);
+                    if (relatedNodes.length > 0) {
+                        thoughtContext = `\n[ACTIVE THOUGHTS]\n` +
+                            relatedNodes.map(n => `- ${n.content}`).join('\n') +
+                            `\n[/ACTIVE THOUGHTS]\n`;
+                    }
+                } catch { /* non-blocking */ }
+            }
+
             let result;
-            const finalPrompt = `${personaContext}${characterContext}${awarenessContext}${selfModelContext}${userContext}${memoryContext}\n${prompt}`;
+            const finalPrompt = `${personaContext}${characterContext}${awarenessContext}${selfModelContext}${thoughtContext}${blueprintContext}${userContext}${memoryContext}\n${prompt}`;
 
             // Server-side timeout: respond well BEFORE the frontend gives up (frontend = 60s)
             // 45s gives a 15s buffer â€” pre-processing (memory recall, fingerprinting) can eat 3-5s
@@ -581,6 +603,7 @@ ${contextStr}`;
                         quickResponse: isSimpleChat,
                         preferredBrain: personaBrain || 'auto',
                         activeGoals: contextActiveGoals,
+                        tools: dynamicTools,
                         ...queryMeta
                     });
                 }
@@ -804,6 +827,18 @@ ${personaContext}${characterContext}`.trim()
 
             const confidence = result?.confidence || 0.8;
 
+            // ── Self-model calibration: feed NEMESIS quality score back so RecursiveSelfModel
+            // learns which domains SOMA performs well/poorly in over time ──
+            if (system.recursiveSelfModel?.recordPerformance && nemesisVerdict?.score != null) {
+                const domain = (result?.brain || 'general').toLowerCase().split('+')[0];
+                system.recursiveSelfModel.recordPerformance(
+                    message.substring(0, 100),
+                    confidence,
+                    Math.max(0, Math.min(1, nemesisVerdict.score)),
+                    domain
+                );
+            }
+
             // â”€â”€ Memory Storage: Store meaningful exchanges for cross-session recall â”€â”€
             if (system.mnemonicArbiter?.remember && message.length > 15 && responseText.length > 20) {
                 system.mnemonicArbiter.remember(
@@ -872,6 +907,19 @@ ${personaContext}${characterContext}`.trim()
                         }
                     }
                 } catch {}
+            }
+
+            // Strip verbose reasoning chain format if brain leaked it (QUERY:/ANALYSIS:/RESPONSE:)
+            if (/QUERY[_\s]*STATUS:|ANALYSIS:|LOGIC[_\s]*TRAIL:/i.test(responseText)) {
+                const responseMatch = responseText.match(/RESPONSE:\s*([\s\S]+?)(?:\n[A-Z_]+:|$)/i);
+                if (responseMatch) {
+                    responseText = responseMatch[1].trim();
+                } else {
+                    responseText = responseText
+                        .replace(/^(QUERY[_\s]*STATUS:|ANALYSIS:|LOGIC[_\s]*TRAIL:)[^\n]*/gim, '')
+                        .replace(/RESPONSE:\s*/i, '')
+                        .trim();
+                }
             }
 
             res.json({

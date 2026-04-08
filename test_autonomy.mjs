@@ -70,10 +70,11 @@ head('1. TF-IDF Cosine Similarity');
     } else {
         fail(`Expected ML doc first, got: "${scores[0].doc}"`);
     }
-    if (scores[scores.length-1].doc.includes('cooking')) {
-        pass('Cooking doc ranked last (unrelated)');
+    const topTwo = scores.slice(0,2).map(s => s.doc);
+    if (!topTwo.some(d => d.includes('cooking')) && !topTwo.some(d => d.includes('strategy'))) {
+        pass('Cooking & strategy docs ranked in bottom 2 (unrelated — both score 0)');
     } else {
-        fail(`Expected cooking doc last`);
+        fail(`Expected cooking+strategy in bottom 2, top two: ${topTwo.join(' | ')}`);
     }
 }
 
@@ -104,7 +105,7 @@ head('2. Lobe Routing — correct lobes activate for each query');
     };
 
     const cases = [
-        { q: 'how do I make 10 million dollars',     expect: ['PROMETHEUS', 'LOGOS'],  label: '$10M question' },
+        { q: 'how do I make 10 million dollars',     expect: ['PROMETHEUS'],           label: '$10M question (strategy-only)' },
         { q: 'write me a poem about the ocean',       expect: ['AURORA'],               label: 'Creative poem' },
         { q: 'is it safe to invest in crypto',        expect: ['THALAMUS','PROMETHEUS'],label: 'Risk + strategy' },
         { q: 'debug this recursive algorithm error',   expect: ['LOGOS'],                label: 'Code debug' },

@@ -851,9 +851,8 @@ OUTPUT JSON ONLY — no markdown, no extra text:
         description: def.description || def.title,
         category: def.category || 'learning',
         priority: Math.min(0.9, Math.max(0.3, def.priority || 0.6)),
-        source: 'autonomous_drive',
         autonomous: true
-      });
+      }, 'autonomous_drive'); // second arg = source for dedup/cooldown
 
       this.drive.onTaskExecuted(); // Creating a goal partially releases tension
       this.logger.log(`[AutonomousHeartbeat] 🎯 Self-generated goal from tension: "${def.title}"`);

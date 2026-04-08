@@ -244,9 +244,8 @@ export async function loadCOSSystems(system) {
                     description: `${rationale || 'Newly synthesized concept'}${parentCtx}. Research and deepen understanding of this idea.`,
                     category: 'learning',
                     priority: 0.55,
-                    source: 'thought_network_synthesis',
                     autonomous: true
-                }).catch(() => {});
+                }, 'thought_network_synthesis').catch(() => {}); // second arg = source for dedup/cooldown
             }
         });
 

@@ -149,9 +149,16 @@ export class SOMArbiterV2_QuadBrain extends BaseArbiterV4 {
         const raw = await this._callProviderCascade(query, context);
         response = { ...raw, brain: context.activeLobe };
       } else {
-        // Selective lobe activation: score lobes, run relevant ones in parallel, synthesize
-        const activeLobes = this._selectLobes(query, context);
-        this.auditLogger.info(`[${this.name}] Active lobes: ${activeLobes.map(([l]) => l).join(', ')}`);
+        // Selective lobe activation
+        let activeLobes = this._selectLobes(query, context);
+
+        // Regular chat → single best lobe only (one DeepSeek call, fast response).
+        // Deep thinking → full multi-lobe debate + synthesis (user explicitly asked for it).
+        if (!context.deepThinking && !context.forceMultiLobe) {
+          activeLobes = [activeLobes[0]]; // top scorer only
+        }
+
+        this.auditLogger.info(`[${this.name}] Active lobes: ${activeLobes.map(([l]) => l).join(', ')}${!context.deepThinking ? ' (single-lobe fast path)' : ' (deep multi-lobe)'}`);
 
         const lobeResults = await Promise.all(
           activeLobes.map(([lobeName]) => this._runLobe(lobeName, query, context))

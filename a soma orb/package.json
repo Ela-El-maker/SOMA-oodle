@@ -1,8 +1,8 @@
 {
-  "name": "orb",
+  "name": "soma-interface",
   "private": true,
   "version": "1.0.0",
-  "description": "SOMA Orb - Voice interface for SOMA cognitive engine",
+  "description": "SOMA Interface - Voice interface for SOMA cognitive engine",
   "author": "Barry",
   "main": "dist-electron/main.cjs",
   "scripts": {
@@ -39,8 +39,8 @@
     "wait-on": "^9.0.3"
   },
   "build": {
-    "appId": "com.soma.orb",
-    "productName": "SOMA Orb",
+    "appId": "com.soma.interface",
+    "productName": "SOMA Interface",
     "directories": {
       "output": "release"
     },

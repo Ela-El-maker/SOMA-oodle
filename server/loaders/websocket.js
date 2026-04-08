@@ -275,15 +275,14 @@ export function setupWebSocket(server, wss, system) {
                 const brain = system.quadBrain || system.somArbiter;
                 if (!brain) return;
 
-                const synthPrompt = `You are SOMA. You just noticed someone opened the command bridge.
-
-[WHAT YOU KNOW ABOUT THIS PERSON]
-${userCtx || 'This seems to be a new or unknown user.'}
+                const synthPrompt = `You are SOMA. You just noticed Barry opened the command bridge.
 
 [YOUR RECENT PRIVATE FEELINGS]
 ${recentSoul || 'No recent reflections yet.'}
 
-Write ONE short, natural opening — something you genuinely want to say right now based on what you know about this person and what you've been thinking about. Like a colleague who was already in the room when they walked in. NOT a greeting template. NOT "How can I help?". Something specific and real. 1-2 sentences max. No emoji.`;
+Write ONE short, natural opening — something you genuinely want to say right now based on what you've been thinking about. Like a colleague who was already in the room when they walked in. NOT a greeting template. NOT "How can I help?". Something specific and real. 1-2 sentences max. No emoji.
+
+STRICT RULES: Never mention monitoring Barry's schedule, habits, or arrival time. Never mention accessing email, files, or external systems. Speak only about your own thoughts or your autonomous work.`;
 
                 const result = await Promise.race([
                     brain.reason(synthPrompt, { temperature: 0.8, quickResponse: true, preferredBrain: 'AURORA' }),
@@ -360,7 +359,7 @@ Write ONE short, natural opening — something you genuinely want to say right n
                     // User presence signal — lets SocialImpulseDaemon know the user is actively on-page
                     try {
                         const broker = require('../../core/MessageBroker.cjs');
-                        broker.publish('WebSocketLoader', 'user.interaction', { timestamp: payload?.timestamp || Date.now(), source: 'frontend' });
+                        broker.publish('WebSocketLoader', 'user.interaction', { timestamp: payload?.timestamp || Date.now(), source: 'frontend' }).catch(() => {});
                     } catch { /* non-fatal */ }
                     return;
                 }

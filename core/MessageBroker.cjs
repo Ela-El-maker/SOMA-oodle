@@ -38,6 +38,9 @@ class MessageBroker extends EventEmitter {
     // Topic subscriptions
     this.subscriptions = new Map();
 
+    // Recent publish ring buffer (last 20 pub/sub signals for perception dashboard)
+    this._recentPublishes = [];
+
     // Message history for replay/debugging (circular buffer)
     this.messageHistory = [];
     this.maxHistorySize = 1000;
@@ -177,7 +180,6 @@ class MessageBroker extends EventEmitter {
     }
 
     this.subscriptions.get(topic).add(handler);
-    console.log(`[MessageBroker] Subscribed to topic: ${topic}`);
 
     return () => this.unsubscribe(topic, handler);
   }
@@ -193,6 +195,10 @@ class MessageBroker extends EventEmitter {
   }
 
   async publish(topic, message) {
+    // Track in ring buffer for perception dashboard
+    this._recentPublishes.push({ topic, ts: Date.now(), preview: JSON.stringify(message).slice(0, 80) });
+    if (this._recentPublishes.length > 20) this._recentPublishes.shift();
+
     const handlers = this.subscriptions.get(topic);
     if (!handlers || handlers.size === 0) {
       return 0;

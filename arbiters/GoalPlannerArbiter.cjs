@@ -1778,6 +1778,7 @@ class GoalPlannerArbiter extends BaseArbiter {
             this.activeGoals.delete(id);
           }
           this.logger.warn(`[${this.name}] 🔍 Deduped ${dupIds.size} duplicate active goal(s) on restore`);
+          this._dirty = true; // Persist dedup so file doesn't re-accumulate on every restart
         }
       }
 

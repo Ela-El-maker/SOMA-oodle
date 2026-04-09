@@ -565,15 +565,8 @@ export class SomaAgenticExecutor {
                 break;
             }
 
-            const prompt = this._buildPrompt(goal, observations, priorMemories);
-
-            let response;
-            try {
-                response = await this.brain.reason(prompt, {
-                    quickResponse: true,
-                    source: 'agentic_executor',
-                    isAgenticTask: true,
-                    systemOverride: `You are SOMA's AUTONOMOUS AGENT ENGINE — not a conversational AI.
+            const userPrompt = this._buildPrompt(goal, observations, priorMemories);
+            const systemPrompt = `You are SOMA's AUTONOMOUS AGENT ENGINE — not a conversational AI.
 Respond in ONE of these exact formats and NOTHING else:
 
 FORMAT 1 — call a tool:
@@ -590,9 +583,11 @@ ABSOLUTE RULES:
 - DO execute tools to accomplish goals. DO NOT describe what you would do.
 - If unsure where to start: call memory_recall or list_files.
 - After finding info: call write_file or memory_store to save it.
-- You ARE in AGENT MODE. Tool use is required and expected here.`,
-                    context: { goalId: goal.id, step: iteration, isAgenticTask: true }
-                });
+- You ARE in AGENT MODE. Tool use is required and expected here.`;
+
+            let response;
+            try {
+                response = await this._callDirectAPI(systemPrompt, userPrompt);
             } catch (e) {
                 console.warn(`[${this.name}] Brain error at step ${iteration}:`, e.message);
                 observations.push({
@@ -785,6 +780,75 @@ What is your next step?`;
         } catch {
             return [];
         }
+    }
+
+    // ─────────────────────────────────────────────────────────────────────
+    // DIRECT API CALL (bypasses QuadBrain lobe routing)
+    // Agentic tasks need precise format compliance, not lobe debate.
+    // Uses proper system + user message split so the format instruction lands.
+    // ─────────────────────────────────────────────────────────────────────
+
+    async _callDirectAPI(systemPrompt, userPrompt) {
+        // Try DeepSeek first (same key as QuadBrain uses)
+        const dsKey = this.brain?.deepseekApiKey || process.env.DEEPSEEK_API_KEY;
+        if (dsKey) {
+            try {
+                const ctrl = new AbortController();
+                const timer = setTimeout(() => ctrl.abort(), 45000);
+                const res = await fetch('https://api.deepseek.com/v1/chat/completions', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${dsKey}` },
+                    body: JSON.stringify({
+                        model: 'deepseek-chat',
+                        messages: [
+                            { role: 'system', content: systemPrompt },
+                            { role: 'user',   content: userPrompt }
+                        ],
+                        temperature: 0.3, // low temp for precise format compliance
+                        max_tokens: 512
+                    }),
+                    signal: ctrl.signal
+                });
+                clearTimeout(timer);
+                if (res.ok) {
+                    const data = await res.json();
+                    const text = data.choices?.[0]?.message?.content;
+                    if (text) return { text, provider: 'deepseek' };
+                }
+            } catch (e) {
+                console.warn(`[${this.name}] DeepSeek direct call failed: ${e.message}`);
+            }
+        }
+
+        // Fallback: Ollama (local, always available)
+        try {
+            const ollamaModel = this.brain?.ollamaModel || process.env.OLLAMA_MODEL || 'gemma3:4b';
+            const ollamaEndpoint = this.brain?.ollamaEndpoint || 'http://localhost:11434';
+            const ctrl = new AbortController();
+            const timer = setTimeout(() => ctrl.abort(), 60000);
+            const res = await fetch(`${ollamaEndpoint}/api/generate`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    model: ollamaModel,
+                    system: systemPrompt,
+                    prompt: userPrompt,
+                    stream: false,
+                    options: { temperature: 0.3, num_predict: 512 }
+                }),
+                signal: ctrl.signal
+            });
+            clearTimeout(timer);
+            if (res.ok) {
+                const data = await res.json();
+                const text = data.response;
+                if (text) return { text, provider: 'ollama' };
+            }
+        } catch (e) {
+            console.warn(`[${this.name}] Ollama direct call failed: ${e.message}`);
+        }
+
+        throw new Error('All providers failed for agentic step');
     }
 
     getToolNames() {

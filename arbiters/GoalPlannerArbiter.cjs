@@ -1745,6 +1745,42 @@ class GoalPlannerArbiter extends BaseArbiter {
         this.logger.warn(`[${this.name}] ⚠️ Trimmed ${excess.length} excess active goals on restore (limit: ${this.maxActiveGoals})`);
       }
 
+      // ═══ DEDUP ACTIVE GOALS ON LOAD ═══
+      // External tools (or direct file edits) can inject duplicate goals that bypass
+      // createGoal()'s runtime dedup check. Run dedup on every restore so the file
+      // never accumulates duplicates regardless of how they got there.
+      {
+        const seen = new Map(); // normalizedTitle -> first goal id
+        const dupIds = new Set();
+        for (const id of Array.from(this.activeGoals)) {
+          const g = this.goals.get(id);
+          if (!g) continue;
+          // Strip punctuation/quotes, lowercase — catches Gemini-style "quoted titles"
+          const normalized = (g.title || '').toLowerCase().replace(/[^a-z0-9 ]/g, '').replace(/\s+/g, ' ').trim();
+          if (seen.has(normalized)) {
+            // Keep the one with higher priority; defer the other
+            const existingId = seen.get(normalized);
+            const existing = this.goals.get(existingId);
+            if ((g.priority || 0) > (existing?.priority || 0)) {
+              dupIds.add(existingId);
+              seen.set(normalized, id);
+            } else {
+              dupIds.add(id);
+            }
+          } else {
+            seen.set(normalized, id);
+          }
+        }
+        if (dupIds.size > 0) {
+          for (const id of dupIds) {
+            const g = this.goals.get(id);
+            if (g) { g.status = 'deferred'; g.metadata = { ...(g.metadata || {}), deferredReason: 'Duplicate on restore' }; }
+            this.activeGoals.delete(id);
+          }
+          this.logger.warn(`[${this.name}] 🔍 Deduped ${dupIds.size} duplicate active goal(s) on restore`);
+        }
+      }
+
       // ═══ PRUNE OLD NON-ACTIVE GOALS FROM MAP ═══
       // Remove deferred/completed/failed goals older than 30 days to prevent unbounded Map growth
       const THIRTY_DAYS = 30 * 24 * 60 * 60 * 1000;

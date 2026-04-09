@@ -22,6 +22,7 @@ import path from 'path';
 import { createRequire } from 'module';
 import { execFile } from 'child_process';
 import { promisify } from 'util';
+import { Poseidon } from './Poseidon.js';
 
 const execFileAsync = promisify(execFile);
 const ROOT = process.cwd();
@@ -39,6 +40,7 @@ export class SomaAgenticExecutor {
         this.system      = null;
 
         this._tools = null; // built lazily after initialize
+        this._poseidon = new Poseidon({ threshold: 0.75 });
     }
 
     initialize(deps = {}) {
@@ -574,15 +576,18 @@ THINK: [one line: why this tool and these args]
 TOOL: tool_name
 ARGS: {"key": "value"}
 
-FORMAT 2 — goal complete:
+FORMAT 2 — goal complete (only after verifying your own work):
 DONE: yes
 RESULT: [summary of all work accomplished]
+FALSIFICATION_TEST: [specific check proving completion — e.g., "file research/topic.md exists with findings"]
+TEST_RESULT: true
 
 ABSOLUTE RULES:
 - Output ONLY the format above. Zero prose, zero explanation, zero greeting.
 - DO execute tools to accomplish goals. DO NOT describe what you would do.
 - If unsure where to start: call memory_recall or list_files.
 - After finding info: call write_file or memory_store to save it.
+- NEVER claim DONE without first verifying your output exists (use read_file or list_files).
 - You ARE in AGENT MODE. Tool use is required and expected here.`;
 
             let response;
@@ -604,12 +609,42 @@ ABSOLUTE RULES:
 
             const text = response?.text || '';
 
-            // ── Check for completion ──
+            // ── Check for completion (Poseidon-gated) ──
             if (/DONE:\s*yes/i.test(text)) {
-                finalResult = text.match(/RESULT:\s*([\s\S]+)/i)?.[1]?.trim()
-                    || `Goal "${goal.title}" completed in ${iteration + 1} steps`;
-                console.log(`[${this.name}] ✅ Complete in ${iteration + 1} steps: "${goal.title}"`);
-                break;
+                const claimedResult = text.match(/RESULT:\s*([\s\S]+?)(?=\nFALSIFICATION_TEST:|$)/i)?.[1]?.trim() || '';
+                const falsificationTest = text.match(/FALSIFICATION_TEST:\s*(.+)/i)?.[1]?.trim() || '';
+                const testResultRaw = text.match(/TEST_RESULT:\s*(true|false)/i)?.[1]?.toLowerCase();
+                const testResult = testResultRaw === 'true';
+
+                const verified = await this._poseidon.verify(claimedResult, {
+                    falsificationTest: falsificationTest || null,
+                    testResult: falsificationTest ? testResult : false
+                });
+
+                if (verified.state === 'TRUE') {
+                    finalResult = claimedResult || `Goal "${goal.title}" completed in ${iteration + 1} steps`;
+                    console.log(`[${this.name}] ✅ / Complete (Poseidon verified) in ${iteration + 1} steps: "${goal.title}"`);
+                    break;
+                } else {
+                    // UNCERTAIN or FALSE — agent claims done but can't prove it
+                    const totalDoneBlocks = observations.filter(o => o._poseidonBlock).length;
+                    if (totalDoneBlocks >= 2) {
+                        // Give up after 2 failed verifications — partial completion
+                        finalResult = null;
+                        console.warn(`[${this.name}] | Poseidon: 2 unverified DONE claims — ending as partial`);
+                        break;
+                    }
+                    console.warn(`[${this.name}] ${verified.prefix} Poseidon ${verified.state}: "${verified.reason}"`);
+                    observations.push({
+                        step: iteration + 1,
+                        _poseidonBlock: true,
+                        thought: `[POSEIDON ${verified.state}] Your DONE claim was rejected: ${verified.reason}
+You must provide:
+FALSIFICATION_TEST: [a specific, verifiable check — e.g., "file research/topic.md exists and contains findings"]
+TEST_RESULT: true
+Before declaring DONE, verify your own work using read_file or list_files.`
+                    });
+                }
             }
 
             // ── Parse and execute tool call ──
@@ -716,9 +751,13 @@ THINK: [one sentence: why this tool, why these args]
 TOOL: tool_name
 ARGS: {"key": "value"}
 
-HOW TO FINISH — when the goal is fully done:
+HOW TO FINISH — when the goal is fully done AND you have verified your work:
 DONE: yes
 RESULT: [clear summary of everything accomplished, findings stored, files created]
+FALSIFICATION_TEST: [what specific check proves this is done — e.g., "file research/topic.md was created with findings"]
+TEST_RESULT: true
+
+NOTE: You cannot claim DONE without a FALSIFICATION_TEST. Use read_file or list_files first to verify your output actually exists.
 
 RULES:
 - Take ONE action per response. Do not plan multiple steps at once.

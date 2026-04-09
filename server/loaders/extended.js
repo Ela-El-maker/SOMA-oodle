@@ -429,32 +429,6 @@ export async function loadEssentialSystems(system) {
         }
     }
 
-    // 🔱 POSEIDON PROTOCOL: Odyssey Navigator & Nautical Notation
-    if (!system.odyssey) {
-        try {
-            const regDir = path.join(rootPath, 'registry');
-            const loader = new RegistryLoader(regDir);
-            loader.load();
-            const parser = new NauticalParser(loader);
-            
-            const odyssey = new Odyssey({ 
-                voyagesDir: path.join(rootPath, '.soma', 'voyages'),
-                parser 
-            });
-            
-            system.odyssey = odyssey;
-            system.trident = new Trident();
-            system.nauticalParser = parser;
-            
-            ext.odyssey = odyssey;
-            ext.trident = system.trident;
-            
-            console.log('    🔱 Poseidon Protocol: Odyssey Navigator & Nautical Notation (ONLINE)');
-        } catch (e) {
-            console.error('    ❌ Poseidon Protocol init failed:', e.message);
-        }
-    }
-
     if (!ext.taskManifestArbiter) {
         try {
             const { TaskManifestArbiter } = require('../../arbiters/TaskManifestArbiter.js');

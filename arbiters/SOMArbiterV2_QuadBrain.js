@@ -13,6 +13,7 @@
  */
 
 import { BaseArbiterV4, ArbiterRole, ArbiterCapability } from './BaseArbiter.js';
+import { SINCompressor, INTENT } from '../core/SIN.js';
 import messageBroker from '../core/MessageBroker.cjs';
 import fs from 'fs/promises';
 import path from 'path';
@@ -239,14 +240,21 @@ export class SOMArbiterV2_QuadBrain extends BaseArbiterV4 {
       return { text: successful[0].output, brain: successful[0].lobe, provider: successful[0].provider };
     }
 
-    // Multiple lobes → synthesis call integrates perspectives
+    // Multiple lobes → SIN-compressed synthesis call
+    // Each lobe output is capped at 600 chars to prevent multi-thousand-token synthesis prompts
+    const sinCompressor = new SINCompressor();
+    const { sin: sinHeader } = sinCompressor.compress({
+        intent: INTENT.SYNTHESIZE,
+        lobe: 'SYNTHESIS',
+        query: originalQuery,
+        task: 'Integrate these lobe perspectives into ONE coherent response. Weave, do not list. Resolve contradictions.'
+    });
+
     const perspectives = successful
-      .map(r => `[${r.name.toUpperCase()}]\n${r.output}`)
+      .map(r => `[${r.name.toUpperCase()}]\n${r.output.substring(0, 600)}`)
       .join('\n\n---\n\n');
 
-    const synthesisPrompt = `You are SOMA's integration layer. Multiple cognitive lobes independently analyzed a query and produced different perspectives. Synthesize them into the single best answer — don't list them separately, weave them into one coherent, actionable response. Resolve contradictions by choosing the most sound position.
-
-ORIGINAL QUERY: ${originalQuery}
+    const synthesisPrompt = `${sinHeader}
 
 LOBE PERSPECTIVES:
 ${perspectives}

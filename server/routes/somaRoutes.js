@@ -1648,6 +1648,94 @@ ${personaContext}${characterContext}`.trim()
     });
 
     // ── EngineeringSwarm: modify code (SSE streaming) ─────────────────────────
+    // ── Odyssey: Voyage DAG routes ──────────────────────────────────────────
+    // List all voyages
+    router.get('/api/soma/odyssey/voyages', (req, res) => {
+        const odyssey = system.odyssey;
+        if (!odyssey) return res.status(503).json({ error: 'Odyssey not loaded' });
+        try {
+            const voyages = Array.from(odyssey.voyages?.values() || []).map(v => ({
+                id: v.id,
+                title: v.title,
+                milestones: (v.milestones || []).map(m => ({
+                    id: m.id, title: m.title, status: m.status, deps: m.deps
+                })),
+                createdAt: v.createdAt
+            }));
+            res.json({ voyages, count: voyages.length });
+        } catch (e) {
+            res.status(500).json({ error: e.message });
+        }
+    });
+
+    // Define a new voyage (optionally via Trident from architecture text)
+    router.post('/api/soma/odyssey/voyages', async (req, res) => {
+        const odyssey = system.odyssey;
+        if (!odyssey) return res.status(503).json({ error: 'Odyssey not loaded' });
+        const { voyageId, title, milestones, architecture } = req.body;
+
+        try {
+            // If architecture text provided, let Trident generate milestones
+            let finalMilestones = milestones;
+            if (!finalMilestones && architecture && system.trident) {
+                const plan = system.trident.toVoyage({ title: title || 'Generated voyage', description: architecture });
+                finalMilestones = plan.milestones;
+            }
+            if (!finalMilestones?.length) return res.status(400).json({ error: 'milestones or architecture required' });
+
+            const id = voyageId || `voyage-${Date.now()}`;
+            odyssey.define(id, title || id, finalMilestones);
+            res.json({ success: true, voyageId: id, milestones: finalMilestones });
+        } catch (e) {
+            res.status(500).json({ error: e.message });
+        }
+    });
+
+    // Get a single voyage with full milestone state
+    router.get('/api/soma/odyssey/voyages/:id', (req, res) => {
+        const odyssey = system.odyssey;
+        if (!odyssey) return res.status(503).json({ error: 'Odyssey not loaded' });
+        const voyage = odyssey.voyages?.get(req.params.id);
+        if (!voyage) return res.status(404).json({ error: 'Voyage not found' });
+        res.json(voyage);
+    });
+
+    // Execute a single milestone within a voyage
+    router.post('/api/soma/odyssey/voyages/:voyageId/milestones/:milestoneId/execute', async (req, res) => {
+        const odyssey = system.odyssey;
+        if (!odyssey) return res.status(503).json({ error: 'Odyssey not loaded' });
+        const { voyageId, milestoneId } = req.params;
+        const { output, falsificationTest, testResult } = req.body;
+
+        try {
+            const result = await odyssey.execute(voyageId, milestoneId, async () => ({
+                output:            output || {},
+                falsificationTest: falsificationTest || null,
+                testResult:        testResult === true || testResult === 'true'
+            }));
+            res.json({ success: true, state: result.state, milestone: result.milestone });
+        } catch (e) {
+            res.status(500).json({ error: e.message });
+        }
+    });
+
+    // Dump current voyage state as a compact context string (for session recovery)
+    router.get('/api/soma/odyssey/voyages/:id/dump', (req, res) => {
+        const odyssey = system.odyssey;
+        if (!odyssey) return res.status(503).json({ error: 'Odyssey not loaded' });
+        try {
+            const voyage = odyssey.voyages?.get(req.params.id);
+            if (!voyage) return res.status(404).json({ error: 'Voyage not found' });
+            const dump = `voyage:${req.params.id} ` + (voyage.milestones || []).map(m => {
+                const icons = { docked: '⚓', sailing: '⛵', arrived: '✓', failed: '⛔' };
+                return `${m.id}${icons[m.status] || '?'}`;
+            }).join(' ');
+            res.json({ dump });
+        } catch (e) {
+            res.status(500).json({ error: e.message });
+        }
+    });
+
     router.post('/api/soma/engineering/modify', async (req, res) => {
         const swarm = system.engineeringSwarm;
         if (!swarm) return res.status(503).json({ success: false, error: 'EngineeringSwarm not loaded' });

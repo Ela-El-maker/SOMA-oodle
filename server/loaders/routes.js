@@ -28,6 +28,7 @@ import arbiteriumRoutes from '../../server/routes/arbiteriumRoutes.js';
 import knowledgeRoutes from '../../server/routes/knowledgeRoutes.js';
 import researchRoutes from '../../server/routes/researchRoutes.js';
 import somaRoutes from '../../server/routes/somaRoutes.js';
+import notificationRoutes from '../../server/routes/notificationRoutes.js';
 import { toggleAutopilot, getAutopilotStatus } from './extended.js';
 import { buildSystemSnapshot } from '../utils/systemState.js';
 import { executeCommand } from '../utils/commandRouter.js';
@@ -1504,6 +1505,7 @@ Return ONLY valid JSON (no markdown, no explanation):
     safeMount('/api/guardian', checkReady, createGuardianRoutes(system.guardian || null));
     safeMount('/api/autonomous', checkReady, autonomousRoutes);
     safeMount('/api/gridbot',   checkReady, gridBotRoutes);
+    safeMount('/api/notifications', notificationRoutes);  // no checkReady — used during settings modal before system.ready
     // Conceive module â€” optional, not always committed to repo
     try {
         const { default: conceiveRoutes } = await import('../../server/routes/conceiveRoutes.js');

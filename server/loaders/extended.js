@@ -482,7 +482,7 @@ export async function loadExtendedSystems(system) {
         }
 
         try {
-            ext.visionArbiter = new VisionProcessingArbiter({ name: 'VisionArbiter' });
+            ext.visionArbiter = new VisionProcessingArbiter({ name: 'VisionArbiter', quadBrain: system.quadBrain });
             system.visionArbiter = ext.visionArbiter;
             if (system.arbiters) system.arbiters.set('visionArbiter', ext.visionArbiter);
             
@@ -1540,7 +1540,7 @@ export async function loadExtendedSystems(system) {
 
         // VisionProcessingArbiter: CLIP model loads ONNX/WASM synchronously — run in background
         try {
-            ext.visionArbiter = new VisionProcessingArbiter({ name: 'VisionArbiter' });
+            ext.visionArbiter = new VisionProcessingArbiter({ name: 'VisionArbiter', quadBrain: system.quadBrain });
             system.visionArbiter = ext.visionArbiter;
             if (system.arbiters) system.arbiters.set('visionArbiter', ext.visionArbiter);
             

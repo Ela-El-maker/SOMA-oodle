@@ -156,7 +156,8 @@ export async function loadCOSSystems(system) {
             name: 'VisionDaemon',
             intervalMs: 5000, // 5s poll — don't destroy CLIP/CPU on boot
             computerControl: system.arbiters?.get('ComputerControlArbiter'),
-            visionProcessing: system.arbiters?.get('VisionProcessingArbiter')
+            visionProcessing: system.arbiters?.get('VisionProcessingArbiter'),
+            messageBroker: system.messageBroker
         });
         daemonManager.register(visionDaemon);
         system.visionDaemon = visionDaemon;
@@ -270,6 +271,40 @@ export async function loadCOSSystems(system) {
                 type: 'web_delta',
                 payload: signal?.payload || {}
             }).catch(() => {}); // non-fatal if GoalPlanner not loaded
+        });
+
+        // Visual Proactivity (Predictive Cortex) — pre-fetch contexts based on vision
+        let lastVisualContext = 0;
+        system.messageBroker.subscribe('vision.perceived', (signal) => {
+            const now = Date.now();
+            if (now - lastVisualContext < 60000) return; // Debounce context switches to max 1/min
+            
+            const analysis = signal?.payload?.analysis;
+            if (!analysis?.objects) return;
+
+            const labels = analysis.objects.map(o => o.label.toLowerCase());
+            let contextQuery = null;
+
+            if (labels.includes('chart') || labels.includes('graph')) {
+                contextQuery = 'finance trading portfolio market';
+            } else if (labels.includes('code editor') || labels.includes('terminal')) {
+                contextQuery = 'code engineering terminal workspace development';
+            }
+
+            // If a known context is detected, pre-fetch memories and shift attention
+            if (contextQuery && (system.mnemonic || system.mnemonicArbiter)) {
+                lastVisualContext = now;
+                const mnemonic = system.mnemonic || system.mnemonicArbiter;
+                console.log(`[SOMA] 👁️ Visual Proactivity: Detected context [${labels.find(l => contextQuery.includes(l.split(' ')[0]))}], pre-fetching memories...`);
+                
+                // Warm up the memory cache asynchronously
+                if (mnemonic.recall) {
+                    mnemonic.recall(contextQuery, 5).catch(() => {});
+                }
+                
+                // Shift attention toward the detected visual domain
+                attentionArbiter.setFocus(contextQuery.split(' ')[0], 60000); // 1 min focus
+            }
         });
 
         // Goal created — focus attention on the goal's domain for 10 min

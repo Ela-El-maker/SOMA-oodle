@@ -25,6 +25,7 @@ export class VisionProcessingArbiter extends EventEmitter {
     this.name = config.name || 'VisionProcessingArbiter';
     this.batchSize = config.batchSize || 32;
     this.loadPipeline = config.loadPipeline || null;
+    this.quadBrain = config.quadBrain || null;
 
     // CLIP model for vision-language understanding
     this.clipModel = null;
@@ -163,7 +164,7 @@ export class VisionProcessingArbiter extends EventEmitter {
     // Common UI and physical objects for screen understanding
     const candidateLabels = [
       'window', 'button', 'text', 'icon', 'menu', 'sidebar', 'toolbar', 
-      'terminal', 'browser', 'code editor', 'chat', 'graph', 'chart',
+      'terminal', 'browser', 'code editor', 'error dialog', 'chat', 'graph', 'chart',
       'human', 'face', 'hand', 'desk', 'computer', 'keyboard', 'mouse'
     ];
 
@@ -174,7 +175,7 @@ export class VisionProcessingArbiter extends EventEmitter {
     try {
       const result = await this.zeroShotClassifier(imagePathOrURL, candidateLabels);
 
-      const duration = Date.now() - startTime;
+      let duration = Date.now() - startTime;
       this.metrics.classificationsRun++;
 
       console.log(`[${this.name}]    Classification: ${result[0].label} (${(result[0].score * 100).toFixed(2)}%)`);
@@ -188,9 +189,69 @@ export class VisionProcessingArbiter extends EventEmitter {
           bbox: null // CLIP doesn't provide bounding boxes, just scores
         }));
 
+      // ── Cognitive Zoom (OCR) ──
+      let ocrText = null;
+      const highValueTargets = ['terminal', 'code editor', 'error dialog', 'text'];
+      const foundTarget = objects.find(obj => highValueTargets.includes(obj.label));
+
+      if (foundTarget) {
+          console.log(`[${this.name}] 🧠 High-value target detected (${foundTarget.label}). Initiating Cognitive Zoom (OCR)...`);
+          try {
+              // Read and base64-encode the frame for multimodal API call
+              const imageBuffer = await fs.readFile(imagePathOrURL);
+              const base64Image = imageBuffer.toString('base64');
+              const mimeType = imagePathOrURL.endsWith('.png') ? 'image/png' : 'image/jpeg';
+
+              const apiKey = process.env.DEEPSEEK_API_KEY;
+              if (!apiKey) throw new Error('No DEEPSEEK_API_KEY set');
+
+              const response = await fetch('https://api.deepseek.com/v1/chat/completions', {
+                  method: 'POST',
+                  headers: {
+                      'Content-Type': 'application/json',
+                      'Authorization': `Bearer ${apiKey}`
+                  },
+                  body: JSON.stringify({
+                      model: 'deepseek-chat',
+                      messages: [{
+                          role: 'user',
+                          content: [
+                              {
+                                  type: 'image_url',
+                                  image_url: { url: `data:${mimeType};base64,${base64Image}` }
+                              },
+                              {
+                                  type: 'text',
+                                  text: `You are performing OCR on a screenshot. A ${foundTarget.label} was detected. Extract ALL visible text exactly as written — code, error messages, stack traces, labels. Return only the raw extracted text, no commentary.`
+                              }
+                          ]
+                      }],
+                      max_tokens: 500
+                  }),
+                  signal: AbortSignal.timeout(8000)
+              });
+
+              if (response.ok) {
+                  const data = await response.json();
+                  ocrText = data.choices?.[0]?.message?.content || null;
+                  if (ocrText) {
+                      console.log(`[${this.name}] 📝 OCR: ${ocrText.substring(0, 100).replace(/\n/g, ' ')}...`);
+                  }
+              } else {
+                  // Model doesn't support vision yet — skip silently (no hallucination)
+                  console.warn(`[${this.name}] ⚠️ Cognitive Zoom skipped: API returned ${response.status} (model may not support vision)`);
+              }
+          } catch (ocrErr) {
+              console.warn(`[${this.name}] ⚠️ Cognitive Zoom failed:`, ocrErr.message);
+          }
+      }
+
+      duration = Date.now() - startTime;
+
       return {
         success: true,
         objects,
+        ocrText, // Included for Visual Proactivity mapping
         count: objects.length,
         duration
       };

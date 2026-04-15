@@ -29,6 +29,7 @@ import KevinInterface from './KevinInterface';
 // Hooks & Components
 import { useSomaAudio } from './hooks/useSomaAudio';
 import { useRealtimeEvents } from './hooks/useRealtimeEvents';
+import { useVision } from './hooks/useVision';
 import FloatingChat from './components/FloatingChat';
 import MemoryTierMonitor from './components/MemoryTierMonitor';
 import NeuralDissonanceMonitor from './components/NeuralDissonanceMonitor';
@@ -974,6 +975,14 @@ const SomaCommandBridge = () => {
       setActiveReasoningTree(response.reasoningTree);
     }
   }, []);
+
+  const {
+    active: isVisionActive,
+    channel: visionChannel,
+    lastPerception,
+    lastFrameUrl,
+    setChannel: setVisionChannel
+  } = useVision(somaBackend, isConnected);
 
   // 1. Audio Interaction
   const {
@@ -2259,7 +2268,7 @@ const SomaCommandBridge = () => {
                     isThinking={isThinking}
                   />
                 ) : (
-                  <Orb volume={volume} isActive={isOrbConnected} isTalking={isTalking} isListening={isListening} isThinking={isThinking} />
+                  <Orb volume={volume} isActive={isOrbConnected} isTalking={isTalking} isListening={isListening} isThinking={isThinking} isConnected={isConnected} />
                 )}
               </div>
 

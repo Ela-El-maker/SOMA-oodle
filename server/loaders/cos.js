@@ -21,6 +21,7 @@ import SocialImpulseDaemon from '../../daemons/SocialImpulseDaemon.js';
 import DaemonManager from '../../core/DaemonManager.js';
 import CapabilityDiscoveryDaemon from '../../daemons/CapabilityDiscoveryDaemon.js';
 import WebPerceptionDaemon from '../../daemons/WebPerceptionDaemon.js';
+import VisionDaemon from '../../daemons/VisionDaemon.js';
 
 export async function loadCOSSystems(system) {
     console.log('\n[Loader] 🧠 Initializing Cognitive Operating System (COS) Layer...');
@@ -150,6 +151,16 @@ export async function loadCOSSystems(system) {
             intervalMs: 86400000 // daily
         }));
 
+        // 👁️ Vision: Persistent perception (Desktop/Webcam)
+        const visionDaemon = new VisionDaemon({
+            name: 'VisionDaemon',
+            intervalMs: 5000, // 5s poll — don't destroy CLIP/CPU on boot
+            computerControl: system.arbiters?.get('ComputerControlArbiter'),
+            visionProcessing: system.arbiters?.get('VisionProcessingArbiter')
+        });
+        daemonManager.register(visionDaemon);
+        system.visionDaemon = visionDaemon;
+
         // Self-healing: probe every registered capability every 60s
         const capabilityDaemon = new CapabilityDiscoveryDaemon({
             name: 'CapabilityDiscoveryDaemon',
@@ -173,6 +184,7 @@ export async function loadCOSSystems(system) {
         global.SOMA_COS = {
             capabilityDaemon,
             webPerceptionDaemon,
+            visionDaemon,
             attentionArbiter
         };
 

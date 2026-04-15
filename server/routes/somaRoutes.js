@@ -509,7 +509,7 @@ Write a closing thought â€" 1-2 sentences. Something genuine that shows you a
     });
 
     // POST /api/soma/chat/stream
-  — SSE streaming for voice mode
+    // — SSE streaming for voice mode
     router.post('/chat/stream', chatRateLimit, async (req, res) => {
         const { message, history = [], sessionId } = req.body;
         if (!message) return res.status(400).json({ error: 'Message is required' });

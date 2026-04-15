@@ -10,7 +10,36 @@
 
 import express from 'express';
 
+import path from 'path';
+import fs from 'fs';
+
 const router = express.Router();
+const VISION_TEMP_DIR = path.join(process.cwd(), '.soma', 'vision_temp');
+
+/**
+ * GET /api/perception/vision/frame?path=<encoded_path>
+ * Serves a captured image frame for frontend preview
+ */
+router.get('/vision/frame', (req, res) => {
+    try {
+        const framePath = req.query.path;
+        if (!framePath) return res.status(400).json({ success: false, error: 'Path required' });
+
+        // Security: ensure path is within vision_temp
+        const resolved = path.resolve(framePath);
+        if (!resolved.startsWith(VISION_TEMP_DIR)) {
+            return res.status(403).json({ success: false, error: 'Access denied outside vision_temp' });
+        }
+
+        if (!fs.existsSync(resolved)) {
+            return res.status(404).json({ success: false, error: 'Frame not found' });
+        }
+
+        res.sendFile(resolved);
+    } catch (err) {
+        res.status(500).json({ success: false, error: err.message });
+    }
+});
 
 // 10s cache on /health — capability probes run every 60s so sub-10s staleness is fine
 let _healthCache = null;
@@ -30,12 +59,19 @@ router.get('/health', (req, res) => {
 
         const capDaemon = global.SOMA_COS?.capabilityDaemon;
         const webDaemon = global.SOMA_COS?.webPerceptionDaemon;
+        const vision    = global.SOMA_COS?.visionDaemon;
         const attention = global.SOMA_COS?.attentionArbiter;
 
         const body = {
             success: true,
             capabilities: capDaemon?.getCapabilityMap?.() ?? { note: 'CapabilityDiscoveryDaemon not loaded yet' },
             watchlist:    webDaemon?.getWatchList?.()    ?? {},
+            vision: {
+                active: !!vision?.active,
+                channel: vision?.channel || 'desktop',
+                lastPerception: vision?.lastPerception || null,
+                metrics: vision?.metrics || {}
+            },
             attention: {
                 focus:       attention?.focusTopic  ?? 'general',
                 focusExpiry: attention?.focusExpiry ?? null,
@@ -43,7 +79,8 @@ router.get('/health', (req, res) => {
             },
             daemons: {
                 capability: !!capDaemon,
-                webPerception: !!webDaemon
+                webPerception: !!webDaemon,
+                vision: !!vision
             },
             timestamp: now
         };
@@ -129,6 +166,48 @@ router.post('/focus', (req, res) => {
         res.json({
             success: true,
             message: `Focus shifted to: ${topic} for ${Math.round(durationMs / 1000)}s`
+        });
+    } catch (err) {
+        res.status(500).json({ success: false, error: err.message });
+    }
+});
+
+/**
+ * POST /api/perception/vision/channel
+ * Body: { channel } - 'desktop' | 'webcam'
+ */
+router.post('/vision/channel', (req, res) => {
+    try {
+        const { channel } = req.body;
+        if (!['desktop', 'webcam'].includes(channel)) {
+            return res.status(400).json({ success: false, error: 'Invalid channel' });
+        }
+
+        const vision = global.SOMA_COS?.visionDaemon;
+        if (!vision) return res.status(503).json({ success: false, error: 'VisionDaemon not loaded' });
+
+        vision.setChannel(channel);
+        res.json({ success: true, channel });
+    } catch (err) {
+        res.status(500).json({ success: false, error: err.message });
+    }
+});
+
+/**
+ * GET /api/perception/vision/last
+ * Returns the latest frame and analysis from the VisionDaemon
+ */
+router.get('/vision/last', (req, res) => {
+    try {
+        const vision = global.SOMA_COS?.visionDaemon;
+        if (!vision) return res.status(503).json({ success: false, error: 'VisionDaemon not loaded' });
+
+        res.json({
+            success: true,
+            channel: vision.channel,
+            lastPerception: vision.lastPerception,
+            ghostCursor: vision.ghostCursor,
+            timestamp: Date.now()
         });
     } catch (err) {
         res.status(500).json({ success: false, error: err.message });

@@ -144,6 +144,21 @@ export async function loadRoutes(app, system) {
         });
     });
 
+    app.get('/api/perception/health', (req, res) => {
+        const manager = system.daemonManager;
+        const broker = system.messageBroker;
+        const attention = broker?.attentionEngine;
+        res.json({
+            success: true,
+            daemons: manager ? manager.health() : [],
+            attention: attention ? {
+                focus: attention.focusTopic || 'general',
+                expires: attention.focusExpiry || null
+            } : null,
+            recentSignals: broker?._recentPublishes?.slice(-10).reverse() || []
+        });
+    });
+
     app.get('/api/memory/status', (req, res) => {
         const mnemonic = system.mnemonic || system.mnemonicArbiter;
         const stats = mnemonic?.getMemoryStats ? mnemonic.getMemoryStats() : null;
@@ -257,7 +272,7 @@ export async function loadRoutes(app, system) {
             const result = await brain.reason(finalPrompt, {
                 sessionId: conversationId || 'orb-link',
                 temperature: 0.4,
-                quickResponse: false, // Force full path for Orb to ensure tool access
+                quickResponse: true, // Voice queries need fast conversational responses
                 ...(reqContext || {})
             });
 
@@ -266,6 +281,21 @@ export async function loadRoutes(app, system) {
             // 5. Response Extraction
             const responseTextRaw = result?.text || result?.response || result?.output || (typeof result === 'string' ? result : '');
             let responseText = responseTextRaw || (result?.success ? "I've processed your request but have no specific text to return." : "My reasoning engine failed to produce a response.");
+
+            // Strip leaked internal reasoning chains (QUERY:/ANALYSIS:/LOGIC_TRAIL: blocks)
+            // These appear when the model ignores the voice instruction and outputs chain-of-thought
+            if (/^(QUERY|ANALYSIS|ASSESSMENT|CONCLUSION|LOGIC_TRAIL):/im.test(responseText)) {
+                // Try to extract just the RESPONSE: block if present
+                const responseBlock = responseText.match(/RESPONSE:\s*["']?([\s\S]+?)(?:\n[A-Z_]+:|$)/i);
+                if (responseBlock) {
+                    responseText = responseBlock[1].trim().replace(/^["']|["']$/g, '');
+                } else {
+                    // Strip all header blocks, keep everything after the last header
+                    responseText = responseText
+                        .replace(/^(QUERY|ANALYSIS|ASSESSMENT OF QUERY|ASSESSMENT|CONCLUSION|LOGIC_TRAIL):[\s\S]*?(?=\n[A-Z][A-Z_]+:|$)/gim, '')
+                        .trim();
+                }
+            }
 
             // â”€â”€ FINAL STAGE TOOL SAFETY NET â”€â”€
             const toolCallMatch = responseText.match(/\{[\s\S]*?"tool"[\s\S]*?\}/);
@@ -1194,11 +1224,11 @@ Return ONLY valid JSON (no markdown, no explanation):
 
             setImmediate(async () => {
                 const envOptions = {
-                    maxFiles: parseInt(process.env.SOMA_INDEX_MAX_FILES || '500000', 10),
-                    maxDepth: parseInt(process.env.SOMA_INDEX_MAX_DEPTH || '20', 10),
-                    concurrency: parseInt(process.env.SOMA_INDEX_CONCURRENCY || '4', 10),
-                    throttleMs: parseInt(process.env.SOMA_INDEX_THROTTLE_MS || '0', 10),
-                    useHash: process.env.SOMA_INDEX_USE_HASH === 'true'
+                    maxFiles:    parseInt(process.env.SOMA_INDEX_MAX_FILES       || '50000', 10),
+                    maxDepth:    parseInt(process.env.SOMA_INDEX_MAX_DEPTH       || '15', 10),
+                    concurrency: parseInt(process.env.SOMA_INDEX_CONCURRENCY     || '2', 10),
+                    throttleMs:  parseInt(process.env.SOMA_INDEX_THROTTLE_MS     || '5', 10),
+                    useHash:     process.env.SOMA_INDEX_USE_HASH === 'true'
                 };
 
                 system.ws?.broadcast?.('trace', {

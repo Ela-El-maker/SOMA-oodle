@@ -117,22 +117,45 @@ export default class MnemonicIndexerArbiter extends BaseArbiterV4 {
       const startTime = Date.now();
       let scanned = 0;
       let indexed = 0;
+      let skippedForMemory = 0;
       const progressCallback = options.progressCallback || null;
-      const progressEvery = options.progressEvery || 200;
-      const maxFiles = options.maxFiles || 500000;
-      const maxDepth = options.maxDepth || 20;
-      const concurrency = options.concurrency || 4;
+      const progressEvery = options.progressEvery || 100;
+      const maxFiles = options.maxFiles || 50000;   // sane default — was 500000
+      const maxDepth = options.maxDepth || 15;      // was 20
+      const concurrency = options.concurrency || 2; // was 4 — 4x parallel remember() causes heap exhaustion
       const skipUnchanged = options.skipUnchanged !== false;
       const useHash = options.useHash || false;
       const dedupe = options.dedupe || process.env.SOMA_INDEX_DEDUP === 'true';
       const hashMaxSize = options.hashMaxSize || 1024 * 1024 * 2; // 2MB
-      const throttleMs = options.throttleMs || 0;
+      const throttleMs = options.throttleMs || 5;   // default 5ms breathing room for GC
+      const HEAP_PRESSURE_THRESHOLD = 0.75;         // skip embedding above 75% heap usage
+      const CONTENT_EMBED_MAX_CHARS = 2000;         // truncate before passing to MnemonicArbiter
+      const MAX_FILE_SIZE_FOR_CONTENT = 2 * 1024 * 1024; // 2MB max for content read (was 10MB)
+
+      // ── Pre-count total files so progress bar shows a real percentage ──
+      // Quick pass: stat + readdir only, no content read. Usually <2s for 10k files.
+      this.log('info', `Counting files in ${targetPath}...`);
+      let totalFiles = 0;
+      const quickCount = async (dir, depth = 0) => {
+          if (depth > maxDepth || totalFiles >= maxFiles) return;
+          try {
+              const entries = await fs.readdir(dir, { withFileTypes: true });
+              for (const entry of entries) {
+                  if (this._isIgnoredPath(path.join(dir, entry.name), entry.name)) continue;
+                  if (entry.isDirectory()) await quickCount(path.join(dir, entry.name), depth + 1);
+                  else if (entry.isFile()) totalFiles++;
+              }
+          } catch {}
+      };
+      await quickCount(targetPath);
+      this.log('info', `Pre-count: ${totalFiles} files to scan`);
 
       this.lastScanState = {
           path: targetPath,
           startedAt: Date.now(),
           scanned: 0,
           indexed: 0,
+          total: totalFiles,
           state: 'running'
       };
       this._saveScanState();
@@ -164,27 +187,43 @@ export default class MnemonicIndexerArbiter extends BaseArbiterV4 {
                   } else if (entry.isFile()) {
                       scanned++;
                       this.lastScanState.scanned = scanned;
-                      
-                      // Throttle state save
+
+                      // Throttle state save (every 2s)
                       if (Date.now() - this._lastScanStateSave > 2000) {
                           this._saveScanState();
                           this._lastScanStateSave = Date.now();
                       }
 
-                      await runTask(async () => {
-                          const didIndex = await this.indexFile(fullPath, {
-                              skipUnchanged,
-                              useHash,
-                              hashMaxSize,
-                              basePath: targetPath,
-                              dedupe
+                      // Heap guard — check memory before queuing embedding work
+                      const mem = process.memoryUsage();
+                      const heapPct = mem.heapUsed / mem.heapTotal;
+                      const underPressure = heapPct > HEAP_PRESSURE_THRESHOLD;
+                      if (underPressure) {
+                          skippedForMemory++;
+                          // Under pressure: just do fast metadata index, skip embedding
+                          await this.fastIndex(fullPath, targetPath);
+                          if (skippedForMemory % 50 === 1) {
+                              this.log('warn', `Heap at ${(heapPct * 100).toFixed(0)}% — skipping embedding for ${skippedForMemory} files (fast-index only)`);
+                          }
+                      } else {
+                          await runTask(async () => {
+                              const didIndex = await this.indexFile(fullPath, {
+                                  skipUnchanged,
+                                  useHash,
+                                  hashMaxSize,
+                                  basePath: targetPath,
+                                  dedupe,
+                                  maxFileSizeForContent: MAX_FILE_SIZE_FOR_CONTENT,
+                                  contentEmbedMaxChars: CONTENT_EMBED_MAX_CHARS
+                              });
+                              if (didIndex) indexed++;
+                              this.lastScanState.indexed = indexed;
                           });
-                          if (didIndex) indexed++;
-                          this.lastScanState.indexed = indexed;
-                      });
-                      if (scanned % 1000 === 0) this.log('info', `Scanned ${scanned} files...`);
+                      }
+
+                      if (scanned % 500 === 0) this.log('info', `Scanned ${scanned}/${totalFiles} files (indexed: ${indexed}, skipped-mem: ${skippedForMemory})...`);
                       if (progressCallback && scanned % progressEvery === 0) {
-                          progressCallback({ scanned, indexed, path: fullPath });
+                          progressCallback({ scanned, indexed, skippedForMemory, total: totalFiles, path: fullPath });
                       }
                       if (throttleMs > 0) {
                           await new Promise(r => setTimeout(r, throttleMs));
@@ -264,8 +303,8 @@ export default class MnemonicIndexerArbiter extends BaseArbiterV4 {
   async indexFile(filePath, options = {}) {
     try {
       const stats = await fs.stat(filePath);
-      // Increased limit for PDFs/DOCX extraction (10MB)
-      if (stats.size > 10 * 1024 * 1024) return; 
+      const maxSizeForContent = options.maxFileSizeForContent || 2 * 1024 * 1024; // 2MB
+      if (stats.size > maxSizeForContent) return; 
 
       const skipUnchanged = options.skipUnchanged !== false;
       const useHash = options.useHash || false;
@@ -322,9 +361,13 @@ export default class MnemonicIndexerArbiter extends BaseArbiterV4 {
         owner: process.env.USERNAME || process.env.USER || 'unknown'
       };
 
-      // 1. Store in Memory
+      // 1. Store in Memory — truncate content to avoid heap exhaustion during embedding
       if (this.mnemonicArbiter) {
-        await this.mnemonicArbiter.remember(content, metadata);
+        const maxChars = options.contentEmbedMaxChars || 2000;
+        const embedContent = content.length > maxChars
+          ? content.substring(0, maxChars) + `\n[...${Math.round((content.length - maxChars) / 1000)}k chars truncated for embedding]`
+          : content;
+        await this.mnemonicArbiter.remember(embedContent, metadata);
       }
 
       // 2. Notify Hybrid Search (Real-time updates)

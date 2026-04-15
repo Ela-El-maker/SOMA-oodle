@@ -7,19 +7,26 @@ const EconomicSovereigntyMonitor = () => {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
+    const inFlight = { current: false };
     const fetchStats = async () => {
+      if (inFlight.current) return;
+      inFlight.current = true;
       try {
-        const response = await fetch('http://localhost:3100/api/status');
+        const response = await fetch('http://localhost:3100/api/status', {
+          signal: AbortSignal.timeout(3000)
+        });
         const data = await response.json();
         setStats(data);
         setLoading(false);
-      } catch (err) {
-        console.error('Failed to fetch MAX stats:', err);
+      } catch {
+        // MAX is a separate process — silence connection errors when it's not running
+      } finally {
+        inFlight.current = false;
       }
     };
 
     fetchStats();
-    const interval = setInterval(fetchStats, 5000);
+    const interval = setInterval(fetchStats, 10000); // reduced from 5s — MAX stats don't change that fast
     return () => clearInterval(interval);
   }, []);
 

@@ -60,13 +60,12 @@ class TimekeeperArbiter extends BaseArbiter {
 
   async initialize() {
     await super.initialize();
-    
+
     this.initializeRhythms();
     this.startTemporalPulse();
     this.startSelfRecoveryLoop();
     this.startSelfAuditLoop();
-    
-    this.registerWithBroker();
+
     this._subscribeBrokerMessages();
 
     this.logger.info(`[${this.name}] ✅ Temporal cycles active`);

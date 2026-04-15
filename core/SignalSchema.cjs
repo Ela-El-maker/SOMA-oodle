@@ -44,6 +44,26 @@ const SignalDefinitions = {
         required: ['ideas']
     },
 
+    // ── Goals & Insights ──
+    'goal.created': {
+        description: 'Emitted when a new goal is created by any source',
+        required: ['goalId', 'title', 'category', 'source', 'priority']
+    },
+    'insight.generated': {
+        description: 'Emitted when a thought synthesis or reasoning produces a new insight',
+        required: ['insight', 'source']
+    },
+
+    // ── Diagnostics & Experiments ──
+    'diagnostic.anomaly': {
+        description: 'Emitted when an anomaly is detected in system health or behavior',
+        required: ['component', 'issue', 'severity']
+    },
+    'experiment.result': {
+        description: 'Emitted when a discovery swarm experiment completes',
+        required: ['experimentId', 'success', 'filepath']
+    },
+
     // ── UI & User ──
     'ui.navigate': {
         description: 'Emitted when the user changes dashboard modules',

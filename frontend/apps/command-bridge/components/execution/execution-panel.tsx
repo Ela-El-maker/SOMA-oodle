@@ -5,7 +5,7 @@ import { Button } from "@/components/ui/button"
 import type { Workflow, ExecutionLog } from "@/lib/types"
 import { Play, RotateCw, AlertCircle, CheckCircle2, Clock } from "lucide-react"
 import { toast } from "react-toastify"
-import somaBackend from "../../../../command-bridge/somaBackend" // Ensure this path is correct
+import somaBackend from "../../somaBackend"
 
 interface ExecutionPanelProps {
   workflow: Workflow | null

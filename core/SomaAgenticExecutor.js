@@ -131,18 +131,27 @@ export class SomaAgenticExecutor {
             // ── File system (sandboxed to SOMA root) ──────────────────────
 
             read_file: {
-                description: "Read any file in SOMA's directory. Use to understand existing code, configs, or data.",
-                args: '{"path":"relative path from SOMA root","maxLines":100}',
-                execute: async ({ path: filePath, maxLines = 100 }) => {
+                description: "Read any file in SOMA's directory with surgical precision. Use to understand existing code, configs, or data. Supports reading specific line ranges.",
+                args: '{"path":"relative path from SOMA root","startLine":1,"endLine":100,"maxLines":500}',
+                execute: async ({ path: filePath, startLine = 1, endLine, maxLines = 500 }) => {
                     try {
                         const resolved = path.resolve(ROOT, filePath);
                         if (!resolved.startsWith(ROOT)) return { error: 'Access denied: outside SOMA root' };
+                        
                         const content = await fs.readFile(resolved, 'utf8');
-                        const lines = content.split('\n');
+                        const allLines = content.split('\n');
+                        
+                        // Calculate range
+                        const start = Math.max(1, startLine) - 1;
+                        const end = endLine ? Math.min(allLines.length, endLine) : Math.min(allLines.length, start + maxLines);
+                        
+                        const lines = allLines.slice(start, end);
                         return {
-                            content: lines.slice(0, maxLines).join('\n'),
-                            totalLines: lines.length,
-                            truncated: lines.length > maxLines
+                            content: lines.join('\n'),
+                            startLine: start + 1,
+                            endLine: end,
+                            totalLines: allLines.length,
+                            truncated: allLines.length > end
                         };
                     } catch (e) {
                         return { error: e.message };
@@ -488,6 +497,17 @@ export class SomaAgenticExecutor {
                     if (!resolved.startsWith(ROOT)) return { error: 'Access denied: outside SOMA root' };
                     if (!/\.(js|cjs|mjs|ts)$/.test(resolved)) return { error: 'Only .js/.cjs/.mjs/.ts files allowed' };
                     try {
+                        // Route through SelfModificationPipeline when available
+                        // (adds Steve review + adversarial debate + NEMESIS code gate)
+                        const pipeline = this.system?.selfModPipeline;
+                        if (pipeline) {
+                            const pResult = await pipeline.propose(filepath, request, 'agentic_executor');
+                            if (pResult.shelved) {
+                                return { success: false, filepath, shelved: true, rounds: pResult.round, nemesisScore: pResult.nemesisScore, summary: 'Change shelved after failing NEMESIS gate — queued in contested_changes.json' };
+                            }
+                            return { success: pResult.implemented, filepath, state: pResult.state, rounds: pResult.round, nemesisScore: pResult.nemesisScore, summary: pResult.implemented ? 'Modification implemented via full review pipeline' : 'Pipeline ran but change not verified' };
+                        }
+                        // Fallback: direct EngineeringSwarm (no review layer)
                         const result = await swarm.modifyCode(resolved, request);
                         const summary = result?.summary || result?.output || result?.result || 'Modification applied via Engineering Swarm safety pipeline';
                         return { success: true, filepath, summary };
@@ -655,7 +675,21 @@ Before declaring DONE, verify your own work using read_file or list_files.`
 
                 let toolResult;
                 try {
-                    toolResult = await this._tools[toolCall.tool].execute(toolCall.args);
+                    // 🔱 Sovereign Bridge: Try hardcoded tool first, then fall back to Registry
+                    const tool = this._tools[toolCall.tool];
+                    if (tool) {
+                        toolResult = await tool.execute(toolCall.args);
+                    } else if (this.system?.toolRegistry?.getTool) {
+                        const dynamicTool = this.system.toolRegistry.getTool(toolCall.tool);
+                        if (dynamicTool) {
+                            console.log(`[${this.name}] 🔄 Executing dynamic registry tool: ${toolCall.tool}`);
+                            toolResult = await dynamicTool.execute(toolCall.args);
+                        } else {
+                            throw new Error(`Tool '${toolCall.tool}' not found in hardcoded list or Registry`);
+                        }
+                    } else {
+                        throw new Error(`Tool '${toolCall.tool}' not found`);
+                    }
                 } catch (e) {
                     toolResult = { error: `${toolCall.tool} failed: ${e.message}` };
                 }

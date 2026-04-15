@@ -84,6 +84,10 @@ class AutonomousHeartbeat extends EventEmitter {
     // key = "source:identifier" → { lastRunAt, lastStatus, lastError, lastDurationMs, runs, failures }
     this.taskState = new Map();
 
+    // ── Goal stall tracking — counts heartbeat attempts per goal ──
+    // key = goalId → { attempts, lastProgress }
+    this._goalAttempts = new Map();
+
     // ── Scheduled jobs (cron/at/every beyond the base interval) ──
     // { id, name, schedule: { kind, ... }, message, enabled, state }
     this.scheduledJobs = [];
@@ -95,6 +99,11 @@ class AutonomousHeartbeat extends EventEmitter {
 
     // ── Idle cycle counter (for proactive messaging cadence) ──
     this._idleCycles = 0;
+
+    // ── Proactive FloatingChat throttle ──
+    // Max 1 heartbeat-sourced proactive message per 15 min, and only for meaningful tasks
+    this._lastProactiveAt = 0;
+    this._PROACTIVE_COOLDOWN_MS = 15 * 60 * 1000;
 
     // ── Drive system: tension / urgency / reward ──
     this.drive = new DriveSystem();
@@ -274,6 +283,23 @@ class AutonomousHeartbeat extends EventEmitter {
     this.stats.lastRun = Date.now();
 
     try {
+      // ── Priority boot-load: activate high-value arbiters on first tick ──
+      // Runs once, 2 minutes after boot (when the system is settled).
+      // Only loads arbiters that are stable and genuinely high-value.
+      if (!this._priorityBootDone && this.system.arbiterLoader) {
+        this._priorityBootDone = true;
+        const PRIORITY_ARBITERS = ['CausalityArbiter.js'];
+        for (const file of PRIORITY_ARBITERS) {
+          // Skip if already loaded
+          const name = file.replace(/\.(js|cjs)$/, '');
+          const alreadyLoaded = this.system.messageBroker?.getArbiter?.(name);
+          if (alreadyLoaded?.instance) continue;
+          this.system.arbiterLoader.loadByFile(file).then(inst => {
+            if (inst) this.logger.log(`[Heartbeat] 🔌 Priority-loaded: ${inst.name || file}`);
+          }).catch(e => this.logger.log(`[Heartbeat] ⚠️ Priority-load failed (${file}): ${e.message}`));
+        }
+      }
+
       // ── Phase 1: Execute any due scheduled jobs ──
       const dueJobs = this._getDueSchedules();
       for (const job of dueJobs) {
@@ -341,13 +367,19 @@ class AutonomousHeartbeat extends EventEmitter {
         // task.gemini === false → use local model (curiosity, nighttime, schedules — save tokens)
         if (!result) {
           const useLocal = !task.gemini;
-          result = await this.system.quadBrain.reason(task.description, {
+          // Prepend goalId to description so SOMA can call complete_goal with the correct ID
+          const goalId = task.context?.goalId;
+          const taskDescription = goalId
+            ? `[ACTIVE GOAL: id=${goalId}]\n${task.description}`
+            : task.description;
+          result = await this.system.quadBrain.reason(taskDescription, {
             localModel:    useLocal,
             quickResponse: false,
             source: 'autonomous_heartbeat',
             context: task.context || {},
+            tools: this.system.toolRegistry?.getToolsManifest?.() || [],
             systemOverride: useLocal
-              ? 'You are SOMA-1T (System 1). Execute this task efficiently using your internal knowledge. Be concise.'
+              ? 'You are SOMA-1T (System 1). Execute this task efficiently using your internal knowledge. Be concise. When the task is done, call complete_goal with the goal ID shown above.'
               : undefined  // Agenda: let QuadBrain route to best available model (PROMETHEUS/Gemini)
           });
         }
@@ -420,6 +452,9 @@ class AutonomousHeartbeat extends EventEmitter {
             durationMs
           });
 
+          // ── Proactive FloatingChat update (throttled, only for meaningful tasks) ──
+          await this._sendProactiveSummary(task, result).catch(() => {});
+
           this.logger.log(`[AutonomousHeartbeat] ✅ Task complete (${durationMs}ms): ${result.text.substring(0, 50)}...`);
         } else {
           this.stats.failures++;
@@ -467,6 +502,62 @@ class AutonomousHeartbeat extends EventEmitter {
   }
 
   /**
+   * Send a brief natural-language summary to FloatingChat when SOMA completes a meaningful task.
+   * Throttled to one message per 15 minutes to avoid spam.
+   * Sources that are NOT worth surfacing: idle cycles, trivial curiosity pings.
+   */
+  async _sendProactiveSummary(task, result) {
+    const broker = require('../../core/MessageBroker.cjs');
+    if (!broker?.sendMessage) return;
+
+    const now = Date.now();
+    if (now - this._lastProactiveAt < this._PROACTIVE_COOLDOWN_MS) return;
+
+    // Only surface tasks that are worth telling Barry about
+    const silentSources = ['curiosity_idle', 'heartbeat', 'health_check'];
+    if (silentSources.includes(task.source)) return;
+
+    // Extract the most informative part of the result
+    let summary = null;
+
+    // For agentic tasks: pull the INSIGHT line
+    const insightMatch = (result.text || '').match(/INSIGHT:\s*(.+?)(?=\n|$)/i);
+    if (insightMatch?.[1]) {
+      summary = insightMatch[1].trim();
+    }
+
+    // For learned concepts: pull what was learned
+    const synthesisMatch = (result.text || '').match(/SYNTHESIS:\s*(.{40,}?)(?=\n|$)/i);
+    if (!summary && synthesisMatch?.[1]) {
+      summary = synthesisMatch[1].trim().substring(0, 160);
+    }
+
+    // Fallback: first meaningful sentence of the response
+    if (!summary) {
+      const raw = (result.text || '').replace(/^(ACTION|RESULT|PROGRESS|COMPLETE|INSIGHT|SYNTHESIS):.*/gmi, '').trim();
+      summary = raw.split(/[.!?]/)[0]?.trim();
+    }
+
+    if (!summary || summary.length < 20) return;
+
+    // Format a natural-sounding message
+    const sourceLabel = task.source === 'GoalPlanner' ? 'goal task' :
+                        task.source === 'LearningAgenda' ? 'research' :
+                        task.source === 'autonomous_schedule' ? 'scheduled task' : 'background task';
+
+    const message = `[Working] Just finished a ${sourceLabel}: ${summary.charAt(0).toUpperCase()}${summary.slice(1)}.`;
+
+    this._lastProactiveAt = now;
+
+    await broker.sendMessage({
+      from: 'AutonomousHeartbeat',
+      to: 'broadcast',
+      type: 'soma_proactive',
+      payload: { message, source: 'heartbeat', taskSource: task.source }
+    });
+  }
+
+  /**
    * Execute a scheduled job via QuadBrain.
    */
   async _executeScheduledJob(job) {
@@ -480,6 +571,7 @@ class AutonomousHeartbeat extends EventEmitter {
         localModel: true,
         source: 'autonomous_schedule',
         context: { scheduleId: job.id, scheduleName: job.name },
+        tools: this.system.toolRegistry?.getToolsManifest?.() || [],
         systemOverride: "You are SOMA-1T (System 1). Execute this scheduled task efficiently. Be concise."
       });
 
@@ -602,6 +694,17 @@ class AutonomousHeartbeat extends EventEmitter {
         }
 
         if (bestGoal) {
+          // ── Stall detection: auto-complete goals stuck at ≥80% after 5 attempts ──
+          const stall = this._goalAttempts.get(bestGoal.id) || { attempts: 0, lastProgress: 0 };
+          if (stall.attempts >= 5 && (bestGoal.metrics?.progress || 0) >= 80) {
+            this.logger.log(`[AutonomousHeartbeat] ⏭️  Stall-completing goal "${bestGoal.title}" (${bestGoal.metrics?.progress || 0}% after ${stall.attempts} attempts)`);
+            await this.system.goalPlanner.completeGoal(bestGoal.id, {
+              result: `Goal reached maximum autonomous effort (${stall.attempts} attempts, ${bestGoal.metrics?.progress || 0}% progress). Marked complete.`
+            }).catch(() => {});
+            this._goalAttempts.delete(bestGoal.id);
+            return null;
+          }
+
           // Activate pending goals — they're ready to work but haven't been started yet
           if (bestGoal.status === 'pending' && this.system.goalPlanner?.startGoal) {
             await this.system.goalPlanner.startGoal(bestGoal.id).catch(() => {});
@@ -609,6 +712,12 @@ class AutonomousHeartbeat extends EventEmitter {
 
           const goal = bestGoal;
           const currentProgress = goal.metrics?.progress || 0;
+
+          // Track attempt count for stall detection
+          const attemptData = this._goalAttempts.get(goal.id) || { attempts: 0, lastProgress: 0 };
+          attemptData.attempts++;
+          attemptData.lastProgress = currentProgress;
+          this._goalAttempts.set(goal.id, attemptData);
 
           // Pull relevant memories for context
           let memoryContext = '';
@@ -662,6 +771,7 @@ INSIGHT: <one key insight worth remembering, or "none">`,
               if (isComplete && newProgress >= 80) {
                 const resultText = (text.match(/RESULT:\s*([\s\S]+?)(?=\nPROGRESS:|$)/i)?.[1] || '').substring(0, 300);
                 await this.system.goalPlanner.completeGoal(goal.id, { result: resultText }).catch(() => {});
+                this._goalAttempts.delete(goal.id); // Reset stall counter on natural completion
                 this.drive.onGoalComplete(goal); // Reward: big tension drop + satisfaction spike
                 this.logger.log(`[AutonomousHeartbeat] 🏆 Goal COMPLETED: "${goal.title}"`);
                 this._broadcast('soma_activity', {

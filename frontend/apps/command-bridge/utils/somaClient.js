@@ -11,7 +11,8 @@ const SOMA_WS_BASE = `${window.location.protocol === 'https:' ? 'wss:' : 'ws:'}/
  */
 export async function reasonWithSoma(
   query,
-  conversationId
+  conversationId,
+  options = {}
 ) {
   try {
     console.log('🧠 Sending to SOMA:', query.substring(0, 50) + '...');
@@ -24,6 +25,7 @@ export async function reasonWithSoma(
       body: JSON.stringify({
         message: query,
         conversationId: conversationId || generateConversationId(),
+        ...options,
       }),
     });
 
@@ -197,16 +199,30 @@ function generateConversationId() {
  * Helper to format SOMA's response for speech
  */
 export function formatResponseForSpeech(response) {
-  // Remove markdown formatting
   let text = response
-    .replace(/\*\*(.*?)\*\*/g, '$1') // Bold
-    .replace(/\*(.*?)\*/g, '$1')     // Italic
-    .replace(/`(.*?)`/g, '$1')       // Code
+    .replace(/\*\*(.*?)\*\*/g, '$1')           // Bold
+    .replace(/\*(.*?)\*/g, '$1')               // Italic
+    .replace(/`{1,3}[^`]*`{1,3}/g, '')         // Code blocks — drop them, unreadable aloud
     .replace(/!?\[([^\]]*)\]\([^)]*\)/g, '$1') // Links
-    .replace(/#{1,6}\s/g, '');       // Headers
+    .replace(/#{1,6}\s+/g, '');                // Headers
 
-  // Remove excessive newlines
-  text = text.replace(/\n{3,}/g, '\n\n');
+  // Convert numbered lists to spoken form: "1. Item" → "First, Item"
+  const ordinals = ['First', 'Second', 'Third', 'Fourth', 'Fifth', 'Sixth', 'Seventh', 'Eighth', 'Ninth', 'Tenth'];
+  let listIdx = 0;
+  text = text.replace(/^\s*\d+\.\s+/gm, () => {
+    const word = ordinals[listIdx] || `${listIdx + 1}`;
+    listIdx++;
+    return `${word}, `;
+  });
+
+  // Convert bullet points to natural pauses
+  text = text.replace(/^\s*[-*•]\s+/gm, '... ');
+
+  // Collapse whitespace
+  text = text.replace(/\n+/g, ' ').replace(/\s{2,}/g, ' ');
+
+  // Trim filler openers SOMA sometimes adds in text mode
+  text = text.replace(/^(Certainly!?\s*|Absolutely!?\s*|Of course!?\s*|Sure!?\s*|Great!?\s*)/i, '');
 
   return text.trim();
 }

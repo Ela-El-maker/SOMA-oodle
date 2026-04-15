@@ -15,45 +15,37 @@ class MessageBroker extends EventEmitter {
   constructor() {
     super();
 
-    // Registered arbiters
-    this.arbiters = new Map();
+    // 🔱 Sovereign CNS: Physically lock state across all module boundaries
+    if (!global.__SOMA_CNS__) {
+        global.__SOMA_CNS__ = {
+            arbiters: new Map(),
+            lobeIndex: new Map(),
+            classificationIndex: new Map(),
+            discoveryIndex: new Map(),
+            subscriptions: new Map(),
+            recentPublishes: [],
+            messageHistory: [],
+            metrics: {
+                messagesSent: 0,
+                messagesDelivered: 0,
+                messagesFailed: 0,
+                startTime: Date.now()
+            }
+        };
+    }
+
+    const cns = global.__SOMA_CNS__;
+    this.arbiters = cns.arbiters;
+    this.lobeIndex = cns.lobeIndex;
+    this.classificationIndex = cns.classificationIndex;
+    this.discoveryIndex = cns.discoveryIndex;
+    this.subscriptions = cns.subscriptions;
+    this._recentPublishes = cns.recentPublishes;
+    this.messageHistory = cns.messageHistory;
+    this.metrics = cns.metrics;
 
     // CNS: Impulse Compression & Validation
     this.signalRegistry = SignalRegistry;
-    this.compressor = new SignalCompressor({
-      windowMs: 1000,
-      onCompressed: (signal) => this._deliverSignal(signal)
-    });
-
-    // Neural Indices
-    this.lobeIndex = new Map(); // lobe -> Set(names)
-    this.classificationIndex = new Map(); // classification -> Set(names)
-
-    // CNS: Attention & Focus Gate
-    this.attentionEngine = null;
-
-    // Discovery (Unused list)
-    this.discoveryIndex = new Map(); // filename -> metadata
-
-    // Topic subscriptions
-    this.subscriptions = new Map();
-
-    // Recent publish ring buffer (last 20 pub/sub signals for perception dashboard)
-    this._recentPublishes = [];
-
-    // Message history for replay/debugging (circular buffer)
-    this.messageHistory = [];
-    this.maxHistorySize = 1000;
-    this.historyWriteIndex = 0;  // Circular buffer write pointer
-    this.historyFull = false;     // Track if buffer has wrapped
-
-    // Metrics
-    this.metrics = {
-      messagesSent: 0,
-      messagesDelivered: 0,
-      messagesFailed: 0,
-      startTime: Date.now()
-    };
   }
 
   // ===========================
@@ -211,7 +203,11 @@ class MessageBroker extends EventEmitter {
         const sourceMeta = this.arbiters.get(envelope.source);
         if (sourceMeta && sourceMeta.lobe && sourceMeta.lobe !== lobe) return; // wrong lobe — skip
       }
-      handler(envelope);
+      if (typeof handler === 'function') {
+        handler(envelope);
+      } else {
+        console.warn(`[MessageBroker] 🛡️ Blocked invalid handler in lobe subscription: ${lobe}/${topic}`);
+      }
     };
     return this.subscribe(topic, filtered);
   }
@@ -229,10 +225,10 @@ class MessageBroker extends EventEmitter {
     const envelope = this._createEnvelope(message, topic);
 
     // PERFORMANCE FIX: Parallelize handler execution with Promise.allSettled
-    // Previous: Sequential await (10 handlers @ 100ms each = 1 second)
-    // Now: Parallel execution (10 handlers @ 100ms each = ~100ms)
     const results = await Promise.allSettled(
-      Array.from(handlers).map(handler => handler(envelope))
+      Array.from(handlers)
+        .filter(h => typeof h === 'function')
+        .map(handler => handler(envelope))
     );
 
     // Count successes and failures
@@ -884,6 +880,9 @@ class MessageBroker extends EventEmitter {
   }
 }
 
-// Singleton instance
-const messageBroker = new MessageBroker();
+// 🔱 Sovereign Singleton: Ensure one master broker across all CJS/ESM boundaries
+if (!global.__SOMA_BROKER__) {
+    global.__SOMA_BROKER__ = new MessageBroker();
+}
+const messageBroker = global.__SOMA_BROKER__;
 module.exports = messageBroker;

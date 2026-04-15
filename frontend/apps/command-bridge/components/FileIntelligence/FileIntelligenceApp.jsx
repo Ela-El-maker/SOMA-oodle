@@ -145,10 +145,21 @@ const FileIntelligenceApp = () => {
             if (phase === 'storage_index_progress' && progress) {
                 const filesFound = progress.scanned || 0;
                 const indexed = progress.indexed || 0;
-                setScanningStatus(prev => ({ ...prev, filesFound, currentDir: progress.path || prev.currentDir }));
-                const total = Math.max(filesFound, 1);
-                const pct = Math.min(100, (indexed / total) * 100);
-                setIngestionProgress(Math.max(5, pct));
+                const skipped = progress.skippedForMemory || 0;
+                const total = progress.total || 0;
+                setScanningStatus(prev => ({
+                    ...prev,
+                    filesFound,
+                    indexed,
+                    skippedForMemory: skipped,
+                    total,
+                    currentDir: progress.path || prev.currentDir
+                }));
+                // Real percentage: scanned / total (pre-counted before scan started)
+                // Falls back to scanned/50000 if pre-count wasn't available
+                const denominator = total > 0 ? total : 50000;
+                const pct = Math.min(98, (filesFound / denominator) * 100);
+                setIngestionProgress(Math.max(2, pct));
                 return;
             }
 

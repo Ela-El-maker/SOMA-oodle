@@ -124,6 +124,7 @@ export class CuriosityEngine extends EventEmitter {
     if (this.messageBroker) {
       this.messageBroker.subscribe('curiosity:stimulate', this._handleCuriosityStimulation.bind(this));
       this.messageBroker.subscribe('learning:completed', this._handleLearningCompletion.bind(this));
+      this.messageBroker.subscribe('system.focus.shifted', this._handleFocusShift.bind(this));
       console.log(`[${this.name}]    Subscribed to MessageBroker events`);
     }
 
@@ -289,9 +290,11 @@ export class CuriosityEngine extends EventEmitter {
         }
       }
 
-      // Check known limitations
+      // Check known limitations — skip permanently unresolvable ones (explored > 50 times)
       for (const [limitation, severity] of this.selfModel.limitations) {
         if (severity > 0.5) {
+          const timesExplored = this.explorationHistory.get(limitation) || 0;
+          if (timesExplored > 50) continue; // Physical/hardware limits can't be resolved by research
           gaps.push({
             type: 'limitation',
             gap: limitation,
@@ -712,7 +715,6 @@ Return ONLY the search query, nothing else.`;
       item
     };
 
-    this.stats.explorationsStarted++;
     this._dirty = true;
     // Completion is tracked async via learning:completed event
 
@@ -1011,7 +1013,27 @@ Return ONLY the search query, nothing else.`;
     this.stimulateCuriosity(data);
   }
 
+  _handleFocusShift(signal) {
+    const { topic } = signal.payload || {};
+    if (!topic || topic === 'general') return;
+    // Boost queue items that match the new focus topic so they surface sooner
+    let boosted = 0;
+    for (const item of this.curiosityQueue) {
+      const text = `${item.question || ''} ${item.gap || ''}`.toLowerCase();
+      if (text.includes(topic.toLowerCase())) {
+        item.finalPriority = (item.finalPriority || item.priority || 0) + 0.3;
+        boosted++;
+      }
+    }
+    if (boosted > 0) {
+      this.curiosityQueue.sort((a, b) => (b.finalPriority || 0) - (a.finalPriority || 0));
+      console.log(`[${this.name}] 🎯 Focus shifted to "${topic}" — boosted ${boosted} queue items`);
+    }
+  }
+
   async _handleLearningCompletion(data) {
+    this.stats.explorationsCompleted++;
+    this._dirty = true;
     this._onLearningSuccess(data);
   }
 

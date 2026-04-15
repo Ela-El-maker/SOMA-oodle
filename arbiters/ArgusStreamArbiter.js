@@ -21,12 +21,13 @@ export class ArgusStreamArbiter extends BaseArbiter {
   constructor(id, config = {}) {
     super(id, config);
     this.name = 'ArgusStreamArbiter';
-    this.fps = config.fps || 5;
+    this.fps = config.fps || 1; // 1 FPS is much safer for CPU/GPU stability
     this.maxBufferSize = config.maxBufferSize || 30;
-    this.motionThreshold = config.motionThreshold || 500;
+    this.motionThreshold = config.motionThreshold || 5000; // Filter out minor noise/flicker
     this.frameBuffer = [];
     this.isMonitoring = false;
     this.lastAnalyzedTimestamp = 0;
+    this.neuralAnalysisCooldown = 10000; // 10s cooldown to prevent overheating
   }
 
   async onInitialize() {
@@ -50,7 +51,7 @@ export class ArgusStreamArbiter extends BaseArbiter {
 
     const hasMotion = await this._detectMotion(frameData, previousFrame?.frameData);
 
-    if (hasMotion && (timestamp - this.lastAnalyzedTimestamp > 2000)) {
+    if (hasMotion && (timestamp - this.lastAnalyzedTimestamp > this.neuralAnalysisCooldown)) {
       this.lastAnalyzedTimestamp = timestamp;
       await this._performNeuralAnalysis(frameData, source);
     }

@@ -78,6 +78,10 @@ import './styles/soma-ui-control.css';
 import './styles/emotes.css';
 import SettingsModule from './components/SettingsModule';
 import CommandPalette from './components/CommandPalette';
+import PerceptionPanel from './components/PerceptionPanel';
+import SelfModFeed from './components/SelfModFeed';
+import BootHealthWidget from './components/BootHealthWidget';
+import GoalsPanel from './components/GoalsPanel';
 import CharacterCard from './components/CharacterCard';
 import CharacterGacha from './components/CharacterGacha';
 
@@ -108,8 +112,12 @@ const CommandCenterPanel = ({
   const steveScrollRef = React.useRef(null);
 
   // Poll Steve status + daemon health every 10s
+  // inFlight ref prevents parallel requests if a fetch takes longer than the interval
   React.useEffect(() => {
+    const inFlight = { current: false };
     const fetchStatus = async () => {
+      if (inFlight.current) return;
+      inFlight.current = true;
       try {
         const [sRes, dRes, pRes] = await Promise.all([
           fetch('/api/soma/steve/status'),
@@ -126,6 +134,7 @@ const CommandCenterPanel = ({
           setPerceptionData({ attention: p.attention, recentSignals: p.recentSignals || [] });
         }
       } catch {}
+      finally { inFlight.current = false; }
     };
     fetchStatus();
     const t = setInterval(fetchStatus, 10000);
@@ -979,7 +988,10 @@ const SomaCommandBridge = () => {
     sendTextQuery,
     somaHealthy,
     inputVolume,
-    speakText
+    speakText,
+    wakeWordActive,
+    startWakeWordListening,
+    stopWakeWordListening
   } = useSomaAudio(handleOrbResponse);
 
   // Expose text query globally for manual input
@@ -1988,6 +2000,8 @@ const SomaCommandBridge = () => {
           isSomaBusy={isSomaBusy}
           isConnected={isConnected}
           sidebarCollapsed={sidebarCollapsed}
+          wakeWordActive={wakeWordActive}
+          onWakeWordToggle={() => wakeWordActive ? stopWakeWordListening() : startWakeWordListening()}
         />
       </div>
 
@@ -2097,6 +2111,16 @@ const SomaCommandBridge = () => {
               <div className="col-span-2">
                 <MindsEye isConnected={isConnected} />
               </div>
+            </div>
+
+            <div className="grid grid-cols-2 gap-6">
+              <PerceptionPanel isConnected={isConnected} />
+              <SelfModFeed isConnected={isConnected} />
+            </div>
+
+            <div className="grid grid-cols-2 gap-6">
+              <BootHealthWidget isConnected={isConnected} />
+              <GoalsPanel isConnected={isConnected} />
             </div>
           </div>
         )}
@@ -2225,7 +2249,7 @@ const SomaCommandBridge = () => {
 
             {/* Center: The Orb / Face */}
             <div className="flex-1 flex flex-col items-center justify-center relative z-10">
-              <div className="h-[400px] w-full flex items-center justify-center">
+              <div className="h-[550px] w-full flex items-center justify-center pointer-events-none">
                 {showOrbFace ? (
                   <RobotFace
                     volume={volume}
@@ -2239,22 +2263,37 @@ const SomaCommandBridge = () => {
                 )}
               </div>
 
-              {/* Synth Wave — reacts to SOMA's voice in black/purple */}
-              <div className="flex items-center justify-center mb-4">
-                <SynthWave volume={volume} isTalking={isTalking} isActive={isOrbConnected} />
-              </div>
+              {/* Synth Wave — reacts to SOMA's voice in black/purple — HIDE WHEN FACE IS ACTIVE */}
+              {!showOrbFace && (
+                <div className="flex items-center justify-center mb-4 pointer-events-none">
+                  <SynthWave volume={volume} isTalking={isTalking} isActive={isOrbConnected} />
+                </div>
+              )}
 
-              <div className="mt-4 flex flex-col items-center gap-4 w-full max-w-xl px-10">
+              <div className="mt-4 flex flex-col items-center gap-4 w-full max-w-xl px-10 relative z-[100]">
                 {/* Neural Link Button */}
-                <button
-                  className={`px-10 py-3 rounded-full font-bold uppercase tracking-[0.2em] text-xs transition-all shadow-lg ${isOrbConnected 
-                    ? 'bg-rose-500/20 text-rose-400 border border-rose-500/50 hover:bg-rose-500/30' 
-                    : 'bg-fuchsia-500/20 text-fuchsia-400 border border-fuchsia-500/30 hover:bg-fuchsia-500/30'
-                  }`}
-                  onClick={() => isOrbConnected ? disconnectOrb() : connectOrb()}
-                >
-                  {isOrbConnected ? '● Disengage Neural Link' : '○ Establish Neural Link'}
-                </button>
+                <div className="flex items-center gap-3">
+                  <button
+                    className={`px-10 py-3 rounded-full font-bold uppercase tracking-[0.2em] text-xs transition-all shadow-lg pointer-events-auto ${isOrbConnected
+                      ? 'bg-rose-500/20 text-rose-400 border border-rose-500/50 hover:bg-rose-500/30'
+                      : 'bg-fuchsia-500/20 text-fuchsia-400 border border-fuchsia-500/30 hover:bg-fuchsia-500/30'
+                    }`}
+                    onClick={() => isOrbConnected ? disconnectOrb() : connectOrb()}
+                  >
+                    {isOrbConnected ? '● Disengage Neural Link' : '○ Establish Neural Link'}
+                  </button>
+                  {/* Wake Word Toggle */}
+                  <button
+                    title={wakeWordActive ? 'Wake word active — say "Hey SOMA"' : 'Enable wake word'}
+                    className={`w-9 h-9 rounded-full border text-xs transition-all pointer-events-auto flex items-center justify-center ${wakeWordActive
+                      ? 'bg-emerald-500/20 border-emerald-500/50 text-emerald-400 animate-pulse'
+                      : 'bg-white/5 border-white/10 text-zinc-500 hover:border-white/20'
+                    }`}
+                    onClick={() => wakeWordActive ? stopWakeWordListening() : startWakeWordListening()}
+                  >
+                    {wakeWordActive ? '◉' : '◎'}
+                  </button>
+                </div>
 
                 {/* Manual Input Field */}
                 {isOrbConnected && (

@@ -18,7 +18,14 @@ if not exist "node_modules" (
     npm install
 )
 
-echo   [3] Starting SOMA ULTRA...
+echo   [3] Starting Project Siren (Fish-Speech TTS)...
+echo       - Fish-Speech Core on :8080
+echo       - Paula Voice Proxy on :8081
+start "" /B powershell.exe -WindowStyle Hidden -ExecutionPolicy Bypass -File "%~dp0start_siren.ps1"
+echo       Siren launching in background (takes ~15s to warm up)...
+echo.
+
+echo   [4] Starting SOMA ULTRA...
 echo       - Backend: Enabled
 echo       - Frontend: Serving from /dist
 echo       - GPU Acceleration: Enabled

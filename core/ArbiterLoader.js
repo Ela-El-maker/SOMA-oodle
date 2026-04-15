@@ -40,18 +40,23 @@ export class ArbiterLoader {
         this._manifest     = {};           // capability → [{ file, cls, lobe, role, status, error }]
         this._loading      = new Map();    // file → Promise (dedupe concurrent loads)
         this._require      = createRequire(import.meta.url);
+        this._isBuilding   = false;        // Re-entrancy guard
     }
 
     // ── Lifecycle ────────────────────────────────────────────────────────
 
     async initialize() {
         await this._loadManifest();
-        // Rebuild in background — picks up new files, doesn't block boot
-        this._buildManifest().catch(err =>
-            console.warn('[ArbiterLoader] Manifest build error:', err.message)
-        );
         const total = Object.keys(this._manifest).length;
-        console.log(`[ArbiterLoader] 📚 Arbiter inventory: ${total} capabilities mapped`);
+        console.log(`[ArbiterLoader] 📚 Arbiter inventory: ${total} capabilities mapped (manifest rebuild deferred 90s)`);
+        // Defer manifest rebuild until 90s after boot — the manifest is only needed
+        // for on-demand lazy loading, not for serving requests. Building it at boot
+        // floods the I/O queue with 169 file reads and starves the event loop.
+        setTimeout(() => {
+            this._buildManifest().catch(err =>
+                console.warn('[ArbiterLoader] Manifest build error:', err.message)
+            );
+        }, 90_000);
         return this;
     }
 
@@ -249,12 +254,18 @@ export class ArbiterLoader {
      * Preserves verified/failed status from previous runs.
      */
     async _buildManifest() {
+        if (this._isBuilding) {
+            console.log('[ArbiterLoader] 🛡️ Blocked recursive manifest build request.');
+            return;
+        }
+        this._isBuilding = true;
         let files;
         try {
             const entries = await fs.readdir(ARBITERS_DIR);
             files = entries.filter(f => f.endsWith('.js') || f.endsWith('.cjs'));
         } catch (err) {
             console.warn('[ArbiterLoader] Could not read arbiters dir:', err.message);
+            this._isBuilding = false;
             return;
         }
 
@@ -269,25 +280,32 @@ export class ArbiterLoader {
             }
         };
 
-        for (const file of files) {
-            const scanned = await this._scanFile(file);
-            if (!scanned) continue;
-
-            // Restore preserved status from old manifest
-            const oldEntries = Object.values(this._manifest).flat();
-            const old = oldEntries.find(e => e.file === file);
-            if (old?.status) {
-                scanned.status = old.status;
-                if (old.error) scanned.error = old.error;
-            }
-
-            for (const cap of scanned.capabilities || ['_uncategorized']) {
-                addEntry(cap, { ...scanned });
-            }
+        // Process in batches of 10 with an event-loop yield between batches.
+        // Without this, scanning 169 files back-to-back saturates the I/O queue
+        // and makes the HTTP event loop unresponsive during boot.
+        const BATCH_SIZE = 10;
+        const oldEntries = Object.values(this._manifest).flat();
+        for (let i = 0; i < files.length; i += BATCH_SIZE) {
+            const batch = files.slice(i, i + BATCH_SIZE);
+            await Promise.all(batch.map(async (file) => {
+                const scanned = await this._scanFile(file);
+                if (!scanned) return;
+                const old = oldEntries.find(e => e.file === file);
+                if (old?.status) {
+                    scanned.status = old.status;
+                    if (old.error) scanned.error = old.error;
+                }
+                for (const cap of scanned.capabilities || ['_uncategorized']) {
+                    addEntry(cap, { ...scanned });
+                }
+            }));
+            // Yield to event loop between batches so HTTP requests can be served
+            await new Promise(resolve => setImmediate(resolve));
         }
 
         this._manifest = fresh;
         await this._saveManifest();
+        this._isBuilding = false;
         console.log(`[ArbiterLoader] 📋 Manifest rebuilt: ${files.length} files → ${Object.keys(fresh).length} capabilities`);
     }
 

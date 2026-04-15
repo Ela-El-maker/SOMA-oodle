@@ -10,6 +10,19 @@ import path from 'path';
 import fs from 'fs/promises';
 import crypto from 'crypto';
 
+// Files the swarm must never autonomously modify — matches SelfModificationPipeline list
+const IMMUTABLE_PATHS = [
+    'server/routes/somaRoutes.js',
+    'launcher_ULTRA.mjs',
+    'start_production.bat',
+    'clean_restart.bat',
+    'core/SomaBootstrapV2.js',
+    'core/SelfModificationPipeline.js',
+    'server/loaders/',
+    'config/',
+    'ecosystem.config.cjs',
+];
+
 export const DebateSchema = {
     type: "object",
     properties: {
@@ -33,9 +46,23 @@ export const PatchSchema = {
                         type: "object",
                         properties: {
                             path: { type: "string" },
-                            content: { type: "string" }
+                            // full_rewrite mode: provide complete file content
+                            content: { type: "string" },
+                            // surgical mode: provide targeted old→new replacements (preferred for large files)
+                            edits: {
+                                type: "array",
+                                items: {
+                                    type: "object",
+                                    properties: {
+                                        old: { type: "string" },
+                                        new: { type: "string" }
+                                    },
+                                    required: ["old", "new"]
+                                }
+                            }
                         },
-                        required: ["path", "content"]
+                        required: ["path"]
+                        // Note: either 'content' or 'edits' must be present — enforced at runtime by SwarmPatchTransaction
                     }
                 }
             },
@@ -173,6 +200,17 @@ export class EngineeringSwarmArbiter extends BaseArbiterV4 {
    * Orchestrates the research, plan, debate, and synthesis cycle.
    */
   async modifyCode(filepath, request, onProgress = null) {
+    const normPath = (filepath || '').replace(/\\/g, '/');
+    const blocked = IMMUTABLE_PATHS.find(p => normPath.includes(p.replace(/\\/g, '/')));
+    if (blocked) {
+      this.auditLogger.warn(`[EngSwarm] 🚫 BLOCKED modifyCode on "${filepath}" — matches protected path "${blocked}"`);
+      return { success: false, error: `Protected path: ${blocked} — only Barry can modify this file` };
+    }
+
+    if (!this.quadBrain) {
+      this.auditLogger.error('[EngSwarm] Cannot modifyCode — quadBrain is null (QuadBrain not yet ready)');
+      return { success: false, error: 'quadBrain not initialized — try again after system is fully booted' };
+    }
     const emit = (phase, message) => { if (onProgress) onProgress(phase, message); };
 
     this.auditLogger.info(`⚡ [EngSwarm] Engineering loop started for ${filepath}`);
@@ -293,11 +331,15 @@ export class EngineeringSwarmArbiter extends BaseArbiterV4 {
     const prompt = `[NORTH STAR]: ${state.northStar}
     [PREVIOUS ERROR]: ${state.lastError || "None - Initial Attempt"}
     
-    You are the SWARM PLANNER. Generate verification commands to prove the goal is met.
+    You are the RALPH VERIFIER (Autonomous Stress-Tester).
     Context File: ${context.filepath}
     
-    Return ONLY a JSON array of commands:
-    [{ "command": "node --check somefile.js" }]`;
+    TASK: Generate a robust validation plan to prove the code patch is functionally correct and structurally safe.
+    Instead of just checking syntax, write a command that executes an autonomous test.
+    If you need to test logic, you can instruct the system to run a dynamically generated test script or use an existing test runner.
+    
+    Return ONLY a JSON array of commands to execute. Ensure they return exit code 0 on success, and >0 on failure.
+    [{ "command": "node --check ${context.filepath} && npm test" }]`;
 
     const result = await this.quadBrain.reason(prompt, { brain: 'LOGOS' });
     const jsonMatch = result.text.match(/\[[\s\S]*\]/s);
@@ -341,11 +383,21 @@ export class EngineeringSwarmArbiter extends BaseArbiterV4 {
     const prompt = `[NORTH STAR]: ${state.northStar}
     [CONSENSUS]: ${debate.consensus}
     [PREVIOUS ERROR]: ${state.lastError || "None"}
-    
+
     Produce final code patch for ORIGINAL FILE: ${context.filepath}
-    
-    Return ONLY JSON matching this schema:
-    { "patch": { "files": [{ "path": "...", "content": "..." }] } }`;
+
+    PATCH FORMAT RULES (AEGIS Protocol — read carefully):
+    - If the file is large (>100 lines) or already exists: use SURGICAL edits.
+      Surgical format: { "path": "...", "edits": [{ "old": "exact string", "new": "replacement" }] }
+      Each "old" must be an EXACT verbatim substring of the current file. Copy it character-for-character.
+      Make the "old" string unique enough (include 1-2 surrounding lines of context) to avoid ambiguity.
+    - If the file is new or small (<100 lines): full rewrite is acceptable.
+      Full rewrite format: { "path": "...", "content": "entire file content" }
+    - NEVER use full_rewrite on large existing files. The AEGIS guard will block it if you delete routes or functions.
+    - You may mix modes: different files in the same patch can use different formats.
+
+    Return ONLY JSON:
+    { "patch": { "files": [{ "path": "...", "edits": [{ "old": "...", "new": "..." }] }] } }`;
 
     const result = await this.quadBrain.reason(prompt, { brain: 'LOGOS' });
     const jsonMatch = result.text.match(/\{[\s\S]*\}/s);
@@ -360,18 +412,30 @@ export class EngineeringSwarmArbiter extends BaseArbiterV4 {
   }
 
   async verifyPatch(patch, tasks) {
-    this.auditLogger.info(`[Tester] 🛡️ Verifying execution...`);
+    this.auditLogger.info(`[Ralph] 🛡️ Running autonomous verification loop...`);
     
     for (const task of tasks) {
         this.commandPolicy.validate(task.command);
-        const execResult = await this.runtime.runTasks([new SwarmTask({
-            description: 'Verification Task',
+        const taskObj = new SwarmTask({
+            description: 'Ralph Verification Task',
             command: task.command,
             cwd: this.rootPath
-        })]);
+        });
         
-        if (execResult[0].error) {
-            return { passed: false, error: execResult[0].error };
+        // runTasks returns the artifact ledger (array of Artifacts)
+        const ledgerLengthBefore = this.runtime.artifactLedger.length;
+        await this.runtime.runTasks([taskObj]);
+        
+        // Examine artifacts produced by this specific task
+        const newArtifacts = this.runtime.artifactLedger.slice(ledgerLengthBefore);
+        const errorArtifacts = newArtifacts.filter(a => a.metadata?.isError || a.metadata?.exitCode !== 0);
+        
+        // If task status isn't 'done' (0 exit code) or there are error logs
+        if (taskObj.status !== 'done' || errorArtifacts.length > 0) {
+            const errorLogs = errorArtifacts.map(a => a.content).join('\n');
+            const failMsg = errorLogs || `Task crashed with status: ${taskObj.status}`;
+            this.auditLogger.error(`[Ralph] Verification failed on command: ${task.command}`);
+            return { passed: false, error: failMsg };
         }
     }
 

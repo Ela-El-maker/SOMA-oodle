@@ -9,6 +9,7 @@
 
 import path from 'path';
 import { createRequire } from 'module';
+import { sentinel } from '../../core/DependencySentinel.js';
 
 const require = createRequire(import.meta.url);
 
@@ -26,6 +27,8 @@ import { SkillRegistryArbiter } from '../../arbiters/SkillRegistryArbiter.js';
 import MnemonicIndexerArbiter from '../../arbiters/MnemonicIndexerArbiter.js';
 import { Odyssey } from '../../core/Odyssey.js';
 import { Trident } from '../../core/Trident.js';
+import { SelfModificationPipeline } from '../../core/SelfModificationPipeline.js';
+import { NemesisArbiter } from '../../arbiters/NemesisArbiter.js';
 import { NauticalParser } from '../../core/NauticalParser.js';
 import { RegistryLoader } from '../../core/RegistryLoader.js';
 import { ReflectionsArbiter } from '../../arbiters/ReflectionsArbiter.js';
@@ -191,9 +194,9 @@ const SAFE_LOAD_TIMEOUT_MS = 10000; // 10 seconds max — short timeouts cause z
 
 // Yield the event loop between arbiter loads so HTTP requests can be served.
 // setImmediate fires AFTER pending I/O callbacks — a proper event loop tick.
-// setTimeout only waits a time interval and doesn't yield to pending I/O.
 async function yieldEventLoop() {
-    await new Promise(resolve => setImmediate(resolve));
+    // 🔱 PRODUCTION GRADE: Force a mandatory pause to prevent event-loop starvation
+    await new Promise(resolve => setTimeout(resolve, 50)); 
 }
 
 // Memory ceiling — skip non-essential arbiters if heap exceeds this.
@@ -422,6 +425,16 @@ export async function loadEssentialSystems(system) {
             
             ext.odyssey = odyssey;
             ext.trident = system.trident;
+
+            // 🔱 VOYAGE ARBITER: Physical Hands for Navigation
+            const { VoyageArbiter } = await import('../../arbiters/VoyageArbiter.js');
+            ext.voyageArbiter = new VoyageArbiter({
+                odyssey: system.odyssey,
+                trident: system.trident,
+                messageBroker: system.messageBroker
+            });
+            await ext.voyageArbiter.initialize();
+            system.voyageArbiter = ext.voyageArbiter;
             
             console.log('    🔱 Poseidon Protocol: Odyssey Navigator & Nautical Notation (ONLINE)');
         } catch (e) {
@@ -545,7 +558,7 @@ export async function loadExtendedSystems(system) {
         const useHybridWorker = process.env.SOMA_HYBRID_WORKER === 'true';
         ext.hybridSearch = await safeLoad('HybridSearchArbiter', () =>
             new HybridSearchArbiter({ name: 'HybridSearchArbiter', useWorker: useHybridWorker })
-        );
+        , { timeoutMs: 45000 });
     } else {
         console.log(`    ⏭️ HybridSearchArbiter deferred (heap: ${heapBeforeHybrid.toFixed(0)}MB, loads 290MB ML model)`);
         ext.hybridSearch = null;
@@ -733,18 +746,23 @@ export async function loadExtendedSystems(system) {
         })
     );
 
+    // 🔱 SOVEREIGN PATCH: Break the Recursive Loading Loop
+    // Use the PatchLoader to hot-wire her evolution engine bypassing the deadlocked ArbiterLoader.
+        // 🔱 SOVEREIGN PATCH: Verified Singleton Evolution Engine
+        ext.capabilityExpansion = await pLoader.forceLoad('AutonomousCapabilityExpansion', 'arbiters/AutonomousCapabilityExpansion.js');
+        if (ext.capabilityExpansion) {
+            ext.capabilityExpansion.baseDir = 'C:\\Users\\barry\\Desktop\\SOMA';
+            system.capabilityExpansion = ext.capabilityExpansion;
+            console.log('    🔱 ASI Evolution Engine: PHYSICALLY ANCHORED');
+        }
+
     // SelfImprovementCoordinator: the workforce that executes self-improvement goals.
-    // Each of its 5 sub-arbiters loads with try/catch — graceful degradation if any fail.
-    // NoveltyTracker + SkillAcquisition are lightweight. SelfModification does code analysis.
-    // Wire nemesis so SelfModification can evaluate proposed changes before committing.
     ext.selfImprovement = await safeLoad('SelfImprovementCoordinator', () =>
         new SelfImprovementCoordinator({
             quadBrain:    system.quadBrain,
             outcomeTracker: ext.outcomeTracker,
             messageBroker: system.messageBroker,
-            nemesis:      system.nemesis       // quality-gate for proposed changes
-            // memory omitted — BaseArbiterV4 uses its own TransmitterManager;
-            // MnemonicArbiter lacks the stats() method BaseArbiter expects
+            nemesis:      system.nemesis
         })
     , { timeoutMs: 60000 });
     if (ext.selfImprovement) {
@@ -798,6 +816,8 @@ export async function loadExtendedSystems(system) {
         });
         await arbiter.initialize();
         if (system.quadBrain) arbiter.setQuadBrain(system.quadBrain);
+        arbiter.setSystem(system); // gives access to steveArbiter + MAX queue
+        system.selfModificationArbiter = arbiter;
         return arbiter;
     });
 
@@ -883,6 +903,20 @@ export async function loadExtendedSystems(system) {
         );
     }
 
+    // WebScraperDendrite — always boot (stealth Puppeteer, used by browse_objective tool)
+    const WebScraperDendrite = require('../../cognitive/WebScraperDendrite.cjs');
+    ext.webScraperDendrite = await safeLoad('WebScraperDendrite', async () => {
+        const scraper = new WebScraperDendrite({
+            name: 'soma-dendrite',
+            stealthMode: true,
+            maxConcurrent: 3,
+            messageBroker: system.messageBroker
+        });
+        await scraper.initialize();
+        system.webScraperDendrite = scraper;
+        return scraper;
+    });
+
     if (process.env.SOMA_LOAD_HEAVY === 'true') {
         ext.webResearcher = await safeLoad('CuriosityWebAccessConnector', () =>
             new CuriosityWebAccessConnector({
@@ -892,7 +926,8 @@ export async function loadExtendedSystems(system) {
             })
         , { timeoutMs: 30000 });
     } else {
-        console.log('    ⏭️ CuriosityWebAccessConnector deferred (times out, SOMA_LOAD_HEAVY)');
+        // Even without SOMA_LOAD_HEAVY, wire the scraper to curiosity engine directly
+        console.log('    ⏭️ CuriosityWebAccessConnector deferred — WebScraperDendrite still available');
         ext.webResearcher = null;
     }
 
@@ -1541,6 +1576,31 @@ export async function loadExtendedSystems(system) {
     );
     if (ext.engineeringSwarm) system.engineeringSwarm = ext.engineeringSwarm;
 
+    // ── NemesisArbiter: Fully agentic adversarial code reviewer ──
+    // Investigates changes with real tools before scoring — the autonomous gateway
+    try {
+        const nemesis = new NemesisArbiter({
+            quadBrain: system.quadBrain,
+            rootPath:  process.cwd(),
+            maxSteps:  10
+        });
+        system.nemesis = nemesis;
+        console.log(`    ⚔️  NemesisArbiter (agentic) ← QuadBrain + ${Object.keys(nemesis._tools).join(', ')}`);
+    } catch (e) {
+        console.warn(`    ⚠️ NemesisArbiter failed to init: ${e.message}`);
+    }
+
+    // ── SelfModificationPipeline: Autonomous self-improvement loop ──
+    // SOMA draft → Steve review → adversarial debate → synthesis → EngineeringSwarm → NEMESIS gate
+    try {
+        const selfModPipeline = new SelfModificationPipeline({ maxRounds: 3 });
+        selfModPipeline.initialize(system);
+        system.selfModPipeline = selfModPipeline;
+        console.log('    🔧 SelfModificationPipeline ← EngineeringSwarm + Steve + QuadBrain + NEMESIS');
+    } catch (e) {
+        console.warn(`    ⚠️ SelfModificationPipeline failed to init: ${e.message}`);
+    }
+
     // ── SwarmOptimizer: Self-improvement loop for the swarm ──
     ext.swarmOptimizer = await safeLoad('SwarmOptimizer', () =>
         new SwarmOptimizer({ name: 'SwarmOptimizer', swarm: ext.engineeringSwarm, quadBrain: system.quadBrain })
@@ -1786,6 +1846,26 @@ export async function loadExtendedSystems(system) {
     const total = Object.keys(ext).length;
     const heapMB = (process.memoryUsage().heapUsed / 1024 / 1024).toFixed(0);
     console.log(`\n[Extended] ═══ ${loaded}/${total} specialist arbiters activated (heap: ${heapMB}MB) ═══\n`);
+
+    // Siren keepalive — ping Fish-Speech every 5 min to prevent GPU VRAM paging.
+    // Silent on failure (Siren may not be running in all environments).
+    const SIREN_KEEPALIVE_URL = 'http://localhost:8081/v1/tts';
+    const sirenKeepalive = async () => {
+        try {
+            const r = await fetch(SIREN_KEEPALIVE_URL, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ text: '.' }),
+                signal: AbortSignal.timeout(8000)
+            });
+            if (r.ok) console.log('[Siren] Keepalive OK');
+        } catch { /* Siren offline — silent */ }
+    };
+    // First ping after 6 min (Fish-Speech needs ~1 min to warm up after SOMA boot)
+    setTimeout(() => {
+        sirenKeepalive();
+        setInterval(sirenKeepalive, 5 * 60 * 1000).unref();
+    }, 6 * 60 * 1000).unref();
 
     return ext;
 }

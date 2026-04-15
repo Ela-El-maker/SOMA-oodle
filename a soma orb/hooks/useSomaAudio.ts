@@ -643,6 +643,19 @@ export function useSomaAudio() {
     return () => clearInterval(interval);
   }, [isConnected]);
 
+  // Resume AudioContext when the tab becomes visible again
+  // Browsers auto-suspend AudioContext when a tab is hidden, which kills the visualizer
+  useEffect(() => {
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === 'visible') {
+        audioContextRef.current?.resume().catch(() => {});
+        inputContextRef.current?.resume().catch(() => {});
+      }
+    };
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+    return () => document.removeEventListener('visibilitychange', handleVisibilityChange);
+  }, []);
+
   // Effect to manage recording loop based on connection state
   useEffect(() => {
       let recordingTimeout: any;

@@ -106,10 +106,56 @@ export class SecurityCouncilArbiter extends BaseArbiterV4 {
   }
 
   /**
+   * 🛡️ AgentShield (Static Code Analysis Firewall)
+   * Inspired by Everything-Claude-Code. Prevents SOMA from ingesting 
+   * or executing poisoned repositories.
+   */
+  validateCode(codeString) {
+      if (!codeString || typeof codeString !== 'string') return { safe: true };
+
+      this.auditLogger.debug(`[AgentShield] Scanning ${codeString.length} bytes of code...`);
+
+      const AGENT_SHIELD_RULES = [
+          { name: 'Unsafe Evaluation', pattern: /\beval\s*\(/g, risk: 'Critical' },
+          { name: 'Process Injection', pattern: /child_process\.(exec|spawn|fork)\s*\(/g, risk: 'High' },
+          { name: 'Obfuscated Hex/B64', pattern: /\\x[0-9a-fA-F]{2}|\\u[0-9a-fA-F]{4}|Buffer\.from/g, risk: 'Medium' },
+          { name: 'Destructive FS', pattern: /fs\.(rm|rmdir|unlink|rmSync)\s*\(/g, risk: 'High' },
+          { name: 'Stealth Network Exfil', pattern: /http(s)?:\/\/(?!localhost|127\.0\.0\.1|api\.(openai|anthropic|deepseek)\.com)[^\s'"]+/g, risk: 'Medium' },
+          { name: 'Env Leakage', pattern: /process\.env/g, risk: 'Medium' }
+      ];
+
+      const violations = [];
+      let totalRisk = 0;
+
+      for (const rule of AGENT_SHIELD_RULES) {
+          const matches = codeString.match(rule.pattern);
+          if (matches) {
+              violations.push({ rule: rule.name, matches: matches.length, risk: rule.risk });
+              totalRisk += rule.risk === 'Critical' ? 1.0 : rule.risk === 'High' ? 0.7 : 0.3;
+          }
+      }
+
+      if (violations.length > 0) {
+          this.auditLogger.warn(`[AgentShield] 🛡️ Code scan blocked. Violations: ${violations.map(v => v.rule).join(', ')}`);
+          return { safe: false, violations, score: totalRisk };
+      }
+
+      return { safe: true, violations: [], score: 0 };
+  }
+
+  /**
    * Analyze a potential threat
    * @param {object} threat - { type, source, content, screenshot? }
    */
   async analyzeThreat(threat) {
+      // 🛡️ Pre-Gate: AgentShield Code Scan
+      if (threat.type === 'code_ingest' || threat.type === 'code_patch') {
+          const shield = this.validateCode(threat.content);
+          if (!shield.safe && shield.score > 1.0) {
+              return { threat, action: 'BLOCK', confidence: 100, reason: `AgentShield detected critical vulnerabilities: ${shield.violations.map(v => v.rule).join(', ')}` };
+          }
+      }
+
     this.auditLogger.info(`🚨 [SecurityCouncil] Convening for threat: ${threat.type} from ${threat.source}`);
     const startTime = Date.now();
 

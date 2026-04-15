@@ -164,7 +164,12 @@ export class FragmentRegistry extends EventEmitter {
     if (q.includes(fragment.domain.toLowerCase())) score += 0.15;
     if (q.includes(fragment.specialization.toLowerCase())) score += 0.10;
 
-    return Math.min(1.0, score);
+    // Reputation weighting: expert fragments outrank novice ones for the same keyword match.
+    // expertiseLevel starts at 0.7 (spawn default) and grows with recordFragmentOutcome().
+    // Multiplier range: 0.86 (expertise=0.5) to 1.10 (expertise=1.0) — keeps scores bounded.
+    const expertise = fragment.expertiseLevel ?? 0.7;
+    const reputationMult = 0.7 + (expertise * 0.4); // 0.7→1.1 range
+    return Math.min(1.0, score * reputationMult);
   }
 
   // ── Fragment Spawning ──────────────────────

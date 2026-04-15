@@ -6,26 +6,55 @@ import PixelAvatar from './PixelAvatar';
 import somaBackend from '../somaBackend.js';
 import { textToSpeech, isElevenLabsEnabled } from '../utils/elevenLabsTTS.js';
 
-// Speak text via ElevenLabs (if enabled) → Web Speech API fallback
-async function speakProactive(text, audioCtxRef) {
+// Speak text: Siren → ElevenLabs → browser voice (matches Orb tier chain)
+// audioUnlockedRef must be true (user gesture has occurred) or we skip entirely
+async function speakProactive(text, audioCtxRef, audioUnlockedRef) {
   if (!text) return;
+  // Browser blocks AudioContext without a prior user gesture — skip TTS until unlocked
+  if (!audioUnlockedRef?.current) return;
+  if (!audioCtxRef.current) audioCtxRef.current = new AudioContext();
+  const ctx = audioCtxRef.current;
+
+  // Tier 1: Siren (Fish-Speech, local GPU)
+  try {
+    const r = await fetch('http://localhost:8081/v1/tts', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ text }),
+      signal: AbortSignal.timeout(5000)
+    });
+    if (r.ok) {
+      const buf = await ctx.decodeAudioData(await r.arrayBuffer());
+      const src = ctx.createBufferSource();
+      src.buffer = buf;
+      src.connect(ctx.destination);
+      src.start(0);
+      return;
+    }
+  } catch { /* fall through */ }
+
+  // Tier 2: ElevenLabs
   try {
     if (isElevenLabsEnabled()) {
-      if (!audioCtxRef.current) audioCtxRef.current = new AudioContext();
-      const r = await textToSpeech(text, audioCtxRef.current, null, null);
+      const r = await textToSpeech(text, ctx, null, null);
       if (r.success) {
-        const src = audioCtxRef.current.createBufferSource();
+        const src = ctx.createBufferSource();
         src.buffer = r.audioBuffer;
-        src.connect(audioCtxRef.current.destination);
+        src.connect(ctx.destination);
         src.start(0);
         return;
       }
     }
-    // Web Speech API fallback
-    const utt = new SpeechSynthesisUtterance(text);
-    utt.rate = 1.05;
-    window.speechSynthesis.speak(utt);
-  } catch { /* non-fatal */ }
+  } catch { /* fall through */ }
+
+  // Tier 3: Browser voice (female lock)
+  const utt = new SpeechSynthesisUtterance(text);
+  utt.rate = 1.05;
+  utt.pitch = 1.18;
+  const voices = window.speechSynthesis.getVoices();
+  const female = voices.find(v => (v.name.includes('Aria') || v.name.includes('Zira') || v.name.includes('Samantha')) && v.lang.includes('en'));
+  if (female) utt.voice = female;
+  window.speechSynthesis.speak(utt);
 }
 
 const md = new MarkdownIt({
@@ -96,9 +125,10 @@ const FloatingChat = ({
   const [panelGeom, setPanelGeom] = useState(null);
 
   // ── DOM refs ───────────────────────────────────────────────────────────────
-  const orbRef      = useRef(null);
-  const messagesEnd = useRef(null);
-  const audioCtxRef = useRef(null); // for proactive TTS
+  const orbRef          = useRef(null);
+  const messagesEnd     = useRef(null);
+  const audioCtxRef     = useRef(null);  // for proactive TTS
+  const audioUnlocked   = useRef(false); // true after first user gesture (orb click)
 
   // ── Drag refs (no state = no re-render during drag) ────────────────────────
   const drag    = useRef({ active: false, startX: 0, startY: 0, origX: 0, origY: 0 });
@@ -116,8 +146,8 @@ const FloatingChat = ({
       if (!text) return;
       setMessages(prev => [...prev, { id: Date.now(), text, sender: 'system', autonomous: true }]);
       setIsVisible(prev => { if (!prev) setUnreadCount(c => c + 1); return prev; });
-      // Speak the proactive message
-      speakProactive(text, audioCtxRef);
+      // Speak the proactive message (only if user has interacted — avoids robot voice on startup)
+      speakProactive(text, audioCtxRef, audioUnlocked);
     };
     somaBackend.on('soma_proactive', onProactive);
     return () => somaBackend.off('soma_proactive', onProactive);
@@ -159,8 +189,8 @@ const FloatingChat = ({
         if (!data.messages?.length) return;
         const loaded = data.messages.map((m, i) => ({
           id: m.timestamp ? m.timestamp + i : Date.now() - (data.messages.length - i) * 1000,
-          text: m.text,
-          sender: m.role === 'soma' ? 'system' : 'user',
+          text: m.text || m.content || '',
+          sender: (m.role === 'assistant' || m.role === 'soma') ? 'system' : 'user',
         }));
         setMessages(prev => {
           // Only inject if messages haven't accumulated yet (avoid prepending over active chat)
@@ -175,6 +205,12 @@ const FloatingChat = ({
   const openChat = useCallback(() => {
     // Cancel any in-flight close
     if (exitTmr.current) { clearTimeout(exitTmr.current); exitTmr.current = null; }
+
+    // Unlock audio on this user gesture — future proactive messages can use Siren/ElevenLabs
+    if (!audioUnlocked.current) {
+      audioUnlocked.current = true;
+      if (!audioCtxRef.current) audioCtxRef.current = new AudioContext();
+    }
 
     const geom = getPanelGeom(orbPosRef.current.x, orbPosRef.current.y);
     setPanelGeom(geom);
@@ -251,10 +287,13 @@ const FloatingChat = ({
     setInput('');
     setSuggestion(null);
     setIsThinking(true);
-    const history = messages.slice(-6).map(m => ({
-      role: m.sender === 'user' ? 'user' : 'assistant',
-      content: m.text,
-    }));
+    const history = messages
+      .filter(m => !m.isMemoryNotice) // exclude memory notice cards — not real conversation
+      .slice(-10)                      // wider window so autonomous messages are always included
+      .map(m => ({
+        role: m.sender === 'user' ? 'user' : 'assistant',
+        content: m.text,
+      }));
     try {
       const response = await onSendMessage(message, { history, activeModule });
       if (response) {

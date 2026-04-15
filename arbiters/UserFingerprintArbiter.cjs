@@ -22,6 +22,14 @@ const FP_DIR          = path.join(process.cwd(), 'SOMA', 'user-profiles');
 const SAVE_DEBOUNCE   = 3000;
 const SESSION_GAP_MS  = 30 * 60 * 1000; // 30 min gap = new session
 
+// Owner name from config — used in getUserContext() so it never hardcodes "Barry"
+const _ownerName = (() => {
+    try {
+        const p = path.join(process.cwd(), 'config', 'owner.json');
+        return JSON.parse(fs.readFileSync(p, 'utf8')).name || 'the user';
+    } catch { return 'the user'; }
+})();
+
 // Topic keyword clusters
 const TOPIC_PATTERNS = [
   { label: 'consciousness',   re: /conscious|aware|sentient|soul|being|exist/i },
@@ -189,14 +197,9 @@ class UserFingerprintArbiter {
     const peakLabel = peakHour < 6 ? 'late at night' : peakHour < 12 ? 'in the morning' : peakHour < 18 ? 'in the afternoon' : 'in the evening';
 
     const lines = [
-      `This user typically shows up ${peakLabel}.`,
-      topTopics.length ? `Most common topics: ${topTopics.join(', ')}.` : '',
-      `Communication style: ${fp.typicalStyle}.`,
-      `Session count: ${fp.sessions || 1}, total messages: ${fp.totalMessages}.`,
+      topTopics.length ? `${_ownerName} tends to talk about: ${topTopics.join(', ')}.` : '',
+      `Their communication style is ${fp.typicalStyle}.`,
     ].filter(Boolean);
-
-    const diff = this.getSessionDiff(userId);
-    if (diff) lines.push(`Notable today: ${diff}.`);
 
     return lines.join(' ');
   }

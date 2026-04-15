@@ -415,12 +415,15 @@ class MnemonicArbiter extends BaseArbiter {
         content TEXT NOT NULL,
         metadata TEXT,
         embedding_id TEXT,
+        sector TEXT DEFAULT 'GEN', -- Sovereign Archipelago (Spatial Geography)
         created_at INTEGER NOT NULL,
         accessed_at INTEGER NOT NULL,
         access_count INTEGER DEFAULT 0,
         importance REAL DEFAULT 0.5,
         tier TEXT DEFAULT 'cold'
       );
+
+      CREATE INDEX IF NOT EXISTS idx_sector ON memories(sector);
 
       CREATE INDEX IF NOT EXISTS idx_accessed_at ON memories(accessed_at DESC);
       CREATE INDEX IF NOT EXISTS idx_importance ON memories(importance DESC);
@@ -579,6 +582,7 @@ class MnemonicArbiter extends BaseArbiter {
 
     const id = this._generateId(content);
     const now = Date.now();
+    const sector = metadata.sector || 'GEN'; // Anchor to Sovereign Archipelago
 
     this.tierMetrics.total.stores++;
 
@@ -634,8 +638,8 @@ class MnemonicArbiter extends BaseArbiter {
       }
       // Store in cold tier (persistent)
       const stmt = this.db.prepare(`
-        INSERT OR REPLACE INTO memories (id, content, metadata, embedding_id, created_at, accessed_at, importance, tier)
-        VALUES (?, ?, ?, ?, ?, ?, ?, 'cold')
+        INSERT OR REPLACE INTO memories (id, content, metadata, embedding_id, sector, created_at, accessed_at, importance, tier)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'cold')
       `);
 
       const params = [
@@ -643,6 +647,7 @@ class MnemonicArbiter extends BaseArbiter {
         content,
         JSON.stringify(metadata),
         embeddingId,
+        sector,
         now,
         now,
         (metadata && typeof metadata.importance === 'number') ? metadata.importance : 0.5
@@ -691,7 +696,10 @@ class MnemonicArbiter extends BaseArbiter {
     }
   }
 
-  async recall(query, topK = 5) {
+  async recall(query, options = {}) {
+    const topK = typeof options === 'number' ? options : (options.topK || 5);
+    const sector = options.sector || null; // Target specific Archipelago
+
     if (!this.db) {
       this.log('warn', 'Cold tier (SQLite) not initialized - empty recall');
       return { results: [], tier: 'none' };
@@ -717,12 +725,13 @@ class MnemonicArbiter extends BaseArbiter {
       }
 
       // 1. Try hot tier (Redis cache) - <1ms
-      if (this.redis) {
+      // CNS: Strict Health Gate to prevent connection timeout crashes
+      if (this.redis && this.redis.isOpen && this.redis.isReady) {
         try {
           const cached = await this.redis.get(`query:${searchTerms}`);
           if (cached) {
             this.tierMetrics.hot.hits++;
-            this.log('info', 'ðŸ”¥ Hot tier hit (query cache)');
+            this.log('info', '🔥 Hot tier hit (query cache)');
             return {
               results: JSON.parse(cached),
               tier: 'hot',
@@ -730,7 +739,7 @@ class MnemonicArbiter extends BaseArbiter {
             };
           }
         } catch (error) {
-          this.log('warn', 'Redis read failed', { error: error.message });
+          this.log('warn', 'Redis read failed - falling back to cold tiers', { error: error.message });
         }
         this.tierMetrics.hot.misses++;
       }
@@ -879,13 +888,20 @@ class MnemonicArbiter extends BaseArbiter {
   // Vector Search (REAL)
   // ===========================
 
-  async _vectorSearch(queryVector, topK) {
-    return VectorUtils.approximateNearestNeighbors(
+  async _vectorSearch(queryVector, topK, sector = null) {
+    const candidates = VectorUtils.approximateNearestNeighbors(
       queryVector,
       this.vectorStore,
-      topK,
+      this.vectorStore.size, // Get all similarities first
       this.config.vectorSimilarityThreshold
-    ).map(result => ({
+    );
+
+    // Filter by sector if provided
+    const filtered = sector 
+      ? candidates.filter(c => c.sector === sector)
+      : candidates;
+
+    return filtered.slice(0, topK).map(result => ({
       id: result.memoryId,
       content: result.content,
       similarity: result.similarity,
@@ -897,20 +913,27 @@ class MnemonicArbiter extends BaseArbiter {
   // SQLite Search (REAL)
   // ===========================
 
-  _sqliteSearch(query, limit = 5) {
+  _sqliteSearch(query, limit = 5, sector = null) {
     // Ensure limit is a valid number
     const safeLimit = (typeof limit === 'number' && limit > 0) ? limit : 5;
 
-    // Use FTS5 (full-text search) if available, fallback to LIKE
-    const stmt = this.db.prepare(`
-      SELECT id, content, metadata, accessed_at, access_count, importance, tier
+    let sql = `
+      SELECT id, content, metadata, accessed_at, access_count, importance, tier, sector
       FROM memories
-      WHERE content LIKE ? OR metadata LIKE ?
-      ORDER BY importance DESC, access_count DESC, accessed_at DESC
-      LIMIT ?
-    `);
+      WHERE (content LIKE ? OR metadata LIKE ?)
+    `;
+    const params = [`%${query}%`, `%${query}%` ];
 
-    const results = stmt.all(`%${query}%`, `%${query}%`, safeLimit);
+    if (sector) {
+      sql += " AND sector = ?";
+      params.push(sector);
+    }
+
+    sql += " ORDER BY importance DESC, access_count DESC, accessed_at DESC LIMIT ?";
+    params.push(safeLimit);
+
+    const stmt = this.db.prepare(sql);
+    const results = stmt.all(...params);
 
     // Update access stats in batch
     if (results.length > 0) {

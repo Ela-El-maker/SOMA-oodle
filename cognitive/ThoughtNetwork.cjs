@@ -52,9 +52,11 @@ class ThoughtNetwork {
      * Create a new node and add to network
      */
     createNode(content, config = {}) {
+        const sector = config.sector || 'GEN';
         const node = new FractalNode({
             ...config,
-            content
+            content,
+            sector
         });
         
         this.nodes.set(node.id, node);
@@ -75,7 +77,7 @@ class ThoughtNetwork {
      * Dramatically better than Jaccard — "machine learning" matches "neural networks"
      * because rare shared terms get high IDF weight.
      */
-    findSimilar(query, threshold = 0.08, limit = 10) {
+    findSimilar(query, threshold = 0.08, limit = 10, sector = null) {
         if (this.nodes.size === 0) return [];
 
         // Rebuild index if stale
@@ -97,9 +99,14 @@ class ThoughtNetwork {
 
         const results = [];
         for (let i = 0; i < nodeIds.length; i++) {
+            const node = this.nodes.get(nodeIds[i]);
+            
+            // Spatial Filtering: Instantly skip nodes in other Archipelagos
+            if (sector && node.sector !== sector) continue;
+
             const sim = this._cosineSimilarity(qVec, vectors[i]);
             if (sim >= threshold) {
-                results.push({ node: this.nodes.get(nodeIds[i]), similarity: sim });
+                results.push({ node, similarity: sim });
             }
         }
 
@@ -150,6 +157,7 @@ class ThoughtNetwork {
     }
 
     _tokenize(text, stopwords = null) {
+        if (typeof text !== 'string') return []; // 🛡️ CNS Safety: Guard against non-string inputs
         const _stops = stopwords || new Set(['a','an','the','is','are','was','of','to','in','for','on','with','and','but','or','it','i','you','we','they']);
         return text.toLowerCase()
             .replace(/[^a-z0-9\s]/g, ' ')
@@ -376,6 +384,7 @@ class ThoughtNetwork {
                     // Create the new fractal
                     const newNode = await this.createNode(decision.synthesis, {
                         type: decision.type,
+                        sector: nodeA.sector || nodeB.sector || 'GEN', // Inherit geography
                         source: 'fractal_synthesis',
                         tags: ['synthesis', nodeA.content, nodeB.content]
                     });

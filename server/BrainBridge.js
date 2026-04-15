@@ -183,7 +183,12 @@ export class BrainBridge extends EventEmitter {
                 }
 
                 this._pending.set(id, { resolve, reject, startTime });
-                this._worker.postMessage({ id, type: 'reason', query, context });
+                // Trim history before posting to worker — prevents unbounded message growth
+                const workerContext = { ...context };
+                if (Array.isArray(workerContext.history) && workerContext.history.length > 20) {
+                    workerContext.history = workerContext.history.slice(-20);
+                }
+                this._worker.postMessage({ id, type: 'reason', query, context: workerContext });
             });
         }
 

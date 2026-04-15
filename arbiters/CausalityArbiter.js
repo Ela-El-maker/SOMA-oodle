@@ -63,26 +63,34 @@ export class CausalityArbiter extends EventEmitter {
   /**
    * Initialize the arbiter
    */
-  async initialize({ experienceBuffer, metaLearning, mnemonic } = {}) {
+  async initialize({ experienceBuffer, metaLearning, mnemonic, mnemonicArbiter } = {}) {
     this.experienceBuffer = experienceBuffer;
     this.metaLearning = metaLearning;
-    this.mnemonic = mnemonic;
+    // Accept both 'mnemonic' (direct) and 'mnemonicArbiter' (ArbiterLoader standard key)
+    this.mnemonic = mnemonic || mnemonicArbiter || null;
 
     // Load existing causal graph
     await this.loadCausalGraph();
 
-    // Register with MessageBroker
+    // Register with MessageBroker — correct 2-argument signature
     if (this.messageBroker) {
       try {
-        this.messageBroker.registerArbiter(this.name, this, {
+        this.messageBroker.registerArbiter(this.name, {
+          instance: this,
           type: 'causality',
-          capabilities: ['observe', 'recordIntervention', 'queryCausalChains', 'generateCounterfactual']        
+          capabilities: ['observe', 'recordIntervention', 'queryCausalChains', 'generateCounterfactual']
         });
         console.log(`🔗 [${this.name}] Registered with MessageBroker`);
       } catch (error) {
         console.error(`❌ [${this.name}] Failed to register with MessageBroker:`, error.message);
       }
     }
+
+    // Auto-save causal graph every 5 minutes so learning survives restarts
+    this._saveTimer = setInterval(() => {
+      this.saveCausalGraph().catch(() => {});
+    }, 5 * 60_000);
+    if (this._saveTimer.unref) this._saveTimer.unref();
 
     console.log('✅ [CausalityArbiter] Ready');
     console.log(`   📊 Causal nodes: ${this.causalGraph.size}`);
@@ -272,6 +280,16 @@ export class CausalityArbiter extends EventEmitter {
   }
 
   async addCausalLink(cause, effect, strength, reasoning = '') {
+    // Enforce maxGraphSize — drop weakest nodes when at capacity
+    if (this.causalGraph.size >= this.config.maxGraphSize && !this.causalGraph.has(cause) && !this.causalGraph.has(effect)) {
+      const entries = Array.from(this.causalGraph.entries());
+      const weakest = entries
+        .filter(([, n]) => n.causes.length === 0 && n.effects.length === 0)
+        .sort((a, b) => (Object.values(a[1].strength)[0] || 0) - (Object.values(b[1].strength)[0] || 0));
+      if (weakest.length > 0) this.causalGraph.delete(weakest[0][0]);
+      else return; // graph full and no orphans to remove — skip this link
+    }
+
     if (!this.causalGraph.has(cause)) {
       this.causalGraph.set(cause, { causes: [], effects: [], strength: {}, reasoning: {} });
     }

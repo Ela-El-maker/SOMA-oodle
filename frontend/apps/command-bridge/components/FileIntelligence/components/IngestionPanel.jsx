@@ -147,12 +147,15 @@ const IngestionPanel = ({
                             <div className="w-2 h-2 bg-purple-500 rounded-full animate-pulse shadow-[0_0_8px_rgba(168,85,247,0.6)]"></div>
                             <span className="text-[10px] text-purple-300 font-bold uppercase tracking-wider">Scanning</span>
                         </div>
-                        <div className="text-[11px] text-accent font-mono">
-                            {scanningStatus.filesFound} files found
+                        <div className="text-[11px] text-accent font-mono space-y-0.5">
+                            <div>{scanningStatus.filesFound?.toLocaleString() || 0} scanned · {scanningStatus.indexed?.toLocaleString() || 0} indexed</div>
+                            {scanningStatus.skippedForMemory > 0 && (
+                                <div className="text-amber-400 text-[10px]">{scanningStatus.skippedForMemory} fast-indexed (mem pressure)</div>
+                            )}
                         </div>
                         {scanningStatus.currentDir && (
                             <div className="text-[9px] text-text-muted truncate mt-1" title={scanningStatus.currentDir}>
-                                /{scanningStatus.currentDir}
+                                {scanningStatus.currentDir.split(/[\\/]/).slice(-3).join('/')}
                             </div>
                         )}
                     </div>

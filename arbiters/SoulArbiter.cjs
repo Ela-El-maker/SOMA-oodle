@@ -13,7 +13,7 @@
 const fs   = require('fs');
 const path = require('path');
 
-const SOUL_PATH    = path.join(process.cwd(), 'SOMA', 'soul.json');
+const SOUL_PATH    = path.join(process.cwd(), 'soul.json');
 const MAX_ENTRIES  = 200;
 const SAVE_DEBOUNCE_MS = 2000;
 

@@ -96,71 +96,21 @@ export class SelfImprovementCoordinator extends BaseArbiterV4 {
     }
 
     async _initializeComponents() {
-        const rootPath = process.cwd();
-
-        // 1. NoveltyTracker (prevents repetitive responses)
-        if (this.config.noveltyCheckEnabled) {
-            try {
-                const NoveltyTrackerModule = require('./NoveltyTracker.cjs');
-                const NoveltyTracker = NoveltyTrackerModule.default || NoveltyTrackerModule.NoveltyTracker;
-                this.noveltyTracker = new NoveltyTracker({ name: 'NoveltyTracker' });
-                await this.noveltyTracker.initialize?.();
-                this.log('success', '  ✅ NoveltyTracker loaded');
-            } catch (error) {
-                this.log('warn', `  ⚠️  NoveltyTracker failed to load: ${error.message}`);
-            }
+        // CNS Discovery: Arbiters are now loaded by the main bootloader 
+        // to prevent recursive loading loops. We just link to them here.
+        this.log('info', '  🔗 Linking to system-registered improvement arbiters...');
+        
+        const system = this.system || global.__SOMA_SYSTEM__;
+        if (!system) {
+            this.log('warn', '  ⚠️ System registry not found, deferred linking.');
+            return;
         }
 
-        // 2. SkillAcquisitionArbiter (learns new skills)
-        if (this.config.skillLearningEnabled) {
-            try {
-                const SkillAcquisitionModule = require('./SkillAcquisitionArbiter.cjs');
-                const SkillAcquisitionArbiter = SkillAcquisitionModule.default || SkillAcquisitionModule.SkillAcquisitionArbiter;
-                this.skillAcquisition = new SkillAcquisitionArbiter({ rootPath });
-                await this.skillAcquisition.initialize?.();
-                this.log('success', '  ✅ SkillAcquisitionArbiter loaded');
-            } catch (error) {
-                this.log('warn', `  ⚠️  SkillAcquisitionArbiter failed to load: ${error.message}`);
-            }
-        }
-
-        // 3. SelfModificationArbiter (optimizes own code)
-        if (this.config.selfModificationEnabled) {
-            try {
-                const SelfModificationModule = require('./SelfModificationArbiter.cjs');
-                const SelfModificationArbiter = SelfModificationModule.default || SelfModificationModule.SelfModificationArbiter;
-                this.selfModification = new SelfModificationArbiter({ rootPath });
-                await this.selfModification.initialize?.();
-                this.log('success', '  ✅ SelfModificationArbiter loaded');
-            } catch (error) {
-                this.log('warn', `  ⚠️  SelfModificationArbiter failed to load: ${error.message}`);
-            }
-        }
-
-        // 4. BeliefSystemArbiter (maintains cognitive consistency)
-        if (this.config.beliefSystemEnabled) {
-            try {
-                const BeliefSystemModule = require('./BeliefSystemArbiter.cjs');
-                const BeliefSystemArbiter = BeliefSystemModule.default || BeliefSystemModule.BeliefSystemArbiter;
-                this.beliefSystem = new BeliefSystemArbiter({ rootPath });
-                await this.beliefSystem.initialize?.();
-                this.log('success', '  ✅ BeliefSystemArbiter loaded');
-            } catch (error) {
-                this.log('warn', `  ⚠️  BeliefSystemArbiter failed to load: ${error.message}`);
-            }
-        }
-
-        // 5. AutonomousCapabilityExpansion (finds missing abilities)
-        if (this.config.capabilityExpansionEnabled) {
-            try {
-                const { AutonomousCapabilityExpansion } = await import('./AutonomousCapabilityExpansion.js');
-                this.capabilityExpansion = new AutonomousCapabilityExpansion({ rootPath });
-                await this.capabilityExpansion.initialize?.();
-                this.log('success', '  ✅ AutonomousCapabilityExpansion loaded');
-            } catch (error) {
-                this.log('warn', `  ⚠️  AutonomousCapabilityExpansion failed to load: ${error.message}`);
-            }
-        }
+        this.noveltyTracker = system.noveltyTracker || null;
+        this.skillAcquisition = system.skillAcquisition || null;
+        this.selfModification = system.selfModification || null;
+        this.beliefSystem = system.beliefSystem || null;
+        this.capabilityExpansion = system.capabilityExpansion || null;
     }
 
     // ===========================

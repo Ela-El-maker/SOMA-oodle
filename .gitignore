@@ -152,6 +152,13 @@ knowledge-feed/
 pulse-terminal/
 dashboard/
 src/
+SOMA/deployment-audit/
+SOMA/causality/
+SOMA/training-data/
+
+# ── Runtime Artifacts ─────────────────────────────────────────────────────────
+PROBE_SUCCESS.txt
+*.persistance.bak
 
 # ── Test Data & Scratch Files ─────────────────────────────────────────────────
 test_memory.json

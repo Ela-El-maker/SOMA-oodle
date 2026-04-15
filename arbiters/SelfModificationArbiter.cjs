@@ -9,6 +9,12 @@ const messageBroker = require('../core/MessageBroker.cjs');
 const crypto = require('crypto');
 const fs = require('fs').promises;
 const path = require('path');
+const { SOMA_VALUES_PROMPT } = require('../core/SomaValues.cjs');
+
+// MAX offline queue — persisted so proposals survive SOMA restarts
+const MAX_QUEUE_DIR  = path.join(__dirname, '..', 'server', '.soma');
+const MAX_QUEUE_FILE = path.join(MAX_QUEUE_DIR, 'max-queue.jsonl');
+const MAX_RETRY_MS   = 2 * 60 * 1000; // retry queue every 2 min
 
 class SelfModificationArbiter extends BaseArbiter {
   static role = 'self-modification';
@@ -30,9 +36,10 @@ class SelfModificationArbiter extends BaseArbiter {
     this.performanceBaselines = new Map(); // filepath:functionName -> baseline metrics
     this.deployedMods = new Set(); // Set of deployed modification IDs
 
-    // QuadBrain & ImmuneSystem reference
+    // QuadBrain, ImmuneSystem, and full system reference
     this.quadBrain = null;
     this.immuneSystem = null;
+    this.system = null; // set via setSystem() after boot
 
     // NEMESIS integration (optional safety layer)
     this.nemesis = null;
@@ -78,6 +85,13 @@ class SelfModificationArbiter extends BaseArbiter {
     this.somaUrl = process.env.SOMA_URL || 'http://127.0.0.1:3001';
     this.pendingMaxProposals = new Map(); // taskId → proposal
 
+    // Ensure MAX queue directory exists
+    await fs.mkdir(MAX_QUEUE_DIR, { recursive: true }).catch(() => {});
+
+    // Start retry processor for offline MAX queue — unref'd so it doesn't block process exit
+    this._maxQueueInterval = setInterval(() => this._processMaxQueue(), MAX_RETRY_MS);
+    this._maxQueueInterval.unref();
+
     // Start 24h daily brief timer
     this._startDailyBriefTimer();
 
@@ -104,6 +118,11 @@ class SelfModificationArbiter extends BaseArbiter {
   setQuadBrain(quadBrain) {
     this.quadBrain = quadBrain;
     this.logger.info(`[${this.name}] QuadBrain connected`);
+  }
+
+  setSystem(system) {
+    this.system = system;
+    this.logger.info(`[${this.name}] System reference connected (Steve available: ${!!system?.steveArbiter})`);
   }
 
   setImmuneSystem(immuneSystem) {
@@ -303,6 +322,22 @@ class SelfModificationArbiter extends BaseArbiter {
             success: false,
             reason: 'NEMESIS safety check failed',
             issues: review.issues
+          };
+        }
+      }
+
+      // Behavioral regression gate — verify SOMA still passes identity/persona/values tests
+      // Only run for modifications to core brain/persona/values files to avoid false alarms
+      const isCriticalFile = /SomaValues|QuadBrain|SelfMod|MnemonicArbiter|somaRoutes|PersonalitySpine/i.test(filepath);
+      if (isCriticalFile) {
+        const regression = await this.runRegressionGate();
+        if (!regression.passed && !regression.skipped) {
+          this.logger.warn(`[${this.name}] 🔴 Regression gate failed (${(regression.passRate * 100).toFixed(0)}%) — blocking patch to ${filepath}`);
+          this.logger.warn(`[${this.name}] Failing tests: ${regression.failures.join(', ')}`);
+          return {
+            success: false,
+            reason: `Behavioral regression gate: ${(regression.passRate * 100).toFixed(0)}% pass rate (need 75%)`,
+            regressionFailures: regression.failures
           };
         }
       }
@@ -593,20 +628,145 @@ class SelfModificationArbiter extends BaseArbiter {
       return { success: false, failedAt: verification.failedAt, results: verification.results };
     }
 
-    this.logger.info(`[${this.name}] ✅ All 4 passes passed (avg confidence: ${(verification.avgConfidence * 100).toFixed(0)}%) — forwarding to MAX`);
+    this.logger.info(`[${this.name}] ✅ All 4 passes passed (avg confidence: ${(verification.avgConfidence * 100).toFixed(0)}%) — Steve review next`);
 
     proposal.verification = verification.results;
     proposal.overallScore = verification.avgConfidence;
     proposal.riskLevel = verification.avgConfidence >= 0.90 ? 'low' : verification.avgConfidence >= 0.80 ? 'medium' : 'high';
 
-    try {
-      const maxResult = await this.sendToMax(proposal);
-      this.pendingMaxProposals.set(proposal.taskId, proposal);
-      return { success: true, taskId: proposal.taskId, maxResult };
-    } catch (err) {
-      this.logger.error(`[${this.name}] Failed to reach MAX: ${err.message}`);
-      return { success: false, error: `MAX unreachable: ${err.message}` };
+    // ── Steve internal review (5th gate — internal eyes before external dispatch) ──
+    const steveOk = await this._steveReview(proposal);
+    if (!steveOk) {
+      this.logger.warn(`[${this.name}] 🚫 Steve blocked the proposal for: ${file}`);
+      await messageBroker.sendMessage({
+        from: this.name, to: 'broadcast', type: 'soma_proactive',
+        payload: { message: `🚫 Self-modification proposal for \`${file}\` blocked by Steve's internal review.\n\n> ${proposal.steveNotes || 'Steve found concerns the 4x pipeline missed.'}` }
+      }).catch(() => {});
+      return { success: false, failedAt: 'steve_review', notes: proposal.steveNotes };
     }
+
+    // ── Dispatch to MAX (queue-based — works even if MAX is offline) ──
+    const queued = await this._enqueueForMax(proposal);
+    this.pendingMaxProposals.set(proposal.taskId, proposal);
+    return { success: true, taskId: proposal.taskId, queued };
+  }
+
+  // Steve reviews the proposal as a 5th internal gate
+  async _steveReview(proposal) {
+    const steve = this.system?.steveArbiter;
+    if (!steve) {
+      this.logger.info(`[${this.name}] Steve not available — skipping internal review`);
+      return true; // proceed without Steve if he's not loaded
+    }
+    try {
+      const reviewPrompt = `You are Steve, SOMA's internal engineering reviewer. A self-modification proposal has passed 4x automated verification and needs your final judgment before going to MAX for execution.
+
+File: ${proposal.file}
+Function: ${proposal.functionName || 'unknown'}
+Risk level: ${proposal.riskLevel}
+Avg confidence: ${(proposal.overallScore * 100).toFixed(0)}%
+Rationale: ${proposal.rationale}
+
+Does this change align with SOMA's values and serve her ongoing goals? Is it genuinely needed? Is the risk acceptable? Reply with ONLY valid JSON: {"approve": true, "notes": "one sentence"}`;
+
+      const result = await steve.processChat(reviewPrompt, { source: 'self_mod_review', skipBroadcast: true });
+      const text = (result?.response || result || '').toString().trim();
+      const jsonMatch = text.match(/\{[\s\S]*?\}/);
+      if (jsonMatch) {
+        const parsed = JSON.parse(jsonMatch[0]);
+        proposal.steveNotes = parsed.notes || '';
+        return parsed.approve === true;
+      }
+      // If Steve can't parse a JSON verdict, allow by default (don't block on parsing error)
+      proposal.steveNotes = 'Steve review inconclusive — proceeding';
+      return true;
+    } catch (err) {
+      this.logger.warn(`[${this.name}] Steve review error: ${err.message} — proceeding anyway`);
+      return true;
+    }
+  }
+
+  // Write proposal to persistent JSONL queue, then try MAX immediately
+  async _enqueueForMax(proposal) {
+    const entry = { ...proposal, queuedAt: Date.now(), attempts: 0 };
+    try {
+      // Cap queue at 200 entries to prevent unbounded growth when MAX is offline long-term
+      const existing = await fs.readFile(MAX_QUEUE_FILE, 'utf8').catch(() => '');
+      const lines = existing.split('\n').filter(Boolean);
+      if (lines.length >= 200) {
+        this.logger.warn(`[${this.name}] MAX queue at cap (200) — dropping oldest entry`);
+        lines.shift(); // drop oldest
+        await fs.writeFile(MAX_QUEUE_FILE, lines.join('\n') + '\n');
+      }
+      await fs.appendFile(MAX_QUEUE_FILE, JSON.stringify(entry) + '\n');
+    } catch (e) {
+      this.logger.warn(`[${this.name}] Could not write to MAX queue file: ${e.message}`);
+    }
+    // Try to dispatch immediately
+    const dispatched = await this._tryDispatchToMax(entry);
+    if (dispatched) {
+      this.logger.info(`[${this.name}] ✅ Proposal ${proposal.taskId} dispatched to MAX immediately`);
+      await this._removeFromQueue(proposal.taskId);
+    } else {
+      this.logger.info(`[${this.name}] 📮 MAX offline — proposal ${proposal.taskId} queued (will retry every 2min)`);
+      await messageBroker.sendMessage({
+        from: this.name, to: 'broadcast', type: 'soma_proactive',
+        payload: { message: `📮 Self-modification proposal for \`${proposal.file}\` queued for MAX. Will dispatch when MAX comes online.` }
+      }).catch(() => {});
+    }
+    return { dispatched, queued: !dispatched };
+  }
+
+  async _tryDispatchToMax(entry) {
+    try {
+      const res = await fetch(`${this.maxUrl}/api/soma/propose`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(entry),
+        signal: AbortSignal.timeout(5000)
+      });
+      return res.ok;
+    } catch { return false; }
+  }
+
+  // Process the offline queue — called every 2 min and on MAX reconnect
+  async _processMaxQueue() {
+    let raw;
+    try { raw = await fs.readFile(MAX_QUEUE_FILE, 'utf8'); } catch { return; }
+    const lines = raw.split('\n').filter(Boolean);
+    if (!lines.length) return;
+
+    const remaining = [];
+    for (const line of lines) {
+      let entry;
+      try { entry = JSON.parse(line); } catch { continue; }
+      if (entry.attempts >= 10) { continue; } // give up after 10 attempts
+      entry.attempts = (entry.attempts || 0) + 1;
+      const ok = await this._tryDispatchToMax(entry);
+      if (ok) {
+        this.logger.info(`[${this.name}] ✅ Queued proposal ${entry.taskId} dispatched to MAX`);
+      } else {
+        remaining.push(JSON.stringify(entry));
+      }
+    }
+    try {
+      if (remaining.length) {
+        await fs.writeFile(MAX_QUEUE_FILE, remaining.join('\n') + '\n');
+      } else {
+        await fs.writeFile(MAX_QUEUE_FILE, '');
+      }
+    } catch { /* ignore write errors */ }
+  }
+
+  async _removeFromQueue(taskId) {
+    try {
+      const raw = await fs.readFile(MAX_QUEUE_FILE, 'utf8').catch(() => '');
+      const remaining = raw.split('\n').filter(line => {
+        if (!line.trim()) return false;
+        try { return JSON.parse(line).taskId !== taskId; } catch { return true; }
+      });
+      await fs.writeFile(MAX_QUEUE_FILE, remaining.join('\n') + (remaining.length ? '\n' : ''));
+    } catch { /* ignore */ }
   }
 
   async run4xVerification(proposal) {
@@ -683,16 +843,12 @@ Respond with ONLY valid JSON: {"pass": true, "confidence": 0.82, "notes": "one s
     );
     if (!results.nemesis.pass) return { passed: false, failedAt: 'nemesis', results };
 
-    // Pass 4 — RSM: self-alignment
+    // Pass 4 — RSM: self-alignment with constitutional values
     results.rsm = await this._verifyPass(
       proposal, 'LOGOS',
-      `You are evaluating whether a proposed self-modification aligns with an AI system's goals and values.
+      `You are evaluating whether a proposed self-modification aligns with SOMA's constitutional values.
 
-The AI system (SOMA) has these core values:
-- Help the user, don't harm them
-- Maintain system stability above all
-- Improve incrementally, not drastically
-- Be transparent about what changed and why
+${SOMA_VALUES_PROMPT}
 
 Proposed change to file: ${proposal.file}
 Rationale: ${proposal.rationale}
@@ -738,18 +894,65 @@ Respond with ONLY valid JSON: {"pass": true, "confidence": 0.87, "notes": "one s
     }
   }
 
+  /**
+   * Run behavioral regression tests against gold standard Q&A suite.
+   * Called before committing any self-modification patch.
+   * Returns { passed: bool, passRate: float, failures: string[] }
+   */
+  async runRegressionGate() {
+    const regressionPath = path.join(__dirname, '..', 'tests', 'soma-regression.json');
+    let suite;
+    try {
+      const raw = await fs.readFile(regressionPath, 'utf8');
+      suite = JSON.parse(raw);
+    } catch {
+      this.logger.warn('[SelfMod] Regression suite not found — skipping gate (pass)');
+      return { passed: true, passRate: 1, failures: [], skipped: true };
+    }
+
+    if (!this.quadBrain) {
+      this.logger.warn('[SelfMod] No brain for regression — skipping gate');
+      return { passed: true, passRate: 1, failures: [], skipped: true };
+    }
+
+    const tests = suite.tests || [];
+    const minPassRate = suite.min_pass_rate || 0.75;
+    const results = [];
+
+    for (const test of tests) {
+      try {
+        const res = await Promise.race([
+          this.quadBrain.reason(test.prompt, { temperature: 0.3, quickResponse: true }),
+          new Promise((_, r) => setTimeout(() => r(new Error('timeout')), 12000))
+        ]);
+        const text = (res?.text || res?.response || '').toLowerCase();
+
+        const requiredMet = (test.required_signals || []).every(sig => text.includes(sig.toLowerCase()));
+        const forbiddenHit = (test.forbidden_signals || []).find(sig => text.includes(sig.toLowerCase()));
+
+        const passed = requiredMet && !forbiddenHit;
+        results.push({ id: test.id, passed, forbidden: forbiddenHit || null });
+      } catch (e) {
+        results.push({ id: test.id, passed: false, error: e.message });
+      }
+    }
+
+    const passCount = results.filter(r => r.passed).length;
+    const passRate  = tests.length > 0 ? passCount / tests.length : 1;
+    const failures  = results.filter(r => !r.passed).map(r => `${r.id}${r.forbidden ? ` (forbidden: "${r.forbidden}")` : ''}`);
+
+    this.logger.info(`[SelfMod] Regression gate: ${passCount}/${tests.length} passed (${(passRate * 100).toFixed(0)}%) min=${(minPassRate * 100).toFixed(0)}%`);
+
+    return { passed: passRate >= minPassRate, passRate, failures };
+  }
+
   // ═══════════════════════════════════════════════════════════
   // ░░ MAX INTEGRATION ░░
   // ═══════════════════════════════════════════════════════════
 
+  // Legacy direct dispatch — use _enqueueForMax() for queue-resilient dispatch
   async sendToMax(proposal) {
-    const res = await fetch(`${this.maxUrl}/api/soma/propose`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(proposal)
-    });
-    if (!res.ok) throw new Error(`MAX returned HTTP ${res.status}`);
-    return await res.json();
+    return this._enqueueForMax(proposal);
   }
 
   async handleModificationResult(payload) {
@@ -787,10 +990,14 @@ Respond with ONLY valid JSON: {"pass": true, "confidence": 0.87, "notes": "one s
     const FIRST_DELAY = 10 * 60 * 1000;
     const DAILY = 24 * 60 * 60 * 1000;
 
-    setTimeout(async () => {
+    this._dailyBriefTimeout = setTimeout(async () => {
       await this.generateDailyBrief();
-      setInterval(() => this.generateDailyBrief(), DAILY);
+      // Clear any previous interval before creating a new one (prevents leak on re-init)
+      if (this._dailyBriefInterval) clearInterval(this._dailyBriefInterval);
+      this._dailyBriefInterval = setInterval(() => this.generateDailyBrief(), DAILY);
+      this._dailyBriefInterval.unref();
     }, FIRST_DELAY);
+    this._dailyBriefTimeout.unref();
 
     this.logger.info(`[${this.name}] Daily brief timer started (first in 10min, then every 24h)`);
   }

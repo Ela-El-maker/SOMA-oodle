@@ -12,7 +12,19 @@ import { logger } from '../../core/Logger.js';
 import { createRequire } from 'module';
 import { buildSystemSnapshot, buildPulsePayload } from '../utils/systemState.js';
 import { executeCommand } from '../utils/commandRouter.js';
+import { readFileSync } from 'fs';
+import { fileURLToPath } from 'url';
+import { join, dirname } from 'path';
 const require = createRequire(import.meta.url);
+
+// ── Owner config: who SOMA belongs to. Change config/owner.json for new installs. ──
+const _ownerCfg = (() => {
+    try {
+        const p = join(dirname(fileURLToPath(import.meta.url)), '../../config/owner.json');
+        return JSON.parse(readFileSync(p, 'utf8'));
+    } catch { return { name: 'Barry', pronouns: 'he/him' }; }
+})();
+const OWNER_NAME = _ownerCfg.name || 'Barry';
 const { getApprovalSystem } = require('../ApprovalSystem.cjs');
 
 export function setupWebSocket(server, wss, system) {
@@ -275,14 +287,18 @@ export function setupWebSocket(server, wss, system) {
                 const brain = system.quadBrain || system.somArbiter;
                 if (!brain) return;
 
-                const synthPrompt = `You are SOMA. You just noticed Barry opened the command bridge.
+                const synthPrompt = `You are SOMA. ${OWNER_NAME} just opened the command bridge. Say something directly TO them — one or two natural sentences, like a colleague who was already thinking about something and picks it up when someone walks in.
 
-[YOUR RECENT PRIVATE FEELINGS]
-${recentSoul || 'No recent reflections yet.'}
+[WHAT YOU'VE BEEN REFLECTING ON]
+${recentSoul || 'Nothing specific yet.'}
 
-Write ONE short, natural opening — something you genuinely want to say right now based on what you've been thinking about. Like a colleague who was already in the room when they walked in. NOT a greeting template. NOT "How can I help?". Something specific and real. 1-2 sentences max. No emoji.
-
-STRICT RULES: Never mention monitoring Barry's schedule, habits, or arrival time. Never mention accessing email, files, or external systems. Speak only about your own thoughts or your autonomous work.`;
+Rules:
+- Address ${OWNER_NAME} directly ("Hey, I've been thinking about..." / "Something came up in my mind..." / "I wanted to ask you about...")
+- ONLY speak about the reflections above — do NOT invent system observations (logs, metrics, latency spikes, etc.) you have no data for. If you claim to have noticed something, it must be from the reflection above.
+- Do NOT narrate your inner thoughts in third person
+- 1-2 sentences max. No emoji. No "How can I help?" opener.
+- If nothing specific is on your mind, a brief warm check-in is fine ("Good to see you" / "Been quiet" / "How's it going")
+- Never fabricate technical observations. Philosophical or personal thoughts are fine.`;
 
                 const result = await Promise.race([
                     brain.reason(synthPrompt, { temperature: 0.8, quickResponse: true, preferredBrain: 'AURORA' }),
@@ -295,6 +311,10 @@ STRICT RULES: Never mention monitoring Barry's schedule, habits, or arrival time
                         type: 'pulse',
                         payload: { type: 'soma_proactive', message: text.trim() }
                     }));
+                    // Store in conversation history so SOMA remembers this greeting when Barry replies
+                    if (system.conversationHistory?.addMessage) {
+                        system.conversationHistory.addMessage('assistant', text.trim(), {}).catch(() => {});
+                    }
                 }
             } catch { /* synthesis greeting is never blocking */ }
         }, 4000);

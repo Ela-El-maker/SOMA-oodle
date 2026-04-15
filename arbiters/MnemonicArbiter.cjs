@@ -783,6 +783,31 @@ class MnemonicArbiter extends BaseArbiter {
         this.log('info', `Cleaned ${deleted.changes} old memories`);
       }
 
+      // Cap total memories at 5,000 — prune least-accessed entries older than 7 days
+      // when we exceed the ceiling. Preserves high-importance and recently-used memories.
+      const MEMORY_CAP = 5000;
+      const totalCount = await new Promise(resolve => setImmediate(() => {
+        resolve(this.db.prepare('SELECT COUNT(*) as c FROM memories').get().c);
+      }));
+      if (totalCount > MEMORY_CAP) {
+        const excess = totalCount - MEMORY_CAP;
+        const weekAgo = Date.now() - (7 * 24 * 60 * 60 * 1000);
+        const pruned = await new Promise(resolve => setImmediate(() => {
+          const res = this.db.prepare(`
+            DELETE FROM memories WHERE id IN (
+              SELECT id FROM memories
+              WHERE created_at < ? AND importance < 5
+              ORDER BY access_count ASC, accessed_at ASC
+              LIMIT ?
+            )
+          `).run(weekAgo, excess);
+          resolve(res);
+        }));
+        if (pruned.changes > 0) {
+          this.log('info', `Memory cap: pruned ${pruned.changes} low-access entries (total was ${totalCount})`);
+        }
+      }
+
       // Save vectors periodically
       await this._saveVectorStore();
 

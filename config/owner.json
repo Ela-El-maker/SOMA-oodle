@@ -1,0 +1,5 @@
+{
+  "_comment": "SOMA's owner identity. Change 'name' when sharing SOMA with someone else. All hardcoded name references in greetings, context blocks, and mind model use this. Reset server/.soma/barry-mind.json and user-profiles/ on a new install.",
+  "name": "Barry",
+  "pronouns": "he/him"
+}

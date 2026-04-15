@@ -13,8 +13,11 @@ import fs from 'fs';
 import express from 'express';
 import { WebSocketServer } from 'ws';
 
-// Load environment variables FIRST
+// Load environment variables FIRST — .env first, then config/api-keys.env overrides
+// (api-keys.env has the real DeepSeek key; .env may have placeholder values)
 dotenvConfig();
+const apiKeysPath = join(dirname(fileURLToPath(import.meta.url)), 'config', 'api-keys.env');
+if (fs.existsSync(apiKeysPath)) dotenvConfig({ path: apiKeysPath, override: true });
 
 import { CONFIG } from './core/SomaConfig.js';
 import { SomaBootstrapV2 as SomaBootstrap } from './core/SomaBootstrapV2.js';
@@ -198,9 +201,32 @@ async function main() {
             }
         });
 
-        // Minimal health endpoint early so port binds immediately
+        // Health endpoint — shallow at boot, deep once system is ready
         app.get('/health', (req, res) => {
-            res.json({ ok: true, status: global.__SOMA_SERVER_READY ? 'healthy' : 'initializing', uptime: process.uptime() });
+            const ready = global.__SOMA_SERVER_READY;
+            if (!ready) {
+                return res.json({ ok: true, status: 'initializing', uptime: process.uptime() });
+            }
+            // Deep check: brain + system.ready
+            const sys = global.__SOMA_SYSTEM;
+            const brainStatus = sys?.quadBrain?.getStatus?.() ?? null;
+            const brainOk = brainStatus
+                ? (brainStatus.providers?.some(p => p.available) ?? true)
+                : true;
+            res.json({
+                ok: brainOk,
+                status: brainOk ? 'healthy' : 'degraded',
+                uptime: process.uptime(),
+                brain: brainStatus ? {
+                    name: brainStatus.name,
+                    bridge: brainStatus.bridge ?? null,
+                    providers: (brainStatus.providers || []).map(p => ({ name: p.name, available: p.available }))
+                } : null,
+                memory: {
+                    heapUsedMB: Math.round(process.memoryUsage().heapUsed / 1024 / 1024),
+                    heapTotalMB: Math.round(process.memoryUsage().heapTotal / 1024 / 1024)
+                }
+            });
         });
 
         // 4. Start Server EARLY (bind port before heavy bootstrap)
@@ -220,6 +246,7 @@ async function main() {
 
         // Mark server as ready so unhandled rejections don't crash it
         global.__SOMA_SERVER_READY = true;
+        global.__SOMA_SYSTEM = bootstrap.system; // expose for /health deep check
         cLog('ULTRA', 'SOMA Fully Operational');
 
         // Start MessageBroker network bridge — lets external agents (MAX, etc.)

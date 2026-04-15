@@ -293,8 +293,8 @@ class AutonomousTrader {
                 if (managed) return; // Position was closed, skip new analysis
             }
 
-            // 5. Run AI analysis (rate-limited)
-            analysis = await this._getAnalysis(this.symbol);
+            // 5. Run AI analysis — fast path first, heavy path as fallback
+            analysis = await this._getFastAnalysis(this.symbol, bars, currentPrice);
 
             if (!analysis) {
                 this._logDecision('ANALYSIS', 'SKIP', 'AI analysis unavailable or rate-limited');
@@ -401,30 +401,101 @@ class AutonomousTrader {
     }
 
     /**
-     * Run AI swarm analysis (with rate limiting + timeout)
+     * Fast analysis — technical indicators + single SOMA brain call.
+     * Completes in ~3-6s. Used by default in every cycle.
+     * Falls back to the heavy 8-step FinanceAgentArbiter if SOMA chat fails.
      */
-    async _getAnalysis(symbol) {
+    async _getFastAnalysis(symbol, bars, currentPrice) {
         try {
-            // Use the existing FinanceAgentArbiter via the internal route
+            // 1. Build local technical indicator summary (no API needed)
+            const closes = bars.map(b => b.close);
+            const sma20  = closes.slice(-20).reduce((s, v) => s + v, 0) / 20;
+            const sma50  = closes.length >= 50 ? closes.slice(-50).reduce((s, v) => s + v, 0) / 50 : sma20;
+            const sma10  = closes.slice(-10).reduce((s, v) => s + v, 0) / 10;
+
+            // RSI-14 approximation
+            const changes = closes.slice(-15).map((v, i, a) => i === 0 ? 0 : v - a[i - 1]);
+            const gains   = changes.filter(c => c > 0);
+            const losses  = changes.filter(c => c < 0).map(c => Math.abs(c));
+            const avgGain = gains.reduce((s, v) => s + v, 0) / 14;
+            const avgLoss = losses.reduce((s, v) => s + v, 0) / 14;
+            const rsi     = avgLoss === 0 ? 100 : 100 - (100 / (1 + avgGain / avgLoss));
+
+            // Momentum: price vs SMA20
+            const momentum   = ((currentPrice - sma20) / sma20) * 100;
+            const trendBull  = sma10 > sma20 && sma20 > sma50;
+            const trendBear  = sma10 < sma20 && sma20 < sma50;
+            const trendLabel = trendBull ? 'bullish' : trendBear ? 'bearish' : 'sideways';
+
+            // Volume spike check (last bar vs 20-bar avg)
+            const volumes   = bars.map(b => b.volume || 0);
+            const avgVol    = volumes.slice(-20).reduce((s, v) => s + v, 0) / 20;
+            const lastVol   = volumes[volumes.length - 1] || 0;
+            const volSpike  = avgVol > 0 ? lastVol / avgVol : 1;
+
+            const techSummary = `${symbol} @ $${currentPrice.toFixed(2)} | RSI: ${rsi.toFixed(1)} | Momentum: ${momentum.toFixed(2)}% | Trend: ${trendLabel} | SMA10/20/50: ${sma10.toFixed(2)}/${sma20.toFixed(2)}/${sma50.toFixed(2)} | Vol spike: ${volSpike.toFixed(2)}x`;
+
+            // 2. Quick SOMA chat call (5s timeout)
+            const controller = new AbortController();
+            const timeout    = setTimeout(() => controller.abort(), 5000);
+
+            const prompt = `You are a trading signal AI. Analyze this and reply ONLY with valid JSON, nothing else.\n${techSummary}\nReply: {"recommendation":"BUY"|"SELL"|"HOLD","confidence":0.0-1.0,"reason":"one sentence"}`;
+
+            const res = await fetch(`http://localhost:${process.env.PORT || 3001}/api/soma/chat`, {
+                method:  'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body:    JSON.stringify({ message: prompt, context: { source: 'autonomous_trader', fast: true } }),
+                signal:  controller.signal
+            });
+            clearTimeout(timeout);
+
+            if (res.ok) {
+                const data = await res.json();
+                const raw  = data.response || data.message || '';
+                // Extract JSON from response (SOMA may wrap it in markdown)
+                const jsonMatch = raw.match(/\{[\s\S]*?\}/);
+                if (jsonMatch) {
+                    const parsed = JSON.parse(jsonMatch[0]);
+                    if (parsed.recommendation && typeof parsed.confidence === 'number') {
+                        console.log(`[AutonomousTrader] ⚡ Fast analysis: ${parsed.recommendation} (${(parsed.confidence * 100).toFixed(0)}%) — ${parsed.reason}`);
+                        // Return in same shape as FinanceAgentArbiter
+                        return {
+                            strategy:  { recommendation: parsed.recommendation, confidence: parsed.confidence, thesis: parsed.reason },
+                            risk:      { score: rsi > 70 ? 30 : rsi < 30 ? 80 : 55, assessment: trendLabel },
+                            sentiment: { score: trendBull ? 0.65 : trendBear ? 0.35 : 0.50 },
+                            quant:     { strategy: 'Technical Fast Path', technical_indicators: { rsi, sma20, sma50, momentum, volSpike } }
+                        };
+                    }
+                }
+            }
+        } catch (e) {
+            console.warn('[AutonomousTrader] Fast analysis failed:', e.message);
+        }
+
+        // 3. Heavy fallback — the full 8-step FinanceAgentArbiter
+        return this._getHeavyAnalysis(symbol);
+    }
+
+    /**
+     * Heavy analysis — full 8-step FinanceAgentArbiter. Used as fallback only.
+     */
+    async _getHeavyAnalysis(symbol) {
+        try {
             const arbiter = global.SOMA?.financeArbiter;
             if (arbiter && typeof arbiter.analyzeStock === 'function') {
-                const result = await Promise.race([
+                return await Promise.race([
                     arbiter.analyzeStock(symbol),
-                    new Promise((_, reject) =>
-                        setTimeout(() => reject(new Error('Analysis timed out')), this._analysisTimeoutMs)
-                    )
+                    new Promise((_, reject) => setTimeout(() => reject(new Error('Heavy analysis timed out')), 45000))
                 ]);
-                return result;
             }
 
-            // Fallback: call the HTTP endpoint internally (with AbortController timeout)
             const controller = new AbortController();
-            const timeout = setTimeout(() => controller.abort(), this._analysisTimeoutMs);
-            const response = await fetch(`http://localhost:${process.env.PORT || 3001}/api/finance/analyze`, {
-                method: 'POST',
+            const timeout    = setTimeout(() => controller.abort(), 45000);
+            const response   = await fetch(`http://localhost:${process.env.PORT || 3001}/api/finance/analyze`, {
+                method:  'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ symbol }),
-                signal: controller.signal
+                body:    JSON.stringify({ symbol }),
+                signal:  controller.signal
             });
             clearTimeout(timeout);
 
@@ -432,11 +503,9 @@ class AutonomousTrader {
                 const data = await response.json();
                 if (data.success && data.analysis) return data.analysis;
             }
-
             return null;
         } catch (error) {
-            const isTimeout = error.message.includes('timed out') || error.name === 'AbortError';
-            console.warn(`[AutonomousTrader] Analysis ${isTimeout ? 'timed out' : 'failed'} (${this._analysisTimeoutMs / 1000}s limit):`, error.message);
+            console.warn('[AutonomousTrader] Heavy analysis failed:', error.message);
             return null;
         }
     }

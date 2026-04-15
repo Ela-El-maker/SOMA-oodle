@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { GlobalControls } from './components/GlobalControls.jsx';
-import { ChevronDown, ChevronUp, Activity, MessageSquare, CheckCircle, XCircle, AlertTriangle, Send, X, Clock, Swords } from 'lucide-react';
+import { ChevronDown, ChevronUp, ChevronLeft, ChevronRight, Activity, MessageSquare, CheckCircle, XCircle, AlertTriangle, Send, X, Clock, Swords, BookOpen, FlaskConical, BarChart2, Bell, Bot } from 'lucide-react';
 import { useMarketEngine, MarketMonitor, MarketDeepScan } from './components/MarketRadar.jsx';
 import { StrategyBrain } from './components/StrategyBrain.jsx';
 import { TradeStream } from './components/TradeStream.jsx';
@@ -35,6 +35,7 @@ const MissionControlApp = ({ somaBackend, isConnected }) => {
     const [isSettingsOpen, setIsSettingsOpen] = useState(false);
     const [exchangeKeys, setExchangeKeys] = useState(null);
     const [sidebarTab, setSidebarTab] = useState('agents'); // 'agents' | 'learning' | 'debate' | 'backtest'
+    const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
 
     // Training State (Lifted from DemoTrainingPanel)
     const [isTraining, setIsTraining] = useState(false);
@@ -503,19 +504,25 @@ const MissionControlApp = ({ somaBackend, isConnected }) => {
                     if (decData.success && decData.decisions) {
                         latestDecisions = decData.decisions;
                         // Map autonomous decisions into the trades stream format
+                        // Include TRADE + MANAGE (real orders) and SIGNAL (engine thinking)
                         const tradeDecisions = decData.decisions
-                            .filter(d => d.category === 'TRADE' || d.category === 'MANAGE')
+                            .filter(d => d.category === 'TRADE' || d.category === 'MANAGE' || d.category === 'SIGNAL' || d.category === 'PAPER')
                             .map(d => ({
                                 id: d.id,
                                 timestamp: d.timestamp,
-                                symbol: d.symbol,
-                                side: d.action === 'BUY' || d.action === 'TAKE_PROFIT' ? 'BUY' : d.action === 'SELL' || d.action === 'STOP_LOSS' ? 'SELL' : d.action,
-                                price: d.price || 0,
+                                symbol: d.symbol || d.details?.symbol,
+                                side: d.action === 'BUY' || d.action === 'TAKE_PROFIT' ? 'BUY'
+                                    : d.action === 'SELL' || d.action === 'STOP_LOSS' ? 'SELL'
+                                    : d.action === 'HOLD' ? 'HOLD'
+                                    : d.action,
+                                price: d.price || d.fillPrice || 0,
                                 quantity: d.qty || 0,
-                                reason: d.reason?.slice(0, 80) || d.category,
+                                reason: d.reason?.slice(0, 90) || d.category,
                                 riskScore: d.confidence ? Math.round(d.confidence * 100) : 0,
                                 pnl: d.pnl || 0,
-                                status: d.status || d.action
+                                status: d.category === 'TRADE' || d.category === 'PAPER' ? 'FILLED'
+                                    : d.category === 'MANAGE' ? 'MANAGED'
+                                    : d.action
                             }));
                         if (tradeDecisions.length > 0) {
                             setTrades(tradeDecisions);
@@ -1128,57 +1135,57 @@ const MissionControlApp = ({ somaBackend, isConnected }) => {
                 // AUTONOMOUS (L-SHAPED) LAYOUT
                 <div className="flex-1 flex overflow-hidden bg-[#151518]/60 backdrop-blur-md border border-white/5 rounded-xl m-4 mt-0">
 
-                    {/* --- LEFT SIDEBAR (FIXED WIDTH) --- */}
-                    <div className="w-[300px] flex flex-col border-r border-white/5 h-full">
+                    {/* --- LEFT SIDEBAR (COLLAPSIBLE) --- */}
+                    <div className={`flex flex-col border-r border-white/5 h-full transition-all duration-300 relative ${sidebarCollapsed ? 'w-[32px]' : 'w-[305px]'}`}>
+
+                        {/* Collapse toggle button */}
+                        <button
+                            onClick={() => setSidebarCollapsed(v => !v)}
+                            className="absolute -right-3 top-1/2 -translate-y-1/2 z-20 w-6 h-6 rounded-full bg-[#1a1a1f] border border-white/10 flex items-center justify-center text-zinc-400 hover:text-zinc-200 hover:border-white/30 transition-all shadow-lg"
+                            title={sidebarCollapsed ? 'Expand sidebar' : 'Collapse sidebar'}
+                        >
+                            {sidebarCollapsed ? <ChevronRight className="w-3 h-3" /> : <ChevronLeft className="w-3 h-3" />}
+                        </button>
+
+                        {sidebarCollapsed ? (
+                            /* Collapsed: icon rail only */
+                            <div className="flex flex-col items-center pt-2 gap-1 w-full">
+                                {[
+                                    { id: 'agents',   icon: Bot,       title: 'Agents',   activeClass: 'bg-indigo-500/20 text-indigo-300'  },
+                                    { id: 'learning', icon: BookOpen,  title: 'Learning', activeClass: 'bg-emerald-500/20 text-emerald-300' },
+                                    { id: 'debate',   icon: Swords,    title: 'Debate',   activeClass: 'bg-amber-500/20 text-amber-300'    },
+                                    { id: 'backtest', icon: BarChart2, title: 'Backtest', activeClass: 'bg-violet-500/20 text-violet-300'  },
+                                    { id: 'alerts',   icon: Bell,      title: 'Alerts',   activeClass: 'bg-orange-500/20 text-orange-300'  },
+                                ].map(({ id, icon: Icon, title, activeClass }) => (
+                                    <button key={id} title={title}
+                                        onClick={() => { setSidebarTab(id); setSidebarCollapsed(false); }}
+                                        className={`w-7 h-7 rounded flex items-center justify-center transition-all ${sidebarTab === id ? activeClass : 'text-zinc-600 hover:text-zinc-300 hover:bg-white/5'}`}
+                                    >
+                                        <Icon className="w-3.5 h-3.5" />
+                                    </button>
+                                ))}
+                            </div>
+                        ) : (
+                        <>
                         {/* Strategy Brain / Learning Dashboard / Debate Arena tabs */}
                         <div className="flex-1 overflow-hidden min-h-0 flex flex-col">
-                            {/* Toggle Tabs */}
+                            {/* Toggle Tabs — icon + label, fits all 5 without cutoff */}
                             <div className="flex border-b border-white/5 bg-black/20">
-                                <button
-                                    onClick={() => setSidebarTab('agents')}
-                                    className={`flex-1 px-2 py-2 text-[10px] font-bold uppercase tracking-wider transition-all ${sidebarTab === 'agents'
-                                        ? 'bg-indigo-500/20 text-indigo-300 border-b-2 border-indigo-500'
-                                        : 'text-zinc-500 hover:text-zinc-300'
-                                        }`}
-                                >
-                                    Agents
-                                </button>
-                                <button
-                                    onClick={() => setSidebarTab('learning')}
-                                    className={`flex-1 px-2 py-2 text-[10px] font-bold uppercase tracking-wider transition-all ${sidebarTab === 'learning'
-                                        ? 'bg-emerald-500/20 text-emerald-300 border-b-2 border-emerald-500'
-                                        : 'text-zinc-500 hover:text-zinc-300'
-                                        }`}
-                                >
-                                    Learning
-                                </button>
-                                <button
-                                    onClick={() => setSidebarTab('debate')}
-                                    className={`flex-1 px-2 py-2 text-[10px] font-bold uppercase tracking-wider transition-all ${sidebarTab === 'debate'
-                                        ? 'bg-amber-500/20 text-amber-300 border-b-2 border-amber-500'
-                                        : 'text-zinc-500 hover:text-zinc-300'
-                                        }`}
-                                >
-                                    <span className="flex items-center justify-center gap-1"><Swords className="w-3 h-3" />Debate</span>
-                                </button>
-                                <button
-                                    onClick={() => setSidebarTab('backtest')}
-                                    className={`flex-1 px-2 py-2 text-[10px] font-bold uppercase tracking-wider transition-all ${sidebarTab === 'backtest'
-                                        ? 'bg-violet-500/20 text-violet-300 border-b-2 border-violet-500'
-                                        : 'text-zinc-500 hover:text-zinc-300'
-                                        }`}
-                                >
-                                    Backtest
-                                </button>
-                                <button
-                                    onClick={() => setSidebarTab('alerts')}
-                                    className={`flex-1 px-2 py-2 text-[10px] font-bold uppercase tracking-wider transition-all ${sidebarTab === 'alerts'
-                                        ? 'bg-orange-500/20 text-orange-300 border-b-2 border-orange-500'
-                                        : 'text-zinc-500 hover:text-zinc-300'
-                                        }`}
-                                >
-                                    Alerts
-                                </button>
+                                {[
+                                    { id: 'agents',   icon: Bot,       label: 'Agents',   activeClass: 'bg-indigo-500/20 text-indigo-300 border-b-2 border-indigo-500'   },
+                                    { id: 'learning', icon: BookOpen,  label: 'Learn',    activeClass: 'bg-emerald-500/20 text-emerald-300 border-b-2 border-emerald-500' },
+                                    { id: 'debate',   icon: Swords,    label: 'Debate',   activeClass: 'bg-amber-500/20 text-amber-300 border-b-2 border-amber-500'       },
+                                    { id: 'backtest', icon: BarChart2, label: 'Backtest', activeClass: 'bg-violet-500/20 text-violet-300 border-b-2 border-violet-500'    },
+                                    { id: 'alerts',   icon: Bell,      label: 'Alerts',   activeClass: 'bg-orange-500/20 text-orange-300 border-b-2 border-orange-500'    },
+                                ].map(({ id, icon: Icon, label, activeClass }) => (
+                                    <button key={id}
+                                        onClick={() => setSidebarTab(id)}
+                                        className={`flex-1 flex flex-col items-center justify-center gap-0.5 py-1.5 text-[9px] font-bold uppercase tracking-wide transition-all ${sidebarTab === id ? activeClass : 'text-zinc-500 hover:text-zinc-300'}`}
+                                    >
+                                        <Icon className="w-3 h-3" />
+                                        {label}
+                                    </button>
+                                ))}
                             </div>
 
                             {/* Content */}
@@ -1215,6 +1222,8 @@ const MissionControlApp = ({ somaBackend, isConnected }) => {
                         <div className="h-[200px] border-t border-white/5 shrink-0">
                             <MarketMonitor engine={engine} />
                         </div>
+                        </>
+                        )}
                     </div>
 
                     {/* --- RIGHT CONTENT (FLEX) --- */}

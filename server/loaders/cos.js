@@ -162,10 +162,19 @@ export async function loadCOSSystems(system) {
         // Web perception: persistent URL watchdog (watch list populated at runtime)
         const webPerceptionDaemon = new WebPerceptionDaemon({
             name: 'WebPerceptionDaemon',
+            rootPath: process.cwd(),
             intervalMs: 30000
         });
         daemonManager.register(webPerceptionDaemon);
         system.webPerceptionDaemon = webPerceptionDaemon;
+
+        // Expose COS subsystems globally so perceptionRoutes.js can access them
+        // without circular imports (same pattern as global.SOMA_TRADING)
+        global.SOMA_COS = {
+            capabilityDaemon,
+            webPerceptionDaemon,
+            attentionArbiter
+        };
 
         await daemonManager.startAll();
 
@@ -212,25 +221,50 @@ export async function loadCOSSystems(system) {
             console.warn(`[SOMA] 🧠 Memory pressure (RSS ${rssPercent?.toFixed(1)}%) — triggering warm-tier flush`);
             const evicted = mnemonic.flushToCold(rssPercent > 90);
             console.log(`[SOMA] 🧠 Memory pressure flush complete — ${evicted} vectors evicted`);
+            // Shift attention to memory management briefly — low-priority signals get shed
+            attentionArbiter.setFocus('memory_management', 30000);
         });
 
-        // Capability Discovery — log degradations + restorations
+        // Capability Discovery — log degradations + shift attention for repair
         system.messageBroker.subscribe('capability.degraded', (signal) => {
-            const { capability, note } = signal?.payload || {};
+            const { capability, note, recommendation } = signal?.payload || {};
             console.warn(`[SOMA] 🔴 Capability DEGRADED: ${capability} — ${note || 'no detail'}`);
+            if (recommendation) console.warn(`[SOMA]    Fix: ${recommendation}`);
             system.anomalyDetector?.record?.({ type: 'capability_degraded', capability, note });
+            // Focus on system health for 2 min — lets repair-related signals through
+            attentionArbiter.setFocus('system_health', 120000);
         });
 
         system.messageBroker.subscribe('capability.restored', (signal) => {
             const { capability, note } = signal?.payload || {};
             console.log(`[SOMA] 🟢 Capability RESTORED: ${capability} — ${note || 'no detail'}`);
+            // Return to general focus when things recover
+            if (attentionArbiter.focusTopic === 'system_health') {
+                attentionArbiter.setFocus('general', 0);
+            }
         });
 
-        // Web Perception — route DOM-change deltas through AttentionArbiter
+        // Web Perception — shift attention to the topic that changed, route to GoalPlanner
         system.messageBroker.subscribe('web.perception.delta', (signal) => {
             const { url, label, changeCount } = signal?.payload || {};
-            console.log(`[SOMA] 🌐 Web change detected: ${label || url} (change #${changeCount})`);
-            // AttentionArbiter will gate this to relevant subscribers based on current focus
+            console.log(`[SOMA] 🌐 Web change #${changeCount}: ${label || url}`);
+            // Shift attention toward the label topic for 5 min so related signals get priority
+            const focusTopic = (label || url).toLowerCase().replace(/[^a-z0-9]/g, '_').slice(0, 30);
+            attentionArbiter.setFocus(focusTopic, 300000);
+            // Forward to GoalPlannerArbiter if loaded — it matches deltas to active goals
+            system.messageBroker.sendMessage({
+                from: 'WebPerceptionDaemon',
+                to:   'GoalPlannerArbiter',
+                type: 'web_delta',
+                payload: signal?.payload || {}
+            }).catch(() => {}); // non-fatal if GoalPlanner not loaded
+        });
+
+        // Goal created — focus attention on the goal's domain for 10 min
+        system.messageBroker.subscribe('goal.created', (signal) => {
+            const { category, title } = signal?.payload || {};
+            const focusTopic = category || (title || '').toLowerCase().replace(/[^a-z0-9]/g, '_').slice(0, 30);
+            if (focusTopic) attentionArbiter.setFocus(focusTopic, 600000);
         });
 
         // Wire DaemonManager crashes → health.warning + diagnostic.anomaly

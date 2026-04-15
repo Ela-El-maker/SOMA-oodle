@@ -17,6 +17,7 @@ import notificationService from '../services/NotificationService.js';
 import { signalLibrary } from './SignalLibrary.js';
 import { vwapExecutor } from './VWAPExecutor.js';
 import { altDataService } from './AltDataService.js';
+import { flushPerformanceSummaryCache } from './performanceRoutes.js';
 
 class AutonomousTrader {
     constructor() {
@@ -988,6 +989,7 @@ class AutonomousTrader {
                         confidence: 1.0, status: 'filled'
                     });
                 console.log(`[AutonomousTrader] 📄 PAPER Closed ${position.symbol}: ${reason} (P&L: $${pnl.toFixed(2)}, Balance: $${this._paperPortfolio.balance.toFixed(2)})`);
+                flushPerformanceSummaryCache(); // dashboard reflects new P&L immediately
             }
             return;
         }
@@ -1036,6 +1038,7 @@ class AutonomousTrader {
             } catch (e) { /* non-critical */ }
 
             console.log(`[AutonomousTrader] 📤 Closed ${position.symbol}: ${reason} (P&L: $${position.unrealizedPnl.toFixed(2)})`);
+            flushPerformanceSummaryCache(); // dashboard reflects new P&L immediately;
 
             // Send notification
             notificationService.sendTradeNotification({

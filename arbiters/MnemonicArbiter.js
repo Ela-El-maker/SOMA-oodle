@@ -596,28 +596,51 @@ class MnemonicArbiter extends BaseArbiter {
     const maxAge   = 30 * 24 * 60 * 60 * 1000; // 30 days — recency normalizer
     const maxCount = 100;                         // frequency cap
 
-    const toEvict = [];
-    for (const [id] of this.vectorStore.entries()) {
-      const pattern = this.tierManager.accessPatterns.get(id);
+    // Phase 1: score every warm-tier entry
+    // vectorStore key = embeddingId (e.g. "emb_abc123")
+    // entry.memoryId = actual SQLite primary key used in accessPatterns
+    const toEvict = []; // [{ vectorId, memId }]
+
+    for (const [vectorId, entry] of this.vectorStore.entries()) {
+      const memId = entry?.memoryId;
+      if (!memId) continue; // malformed / legacy entry — skip to be safe
+
+      const pattern = this.tierManager.accessPatterns.get(memId); // keyed by memoryId
       if (!pattern) {
-        // Never recalled — safe to evict
-        toEvict.push(id);
+        // Never recalled — candidate for eviction
+        toEvict.push({ vectorId, memId });
         continue;
       }
       const recencyNorm   = Math.max(0, 1 - (now - pattern.last_access) / maxAge);
       const frequencyNorm = Math.min(1, pattern.access_count / maxCount);
       const utilityScore  = 0.6 * recencyNorm + 0.4 * frequencyNorm;
-      if (utilityScore < threshold) toEvict.push(id);
+      if (utilityScore < threshold) toEvict.push({ vectorId, memId });
     }
 
-    for (const id of toEvict) {
-      this.vectorStore.delete(id);
-      this.tierManager.accessPatterns.delete(id);
+    // Phase 2: evict only entries confirmed in cold SQLite tier
+    // If the memory doesn't exist in SQLite it would be permanently lost — skip it
+    let evicted = 0;
+    const sqlCheck = this.db
+      ? this.db.prepare('SELECT id FROM memories WHERE id = ?')
+      : null;
+
+    for (const { vectorId, memId } of toEvict) {
+      if (sqlCheck) {
+        try {
+          const row = sqlCheck.get(memId);
+          if (!row) continue; // Not in cold tier — do not evict (data loss prevention)
+        } catch (e) {
+          continue; // DB error — skip this entry
+        }
+      }
+      this.vectorStore.delete(vectorId);
+      this.tierManager.accessPatterns.delete(memId);
       this.tierMetrics.warm.evictions++;
+      evicted++;
     }
 
     this.tierMetrics.warm.size = this.vectorStore.size;
-    return toEvict.length;
+    return evicted;
   }
 
   // ===========================

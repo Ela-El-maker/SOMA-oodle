@@ -225,9 +225,10 @@ export class EngineeringSwarmArbiter extends BaseArbiterV4 {
     // ─── STATE INITIALIZATION (Intent Preservation) ───
     // Inject cross-session failure context so the swarm never repeats a known-broken approach
     const priorFailure = this._persistentFailureLog.get(normPath);
-    const priorError = (priorFailure && (Date.now() - priorFailure.timestamp) < 86400000)
-        ? priorFailure.error  // stale after 24h — fresh eyes are better than stale context
-        : null;
+    const priorIsRecent = priorFailure && (Date.now() - priorFailure.timestamp) < 86400000;
+    const priorError = priorIsRecent
+        ? `[PRIOR SESSION — ${priorFailure.attempts} attempt(s) — ${new Date(priorFailure.timestamp).toISOString()}]\n${priorFailure.error}`
+        : null; // stale after 24h — fresh eyes beat stale context
 
     const swarmState = {
         sessionId,
@@ -329,8 +330,14 @@ export class EngineeringSwarmArbiter extends BaseArbiterV4 {
             this.auditLogger.error(`[Swarm] ❌ ENGINEERING ABORTED after ${swarmState.attempts} attempts: ${err.message}`);
 
             // Persist failure context so the NEXT call to modifyCode() for this file
-            // starts with awareness of what already failed (Stateful Failure Recovery)
-            this._persistentFailureLog.set(normPath, { error: err.message, timestamp: Date.now() });
+            // starts with awareness of what already failed (Stateful Failure Recovery).
+            // Slice to 500 chars — err.message already contains verification stderr via the chain:
+            // verifyPatch returns { error: stderr } → thrown as "Verification FAILED: <stderr>"
+            this._persistentFailureLog.set(normPath, {
+                error:     err.message.slice(0, 500),
+                attempts:  swarmState.attempts,
+                timestamp: Date.now()
+            });
 
             return { success: false, error: err.message };
         }

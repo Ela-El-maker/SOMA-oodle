@@ -17,6 +17,13 @@ const _summaryCache  = { body: null, ts: 0 };
 const EVENTS_TTL  = 5000;   // 5s
 const SUMMARY_TTL = 5000;   // 5s
 
+/** Call after any trade close so the dashboard summary reflects the new P&L immediately */
+export function flushPerformanceSummaryCache() {
+    _summaryCache.body = null;
+    _summaryCache.ts   = 0;
+    _eventsCache.clear();
+}
+
 /**
  * GET /api/performance/summary
  * Get overall performance summary with real trade data

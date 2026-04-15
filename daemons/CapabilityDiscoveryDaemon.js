@@ -28,6 +28,17 @@ export class CapabilityDiscoveryDaemon extends BaseDaemon {
         // name → previous ok boolean (for change detection)
         this._prevState     = new Map();
 
+        // Human-readable remediation hints — emitted with capability.degraded signal
+        this._remediations = new Map([
+            ['filesystem',      'Check SOMA working directory permissions and disk space'],
+            ['sqlite_memory',   'Check soma-memory.db is not locked; restart SOMA if stuck'],
+            ['ollama',          'Start Ollama: run "ollama serve" in a terminal'],
+            ['deepseek_key',    'Add DEEPSEEK_API_KEY to config/api-keys.env'],
+            ['brave_search',    'Add BRAVE_API_KEY to config/api-keys.env'],
+            ['puppeteer',       'Install Chrome or run: npm install puppeteer'],
+            ['message_broker',  'MessageBroker crashed — restart SOMA to restore CNS'],
+        ]);
+
         // Probes: each returns { ok: boolean, latencyMs: number, note?: string }
         // IMPORTANT: probes MUST be side-effect free. Never launch browsers,
         // execute trades, or modify files. Only read/ping/stat.
@@ -189,8 +200,9 @@ export class CapabilityDiscoveryDaemon extends BaseDaemon {
                 // Change detection
                 const wasOk = this._prevState.get(name);
                 if (wasOk === true && !ok) {
-                    this.emitSignal('capability.degraded', { capability: name, note, latencyMs }, 'high');
-                    console.warn(`[CapabilityDiscovery] ⚠️  ${name} DEGRADED — ${note || 'no detail'}`);
+                    const recommendation = this._remediations.get(name) || 'Check SOMA logs for details';
+                    this.emitSignal('capability.degraded', { capability: name, note, latencyMs, recommendation }, 'high');
+                    console.warn(`[CapabilityDiscovery] ⚠️  ${name} DEGRADED — ${note || 'no detail'} | Fix: ${recommendation}`);
                 } else if (wasOk === false && ok) {
                     this.emitSignal('capability.restored', { capability: name, note, latencyMs }, 'normal');
                     console.log(`[CapabilityDiscovery] ✅ ${name} RESTORED — ${note || 'no detail'}`);

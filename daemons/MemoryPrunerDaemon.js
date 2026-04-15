@@ -33,12 +33,21 @@ class MemoryPrunerDaemon extends BaseDaemon {
                 patterns: ['state', 'snapshot', 'experience_dump', 'node_modules']
             }) || { pruned: 0 };
 
-            console.log(`[Metabolism] ✅ Pruning Complete. Removed ${result.pruned} bloated entries.`);
-            
+            console.log(`[Metabolism] ✅ Size pruning complete. Removed ${result.pruned} bloated entries.`);
+
+            // Also run utility-based pruning (Frequency × Recency decay)
+            let utilityEvicted = 0;
+            if (typeof this.mnemonic.flushToCold === 'function') {
+                utilityEvicted = this.mnemonic.flushToCold(false);
+                console.log(`[Metabolism] ✅ Utility flush: ${utilityEvicted} low-score warm-tier entries evicted`);
+            }
+
             // Log to CNS
             this.emitSignal('health.metrics', {
                 type: 'memory_pruned',
-                count: result.pruned,
+                count: result.pruned + utilityEvicted,
+                sizeEvicted: result.pruned,
+                utilityEvicted,
                 timestamp: Date.now()
             }, 'low');
 

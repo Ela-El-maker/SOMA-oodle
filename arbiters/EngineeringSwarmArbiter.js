@@ -156,9 +156,16 @@ export class EngineeringSwarmArbiter extends BaseArbiterV4 {
 
     this.auditLogger.info(`[EngSwarm] ⚡ Goal assigned: "${goal.title}" (${goalId.slice(0, 8)})`);
 
-    // Extract the first recognisable file path from the description
-    const fileMatch = (goal.description || '').match(/[\w./\\-]+\.(js|cjs|mjs|ts|jsx|tsx|json|py)/i);
-    if (!fileMatch) {
+    // Prioritize file path from metadata (Sovereign Assembly protocol)
+    let filepath = goal.metadata?.filePath;
+
+    // Fallback: Extract from description if metadata is missing
+    if (!filepath) {
+        const fileMatch = (goal.description || '').match(/[\w./\\-]+\.(js|cjs|mjs|ts|jsx|tsx|json|py)/i);
+        if (fileMatch) filepath = fileMatch[0];
+    }
+
+    if (!filepath) {
       // Non-code goal — update progress to show it was acknowledged
       this.auditLogger.warn(`[EngSwarm] Goal "${goal.title}" has no file target — cannot execute via modifyCode`);
       messageBroker.sendMessage({
@@ -168,8 +175,6 @@ export class EngineeringSwarmArbiter extends BaseArbiterV4 {
       }).catch(() => {});
       return { success: true, message: 'Goal acknowledged, no file target' };
     }
-
-    const filepath = fileMatch[0];
 
     // Run modifyCode in the background — do NOT block handleMessage
     (async () => {

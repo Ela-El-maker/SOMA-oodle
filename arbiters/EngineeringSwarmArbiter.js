@@ -105,10 +105,15 @@ export class EngineeringSwarmArbiter extends BaseArbiterV4 {
     this.rootPath = opts.rootPath || process.cwd();
     this.commandPolicy = new CommandPolicyEngine();
     this.optimizer = opts.swarmOptimizer || null;
-    this.runtime = new SwarmEngine({ 
+    this.runtime = new SwarmEngine({
         workspace: path.join(this.rootPath, '.soma', 'swarm_vault'),
-        logger: this.auditLogger 
+        logger: this.auditLogger
     });
+
+    // Cross-session failure context: filepath → { error, timestamp }
+    // Prevents the "Meeseeks Loop" where the swarm repeats the same broken approach
+    // across independent modifyCode() calls. Cleared on success, persists on final failure.
+    this._persistentFailureLog = new Map();
   }
 
   setOptimizer(optimizer) {
@@ -218,14 +223,24 @@ export class EngineeringSwarmArbiter extends BaseArbiterV4 {
     const sessionId = `swarm_${crypto.randomBytes(4).toString('hex')}`;
 
     // ─── STATE INITIALIZATION (Intent Preservation) ───
+    // Inject cross-session failure context so the swarm never repeats a known-broken approach
+    const priorFailure = this._persistentFailureLog.get(normPath);
+    const priorError = (priorFailure && (Date.now() - priorFailure.timestamp) < 86400000)
+        ? priorFailure.error  // stale after 24h — fresh eyes are better than stale context
+        : null;
+
     const swarmState = {
         sessionId,
         filepath,
         northStar: request, // The persistent goal
         attempts: 0,
         maxAttempts: 2,
-        lastError: null
+        lastError: priorError  // null on first-ever attempt, prior error on retry
     };
+
+    if (priorError) {
+        this.auditLogger.warn(`[EngSwarm] ⚠️ Prior failure context injected for ${filepath}: "${priorError.slice(0, 80)}"`);
+    }
 
     // Initialize Blackboard for this session
     blackboard.reset(sessionId);
@@ -284,6 +299,9 @@ export class EngineeringSwarmArbiter extends BaseArbiterV4 {
                 if (this.optimizer) this.optimizer.record(experienceData);
                 await this._logToExperienceLedger(experienceData);
 
+                // Success — wipe failure context so next call starts clean
+                this._persistentFailureLog.delete(normPath);
+
                 return { success: true, sessionId, duration, verdict };
 
             } catch (transErr) {
@@ -309,6 +327,11 @@ export class EngineeringSwarmArbiter extends BaseArbiterV4 {
             await this._logToExperienceLedger(errorData);
             blackboard.post('insights', { type: 'task_aborted', error: err.message });
             this.auditLogger.error(`[Swarm] ❌ ENGINEERING ABORTED after ${swarmState.attempts} attempts: ${err.message}`);
+
+            // Persist failure context so the NEXT call to modifyCode() for this file
+            // starts with awareness of what already failed (Stateful Failure Recovery)
+            this._persistentFailureLog.set(normPath, { error: err.message, timestamp: Date.now() });
+
             return { success: false, error: err.message };
         }
     }

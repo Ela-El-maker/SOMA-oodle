@@ -20,7 +20,7 @@ export class HealthDaemon extends BaseDaemon {
 
     async tick() {
         const metrics = await this._getMetrics();
-        
+
         // Emit normal metrics signal
         this.emitSignal('health.metrics', metrics, 'low');
 
@@ -39,13 +39,30 @@ export class HealthDaemon extends BaseDaemon {
                 details: `CPU usage is at ${metrics.cpuUsage}%`
             }, 'normal');
         }
+
+        // RSS memory pressure — triggers reactive MnemonicArbiter flush
+        if (metrics.rssPercent > 85) {
+            this.emitSignal('system.resource.critical', {
+                issue: 'HIGH_RSS',
+                details: `Process RSS at ${metrics.rssPercent.toFixed(1)}% of total system RAM`,
+                rssPercent: parseFloat(metrics.rssPercent),
+                rssGB: metrics.rssGB
+            }, 'high');
+        } else if (metrics.rssPercent > 75) {
+            this.emitSignal('health.warning', {
+                issue: 'ELEVATED_RSS',
+                details: `Process RSS at ${metrics.rssPercent.toFixed(1)}% — approaching pressure threshold`,
+                rssPercent: parseFloat(metrics.rssPercent)
+            }, 'normal');
+        }
     }
 
     async _getMetrics() {
         const cpuLoad = os.loadavg();
         const totalMem = os.totalmem();
         const freeMem = os.freemem();
-        
+        const rss = process.memoryUsage().rss;
+
         let dbSize = 0;
         try {
             const stats = await fs.stat(this.dbPath);
@@ -55,6 +72,8 @@ export class HealthDaemon extends BaseDaemon {
         return {
             cpuUsage: (cpuLoad[0] * 100 / os.cpus().length).toFixed(1),
             ramUsage: ((totalMem - freeMem) * 100 / totalMem).toFixed(1),
+            rssPercent: ((rss / totalMem) * 100).toFixed(1),
+            rssGB: parseFloat((rss / (1024 * 1024 * 1024)).toFixed(3)),
             dbSizeGB: dbSize / (1024 * 1024 * 1024),
             uptime: process.uptime()
         };

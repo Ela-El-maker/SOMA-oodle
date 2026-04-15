@@ -19,6 +19,8 @@ import MemoryPrunerDaemon from '../../daemons/MemoryPrunerDaemon.js';
 import CuriosityDaemon from '../../daemons/CuriosityDaemon.js';
 import SocialImpulseDaemon from '../../daemons/SocialImpulseDaemon.js';
 import DaemonManager from '../../core/DaemonManager.js';
+import CapabilityDiscoveryDaemon from '../../daemons/CapabilityDiscoveryDaemon.js';
+import WebPerceptionDaemon from '../../daemons/WebPerceptionDaemon.js';
 
 export async function loadCOSSystems(system) {
     console.log('\n[Loader] 🧠 Initializing Cognitive Operating System (COS) Layer...');
@@ -148,6 +150,23 @@ export async function loadCOSSystems(system) {
             intervalMs: 86400000 // daily
         }));
 
+        // Self-healing: probe every registered capability every 60s
+        const capabilityDaemon = new CapabilityDiscoveryDaemon({
+            name: 'CapabilityDiscoveryDaemon',
+            rootPath: process.cwd(),
+            intervalMs: 60000
+        });
+        daemonManager.register(capabilityDaemon);
+        system.capabilityDaemon = capabilityDaemon;
+
+        // Web perception: persistent URL watchdog (watch list populated at runtime)
+        const webPerceptionDaemon = new WebPerceptionDaemon({
+            name: 'WebPerceptionDaemon',
+            intervalMs: 30000
+        });
+        daemonManager.register(webPerceptionDaemon);
+        system.webPerceptionDaemon = webPerceptionDaemon;
+
         await daemonManager.startAll();
 
         // 8. Wire Signal Reactions (CNS Drivers)
@@ -178,10 +197,40 @@ export async function loadCOSSystems(system) {
         system.messageBroker.subscribe('health.warning', (signal) => {
             console.warn(`[SOMA] 🏥 Health warning [${signal.source}]: ${JSON.stringify(signal.payload)}`);
             system.anomalyDetector?.record?.({
-                type: 'health_warning', 
-                payload: signal.payload, 
+                type: 'health_warning',
+                payload: signal.payload,
                 source: signal.source
             });
+        });
+
+        // Memory Pressure — reactively flush MnemonicArbiter warm tier when RSS > 85%
+        system.messageBroker.subscribe('system.resource.critical', (signal) => {
+            const { issue, rssPercent } = signal?.payload || {};
+            if (issue !== 'HIGH_RSS') return;
+            const mnemonic = system.mnemonic || system.mnemonicArbiter;
+            if (!mnemonic?.flushToCold) return;
+            console.warn(`[SOMA] 🧠 Memory pressure (RSS ${rssPercent?.toFixed(1)}%) — triggering warm-tier flush`);
+            const evicted = mnemonic.flushToCold(rssPercent > 90);
+            console.log(`[SOMA] 🧠 Memory pressure flush complete — ${evicted} vectors evicted`);
+        });
+
+        // Capability Discovery — log degradations + restorations
+        system.messageBroker.subscribe('capability.degraded', (signal) => {
+            const { capability, note } = signal?.payload || {};
+            console.warn(`[SOMA] 🔴 Capability DEGRADED: ${capability} — ${note || 'no detail'}`);
+            system.anomalyDetector?.record?.({ type: 'capability_degraded', capability, note });
+        });
+
+        system.messageBroker.subscribe('capability.restored', (signal) => {
+            const { capability, note } = signal?.payload || {};
+            console.log(`[SOMA] 🟢 Capability RESTORED: ${capability} — ${note || 'no detail'}`);
+        });
+
+        // Web Perception — route DOM-change deltas through AttentionArbiter
+        system.messageBroker.subscribe('web.perception.delta', (signal) => {
+            const { url, label, changeCount } = signal?.payload || {};
+            console.log(`[SOMA] 🌐 Web change detected: ${label || url} (change #${changeCount})`);
+            // AttentionArbiter will gate this to relevant subscribers based on current focus
         });
 
         // Wire DaemonManager crashes → health.warning + diagnostic.anomaly

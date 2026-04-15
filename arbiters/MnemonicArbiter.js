@@ -16,6 +16,7 @@
 
 import BaseArbiterModule from '../core/BaseArbiter.cjs';
 const { BaseArbiter, ArbiterCapability } = BaseArbiterModule;
+import messageBroker from '../core/MessageBroker.cjs';
 import { createClient } from 'redis';
 import Database from 'better-sqlite3';
 import fs from 'fs/promises';
@@ -281,6 +282,20 @@ class MnemonicArbiter extends BaseArbiter {
       this.registerMessageHandler('stats', this._handleStats.bind(this));
       this.registerMessageHandler('optimize', this._handleOptimize.bind(this));
       this.registerMessageHandler('deep_cleanup', this._handleDeepCleanup.bind(this)); // NEW: Digital Constipation Fix
+
+      // Subscribe to RSS pressure signal — reactively flush warm tier when memory is critical
+      try {
+        messageBroker.subscribe('system.resource.critical', (signal) => {
+          const { rssPercent, issue } = signal?.payload || {};
+          if (issue !== 'HIGH_RSS') return; // only react to RAM, not other criticals
+          const aggressive = (rssPercent || 0) > 90;
+          this.log('warn', `[MemoryPressure] RSS at ${rssPercent?.toFixed(1)}% — flushing warm tier (aggressive=${aggressive})`);
+          const evicted = this.flushToCold(aggressive);
+          this.log('info', `[MemoryPressure] Evicted ${evicted} warm-tier entries`);
+        });
+      } catch (e) {
+        this.log('warn', 'Could not subscribe to system.resource.critical', { error: e.message });
+      }
 
       this.log('info', 'âœ… MnemonicArbiterV2 ready - all 3 tiers operational');
       this._logTierStatus();
@@ -557,6 +572,52 @@ class MnemonicArbiter extends BaseArbiter {
       this.embedder = null;
       this.reranker = null;
     }
+  }
+
+  // ===========================
+  // Memory Pressure Management
+  // ===========================
+
+  /**
+   * Evict low-utility entries from the warm tier (vectorStore) back to SQLite cold storage.
+   * Called reactively when system.resource.critical fires (RSS > 85%).
+   * Utility score = 0.6 × recency_norm + 0.4 × frequency_norm
+   * Goal-alignment axis skipped — GoalPlannerArbiter may not be ready and we
+   * must not evict everything just because goals aren't loaded yet.
+   *
+   * @param {boolean} aggressive - true when RSS > 90% (lower threshold, more evictions)
+   * @returns {number} entries evicted
+   */
+  flushToCold(aggressive = false) {
+    if (!this.vectorStore.size) return 0;
+
+    const threshold = aggressive ? 0.4 : 0.2;
+    const now = Date.now();
+    const maxAge   = 30 * 24 * 60 * 60 * 1000; // 30 days — recency normalizer
+    const maxCount = 100;                         // frequency cap
+
+    const toEvict = [];
+    for (const [id] of this.vectorStore.entries()) {
+      const pattern = this.tierManager.accessPatterns.get(id);
+      if (!pattern) {
+        // Never recalled — safe to evict
+        toEvict.push(id);
+        continue;
+      }
+      const recencyNorm   = Math.max(0, 1 - (now - pattern.last_access) / maxAge);
+      const frequencyNorm = Math.min(1, pattern.access_count / maxCount);
+      const utilityScore  = 0.6 * recencyNorm + 0.4 * frequencyNorm;
+      if (utilityScore < threshold) toEvict.push(id);
+    }
+
+    for (const id of toEvict) {
+      this.vectorStore.delete(id);
+      this.tierManager.accessPatterns.delete(id);
+      this.tierMetrics.warm.evictions++;
+    }
+
+    this.tierMetrics.warm.size = this.vectorStore.size;
+    return toEvict.length;
   }
 
   // ===========================

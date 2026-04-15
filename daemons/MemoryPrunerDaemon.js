@@ -18,7 +18,7 @@ class MemoryPrunerDaemon extends BaseDaemon {
         this.sizeThresholdKB = opts.sizeThresholdKB || 100;
     }
 
-    async onPulse() {
+    async tick() {
         console.log('[Metabolism] 🚽 Starting Memory Pruning Cycle...');
         
         try {
@@ -36,11 +36,11 @@ class MemoryPrunerDaemon extends BaseDaemon {
             console.log(`[Metabolism] ✅ Pruning Complete. Removed ${result.pruned} bloated entries.`);
             
             // Log to CNS
-            this.publish('health.metrics', {
+            this.emitSignal('health.metrics', {
                 type: 'memory_pruned',
                 count: result.pruned,
                 timestamp: Date.now()
-            });
+            }, 'low');
 
         } catch (err) {
             console.error(`[Metabolism] ❌ Pruning failed: ${err.message}`);

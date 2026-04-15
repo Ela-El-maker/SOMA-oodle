@@ -226,6 +226,9 @@ class AutonomousTrader {
     async _runCycle() {
         if (!this.isRunning || !this.symbol) return;
 
+        // Yield immediately so pending HTTP requests can be processed before we start
+        await new Promise(resolve => setImmediate(resolve));
+
         const cycleStart = Date.now();
         let signal = null;
         let analysis = null;
@@ -389,6 +392,9 @@ class AutonomousTrader {
                     return;
                 }
             }
+
+            // Yield before the heavy execute path so HTTP handlers can respond
+            await new Promise(resolve => setImmediate(resolve));
 
             // 14. EXECUTE THE TRADE
             await this._executeTrade(signal, sizing, currentPrice, analysis);

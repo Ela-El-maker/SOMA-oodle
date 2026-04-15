@@ -26,6 +26,9 @@ const ENCRYPTION_KEY = crypto.createHash('sha256').update(process.env.COMPUTERNA
 class ExchangeCredentialsService {
     constructor() {
         this.ensureConfigDir();
+        this._credCache    = null;  // in-memory cache of credentials file
+        this._credCacheTs  = 0;     // timestamp of last file read
+        this._credCacheTTL = 5000;  // 5s TTL — credentials rarely change
     }
 
     /**
@@ -73,18 +76,35 @@ class ExchangeCredentialsService {
     }
 
     /**
-     * Load all credentials from file
+     * Load all credentials from file.
+     * Cached with a 5s TTL — readFileSync on every status call was the primary
+     * cause of 5-6s event-loop stalls (called 4+ times per request).
      */
     loadAllCredentials() {
+        const now = Date.now();
+        if (this._credCache && (now - this._credCacheTs) < this._credCacheTTL) {
+            return this._credCache;
+        }
         try {
             if (!fs.existsSync(CREDENTIALS_FILE)) {
+                this._credCache   = {};
+                this._credCacheTs = now;
                 return {};
             }
-            return JSON.parse(fs.readFileSync(CREDENTIALS_FILE, 'utf8'));
+            const data = JSON.parse(fs.readFileSync(CREDENTIALS_FILE, 'utf8'));
+            this._credCache   = data;
+            this._credCacheTs = now;
+            return data;
         } catch (e) {
             console.error('[Credentials] Failed to load:', e.message);
-            return {};
+            return this._credCache || {};
         }
+    }
+
+    /** Invalidate cache immediately (call after any write) */
+    _invalidateCache() {
+        this._credCache   = null;
+        this._credCacheTs = 0;
     }
 
     /**
@@ -94,9 +114,13 @@ class ExchangeCredentialsService {
         try {
             this.ensureConfigDir();
             fs.writeFileSync(CREDENTIALS_FILE, JSON.stringify(credentials, null, 2));
+            // Update cache to the just-written data so next read is instant
+            this._credCache   = credentials;
+            this._credCacheTs = Date.now();
             return true;
         } catch (e) {
             console.error('[Credentials] Failed to save:', e.message);
+            this._invalidateCache();
             return false;
         }
     }
@@ -194,11 +218,12 @@ class ExchangeCredentialsService {
         try {
             const allCreds = this.loadAllCredentials();
             delete allCreds[exchange];
-            this.saveAllCredentials(allCreds);
+            this.saveAllCredentials(allCreds); // also updates cache
             console.log(`[Credentials] ${exchange} credentials cleared`);
             return true;
         } catch (e) {
             console.error(`[Credentials] Failed to clear ${exchange}:`, e.message);
+            this._invalidateCache();
             return false;
         }
     }

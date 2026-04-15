@@ -11,6 +11,12 @@ import simulationLearningEngine from './SimulationLearningEngine.js';
 
 const router = express.Router();
 
+// Short-lived caches so SQLite isn't hammered on every 5s frontend poll
+const _eventsCache   = new Map(); // limit → { body, ts }
+const _summaryCache  = { body: null, ts: 0 };
+const EVENTS_TTL  = 5000;   // 5s
+const SUMMARY_TTL = 5000;   // 5s
+
 /**
  * GET /api/performance/summary
  * Get overall performance summary with real trade data
@@ -19,6 +25,14 @@ router.get('/summary', (req, res) => {
     try {
         const { days } = req.query;
         const daysFilter = days ? parseInt(days) : null;
+
+        // Serve from cache for the default (no-days) poll — dashboard hits this every 5s
+        if (!daysFilter) {
+            const now = Date.now();
+            if (_summaryCache.body && (now - _summaryCache.ts) < SUMMARY_TTL) {
+                return res.json(_summaryCache.body);
+            }
+        }
 
         // Get real stats from SQLite (closed trades)
         const stats = tradeLogger.getStats(daysFilter);
@@ -80,7 +94,7 @@ router.get('/summary', (req, res) => {
             }
         }
 
-        res.json({
+        const summaryBody = {
             success: true,
             summary: {
                 total_pnl: parseFloat((stats.totalPnl || 0).toFixed(2)),
@@ -110,7 +124,14 @@ router.get('/summary', (req, res) => {
                 max_drawdown_pct: maxDrawdownPct,
                 agent_leaderboard: agentLeaderboard
             }
-        });
+        };
+
+        if (!daysFilter) {
+            _summaryCache.body = summaryBody;
+            _summaryCache.ts = Date.now();
+        }
+
+        res.json(summaryBody);
     } catch (error) {
         console.error('[Performance API] Error:', error.message);
         res.status(500).json({
@@ -205,12 +226,18 @@ router.get('/open-trades', (req, res) => {
 router.get('/events', (req, res) => {
     try {
         const { limit = 5 } = req.query;
-        const events = generateLearningEvents(parseInt(limit));
+        const limitInt = parseInt(limit);
 
-        res.json({
-            success: true,
-            events
-        });
+        const now = Date.now();
+        const hit = _eventsCache.get(limitInt);
+        if (hit && (now - hit.ts) < EVENTS_TTL) {
+            return res.json(hit.body);
+        }
+
+        const events = generateLearningEvents(limitInt);
+        const body = { success: true, events };
+        _eventsCache.set(limitInt, { body, ts: now });
+        res.json(body);
     } catch (error) {
         console.error('[Learning API] Error:', error.message);
         res.status(500).json({

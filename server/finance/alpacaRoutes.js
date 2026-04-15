@@ -8,6 +8,14 @@ import alpacaService from './AlpacaService.js';
 
 const router = express.Router();
 
+// 3s cache for /status — connection state doesn't change mid-request
+let _statusCache = null;
+let _statusCacheTs = 0;
+const STATUS_TTL = 3000;
+
+/** Flush status cache on connect/disconnect so UI sees it immediately */
+export function flushAlpacaStatusCache() { _statusCache = null; _statusCacheTs = 0; }
+
 /**
  * POST /api/alpaca/connect
  * Connect to Alpaca with API credentials
@@ -30,7 +38,7 @@ router.post('/connect', async (req, res) => {
                         paperTrading;
 
         const result = await alpacaService.connect(apiKey, secretKey, isPaper, true, credentialType, baseUrl);
-
+        flushAlpacaStatusCache(); // connected — next /status call sees fresh data
         res.json({
             success: true,
             account: result.account,
@@ -67,16 +75,16 @@ router.post('/disconnect', (req, res) => {
  */
 router.get('/status', (req, res) => {
     try {
+        const now = Date.now();
+        if (_statusCache && (now - _statusCacheTs) < STATUS_TTL) {
+            return res.json(_statusCache);
+        }
         const status = alpacaService.getStatus();
-        res.json({
-            success: true,
-            status
-        });
+        _statusCache   = { success: true, status };
+        _statusCacheTs = now;
+        res.json(_statusCache);
     } catch (error) {
-        res.status(500).json({
-            success: false,
-            error: error.message
-        });
+        res.status(500).json({ success: false, error: error.message });
     }
 });
 

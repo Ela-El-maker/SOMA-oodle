@@ -4,6 +4,14 @@ SOMA is a self-aware AI operating system. She runs ~100 cognitive arbiters in pa
 
 ---
 
+## Screenshots
+
+![SOMA CT — Cognitive Terminal](screenshots/Screenshot%202026-04-14%20201628.png)
+![Forecaster Engine](screenshots/Screenshot%202026-04-14%20201732.png)
+![Mission Control](screenshots/Screenshot%202026-04-14%20201845.png)
+
+---
+
 ## Quick Start
 
 ### 1. Clone and set up

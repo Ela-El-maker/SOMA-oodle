@@ -311,10 +311,9 @@ Rules:
                         type: 'pulse',
                         payload: { type: 'soma_proactive', message: text.trim() }
                     }));
-                    // Store in conversation history so SOMA remembers this greeting when Barry replies
-                    if (system.conversationHistory?.addMessage) {
-                        system.conversationHistory.addMessage('assistant', text.trim(), {}).catch(() => {});
-                    }
+                    // Note: deliberately NOT storing in conversationHistory — the greeting is
+                    // shown via the soma_proactive event. Storing it caused it to appear twice:
+                    // once in the activity stream and again when the Neural Link loaded history.
                 }
             } catch { /* synthesis greeting is never blocking */ }
         }, 4000);

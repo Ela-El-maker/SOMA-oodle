@@ -419,7 +419,8 @@ INTEGRATED RESPONSE:`;
                 'Content-Type': 'application/json',
                 'Authorization': `Bearer ${this.deepseekApiKey}`
             },
-            body: JSON.stringify(body)
+            body: JSON.stringify(body),
+            signal: AbortSignal.timeout(45000) // 45s hard cap — prevents indefinite hangs
         });
 
         if (!response.ok) {

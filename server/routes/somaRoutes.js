@@ -572,7 +572,8 @@ ${memoryContext || "No specific memories found for this query."}
                     stream: true,
                     max_tokens: 200,
                     temperature: 0.75
-                })
+                }),
+                signal: AbortSignal.timeout(45000)
             });
 
             if (!dsRes.ok) {

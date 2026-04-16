@@ -790,8 +790,7 @@ ${contextStr}`;
                 // Get natural-language context about who this person is
                 const ctx = fingerprint.getUserContext(userId);
                 if (ctx) {
-                    userContext = `\n[ABOUT ${OWNER_NAME.toUpperCase()}]\n${ctx}\n`;
-                }
+                    userContext = `\n[ABOUT ${OWNER_NAME.toUpperCase()} — use as silent background context only, do NOT quote or reference these observations directly in your response]\n${ctx}\n`;
             } catch { /* fingerprinting is never blocking */ }
 
             // Fetch active goals â€" passed to V3.callBrain() so System 1 fast path gets them too.

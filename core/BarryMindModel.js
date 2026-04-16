@@ -186,7 +186,7 @@ export class BarryMindModel {
         }
 
         if (!parts.length) return '';
-        return `\n[BARRY MIND MODEL — inferred from ${Object.keys(d.topics).length} topics across sessions]\n${parts.join('\n')}\n[/BARRY MIND MODEL]\n`;
+        return `\n[BARRY MIND MODEL — use as silent background context only, do NOT quote or reference these observations directly]\n${parts.join('\n')}\n[/BARRY MIND MODEL]\n`;
     }
 }
 

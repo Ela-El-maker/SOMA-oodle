@@ -1058,6 +1058,19 @@ const SomaCommandBridge = () => {
     return () => somaBackend.off('soma_proactive', onProactiveSpeak);
   }, []);
 
+  // Auto-connect Neural Link on first user click (browser requires gesture before AudioContext)
+  const autoConnectedRef = useRef(false);
+  useEffect(() => {
+    const onFirstClick = () => {
+      if (autoConnectedRef.current || isOrbConnected) return;
+      autoConnectedRef.current = true;
+      connectOrb();
+      window.removeEventListener('click', onFirstClick);
+    };
+    window.addEventListener('click', onFirstClick);
+    return () => window.removeEventListener('click', onFirstClick);
+  }, [connectOrb, isOrbConnected]);
+
   // Speak queued greeting the moment Neural Link comes up
   useEffect(() => {
     if (!isOrbConnected || !pendingGreetingRef.current) return;

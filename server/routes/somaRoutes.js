@@ -763,7 +763,7 @@ ${contextStr}`;
                     // hammering memory_recall), skip gracefully rather than hanging the chat.
                     const mem = await Promise.race([
                         system.mnemonicArbiter.recall(message, 8),
-                        new Promise((_, reject) => setTimeout(() => reject(new Error('memory recall timeout')), 4000))
+                        new Promise((_, reject) => setTimeout(() => reject(new Error('memory recall timeout')), 2000))
                     ]);
                     const hits = (mem?.results || (Array.isArray(mem) ? mem : []))
                         .filter(m => (m.similarity || 1) > 0.25)
@@ -901,7 +901,10 @@ ${contextStr}`;
 
                 // Recent things SOMA said (proactive messages, greetings) — gives her continuity
                 if (system.conversationHistory?.getRecentMessages) {
-                    const recentAssistant = await system.conversationHistory.getRecentMessages(5, {}).catch(() => []);
+                    const recentAssistant = await Promise.race([
+                        system.conversationHistory.getRecentMessages(5, {}),
+                        new Promise((_, r) => setTimeout(() => r(new Error('history timeout')), 1500))
+                    ]).catch(() => []);
                     const somaRecent = recentAssistant
                         .filter(m => m.role === 'assistant')
                         .slice(-3)
@@ -1152,9 +1155,12 @@ ${personaContext}${characterContext}`.trim()
                         if (!brain) return { text: '' };
                         return brain.reason(prompt, { quickResponse: true, systemOverride: 'nemesis_review' });
                     };
+                    // Simple chat: 4s cap — conversational replies rarely need deep linguistic review.
+                    // Deep thinking: keep 8s — user explicitly asked for thorough analysis.
+                    const nemesisCap = deepThinking ? 8000 : 4000;
                     nemesisVerdict = await Promise.race([
                         nemesis.evaluateResponse(result?.brain || 'LOGOS', message, result || { text: responseText }, geminiCallback),
-                        new Promise((_, reject) => setTimeout(() => reject(new Error('nemesis timeout')), 8000))
+                        new Promise((_, reject) => setTimeout(() => reject(new Error('nemesis timeout')), nemesisCap))
                     ]).catch(() => null);
 
                     if (nemesisVerdict?.needsRevision) {

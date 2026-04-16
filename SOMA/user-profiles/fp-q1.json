@@ -1,0 +1,18 @@
+{
+  "userId": "q1",
+  "sessions": 1,
+  "totalMessages": 1,
+  "avgMsgLength": 1,
+  "questionRatio": 0,
+  "vocabRichness": 1,
+  "avgWordLength": 2,
+  "typicalStyle": "declarative-articulate",
+  "hourHistogram": {
+    "13": 1
+  },
+  "topicFreq": {},
+  "recentTopics": [],
+  "lastSeen": 1773422531296,
+  "lastUpdated": 1773422531296,
+  "createdAt": 1773422531296
+}

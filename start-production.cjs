@@ -18,12 +18,12 @@ const log = (service, msg, color = colors.reset) => {
 async function main() {
   console.clear();
   console.log(`${colors.cyan}
-  ╔════════════════════════════════════════════════════════════════╗
-  ║                 🚀 SOMA PRODUCTION LAUNCHER                    ║
-  ║                                                                ║
-  ║      • SOMA Core Backend (Port 3001)                          ║
-  ║      • Electron Window (Production Build)                     ║
-  ╚════════════════════════════════════════════════════════════════╝
+  +----------------------------------------------------------------+
+  |                 🚀 SOMA PRODUCTION LAUNCHER                    |
+  |                                                                |
+  |      . SOMA Core Backend (Port ${PORTS.BACKEND})                          .
+  |      . Electron Window (Production Build)                      |
+  +----------------------------------------------------------------+
   ${colors.reset}`);
 
   const processes = [];

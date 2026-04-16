@@ -1,0 +1,65 @@
+{
+  "traceId": "rc_926367615370",
+  "ts": "2025-12-23T13:46:46.732Z",
+  "query": "Hello?",
+  "meta": {},
+  "candidates": [
+    {
+      "source": "PROMETHEUS",
+      "text": "Query received. Awaiting instructions.\n",
+      "confidence": 0.85,
+      "role": "prometheus"
+    },
+    {
+      "source": "LOGOS",
+      "text": "Query received. Awaiting further instructions or a specific task. My current state is idle, awaiting input.\n",
+      "confidence": 0.85,
+      "role": "logos"
+    },
+    {
+      "source": "AURORA",
+      "text": "Present.\n",
+      "confidence": 0.85,
+      "role": "aurora"
+    }
+  ],
+  "fused": {
+    "text": "Query received. Awaiting further instructions or a specific task. My current state is idle, awaiting input.\n",
+    "weights": [
+      {
+        "source": "PROMETHEUS",
+        "norm": 0.32432432432432434,
+        "conf": 0.85
+      },
+      {
+        "source": "LOGOS",
+        "norm": 0.35135135135135126,
+        "conf": 0.85
+      },
+      {
+        "source": "AURORA",
+        "norm": 0.32432432432432434,
+        "conf": 0.85
+      }
+    ],
+    "confidence": 0.8499999999999999,
+    "provenance": [
+      {
+        "source": "PROMETHEUS",
+        "snippet": "Query received. Awaiting instructions.\n",
+        "confidence": 0.85
+      },
+      {
+        "source": "LOGOS",
+        "snippet": "Query received. Awaiting further instructions or a specific task. My current state is idle, awaiting input.\n",
+        "confidence": 0.85
+      },
+      {
+        "source": "AURORA",
+        "snippet": "Present.\n",
+        "confidence": 0.85
+      }
+    ]
+  },
+  "iter": 0
+}

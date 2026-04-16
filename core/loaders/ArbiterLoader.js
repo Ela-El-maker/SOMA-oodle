@@ -1,0 +1,1 @@
+﻿import { createRequire } from \"module\";`nconst require = createRequire(import.meta.url);`n`nexport async function loadCoreArbiters(system, config) {`n    console.log(\"   [ArbiterLoader] Loading SOMA components...\");`n    // ... more imports here`n}

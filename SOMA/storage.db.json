@@ -1,0 +1,33 @@
+{
+  "files": {
+    "index/C:\\Users\\barry\\Desktop\\SOMA\\logs\\soma.log": {
+      "key": "index/C:\\Users\\barry\\Desktop\\SOMA\\logs\\soma.log",
+      "created": 1769302794562,
+      "size": 169,
+      "type": "json",
+      "data": {
+        "path": "C:\\Users\\barry\\Desktop\\SOMA\\logs\\soma.log",
+        "name": "soma.log",
+        "size": 9643562,
+        "modified": "2026-01-25T00:59:25.658Z",
+        "type": "file",
+        "indexedAt": 1769302794562
+      }
+    },
+    "index/C:\\Users\\barry\\Desktop\\SOMA\\SOMA\\storage.db.json": {
+      "key": "index/C:\\Users\\barry\\Desktop\\SOMA\\SOMA\\storage.db.json",
+      "created": 1769302829991,
+      "size": 179,
+      "type": "json",
+      "data": {
+        "path": "C:\\Users\\barry\\Desktop\\SOMA\\SOMA\\storage.db.json",
+        "name": "storage.db.json",
+        "size": 983,
+        "modified": "2026-01-25T01:00:07.239Z",
+        "type": "file",
+        "indexedAt": 1769302829991
+      }
+    }
+  },
+  "tags": {}
+}

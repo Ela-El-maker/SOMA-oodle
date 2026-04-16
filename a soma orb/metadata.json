@@ -1,0 +1,7 @@
+{
+  "name": "Gemini Live Orb",
+  "description": "A real-time voice interaction agent featuring a reactive purple glowing fire orb visualization.",
+  "requestFramePermissions": [
+    "microphone"
+  ]
+}

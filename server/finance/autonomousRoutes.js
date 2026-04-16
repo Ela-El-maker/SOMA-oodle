@@ -8,6 +8,23 @@ import autonomousTrader from './autonomousTrader.js';
 
 const router = express.Router();
 
+// Lightweight response cache — status and decisions change at most once per cycle (60s)
+// Serving stale-by-2s data is fine; avoids recomputing on every 5s frontend poll.
+const _cache = new Map(); // key → { body, ts }
+const CACHE_TTL = { status: 2000, decisions: 2000 };
+
+function cached(key, ttlMs, compute) {
+    const now = Date.now();
+    const hit = _cache.get(key);
+    if (hit && (now - hit.ts) < ttlMs) return hit.body;
+    const body = compute();
+    _cache.set(key, { body, ts: now });
+    return body;
+}
+
+/** Call this whenever a trade fires so the status cache is flushed immediately */
+export function flushStatusCache() { _cache.delete('status'); _cache.delete('decisions'); }
+
 /**
  * POST /api/autonomous/start
  * Start autonomous trading for a symbol
@@ -53,8 +70,11 @@ router.post('/stop', (req, res) => {
  */
 router.get('/status', (req, res) => {
     try {
-        const status = autonomousTrader.getStatus();
-        res.json({ success: true, ...status });
+        const body = cached('status', CACHE_TTL.status, () => {
+            const status = autonomousTrader.getStatus();
+            return { success: true, ...status };
+        });
+        res.json(body);
     } catch (error) {
         res.status(500).json({ success: false, error: error.message });
     }
@@ -67,9 +87,12 @@ router.get('/status', (req, res) => {
  */
 router.get('/decisions', (req, res) => {
     try {
-        const { limit = 50 } = req.query;
-        const decisions = autonomousTrader.getDecisions(parseInt(limit));
-        res.json({ success: true, decisions, count: decisions.length });
+        const limit = parseInt(req.query.limit || 50);
+        const body = cached(`decisions_${limit}`, CACHE_TTL.decisions, () => {
+            const decisions = autonomousTrader.getDecisions(limit);
+            return { success: true, decisions, count: decisions.length };
+        });
+        res.json(body);
     } catch (error) {
         res.status(500).json({ success: false, error: error.message });
     }

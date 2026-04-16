@@ -5,29 +5,35 @@ import {
   Plus, Network, Home, MessageSquare, Settings, Palette,
   Shield, User, Users, Lightbulb, ThermometerSun, ChevronLeft,
   ChevronRight, Sparkles, Terminal, Circle, BarChart3, Search, X, Clock,
-  Download, TrendingUp, TrendingDown, Target, Server, Gauge, Mail,
-  Box, Share2, DollarSign, CircleDollarSign
+  Download, TrendingUp, TrendingDown, Target, Server, Gauge, Mail, Mic,
+  Box, Share2, DollarSign, CircleDollarSign, Pencil
 } from 'lucide-react';
 import {
   LineChart, Line, RadarChart, Radar, PolarGrid,
   PolarAngleAxis, PolarRadiusAxis, XAxis, YAxis,
   CartesianGrid, Tooltip, Legend, ResponsiveContainer, AreaChart, Area
 } from 'recharts';
+import { motion, AnimatePresence } from 'framer-motion';
 import { ToastContainer, toast } from 'react-toastify';
 import 'react-toastify/dist/ReactToastify.css';
 
 import somaBackend from './somaBackend';
+import { getSharedSessionId } from './utils/sharedSession';
 import SomaCT from '../command-ct/SomaCT';
-import Orb from './Orb';
+import Orb from './panels/Orb';
+import SynthWave from './components/SynthWave';
+import { RobotFace } from './components/RobotFace';
 import KevinInterface from './KevinInterface';
 // import KnowledgeGraph3D from '../../command-bridge/KnowledgeGraph3D';
 
 // Hooks & Components
 import { useSomaAudio } from './hooks/useSomaAudio';
 import { useRealtimeEvents } from './hooks/useRealtimeEvents';
+import { useVision } from './hooks/useVision';
 import FloatingChat from './components/FloatingChat';
 import MemoryTierMonitor from './components/MemoryTierMonitor';
 import NeuralDissonanceMonitor from './components/NeuralDissonanceMonitor';
+import EconomicSovereigntyMonitor from './components/EconomicSovereigntyMonitor';
 import AutonomousActivityFeed from './components/AutonomousActivityFeed';
 import SkillProficiencyRadar from './components/SkillProficiencyRadar';
 import MindsEye from './components/MindsEye';
@@ -35,6 +41,12 @@ import BeliefNetworkViewer from './components/BeliefNetworkViewer';
 import DreamInsights from './components/DreamInsights';
 import TheoryOfMindPanel from './components/TheoryOfMindPanel';
 import SystemDiagnosticsApp from './components/SystemDiagnosticsApp';
+import SomaStatusStrip from './components/SomaStatusStrip';
+import ProposedGoalModal from './components/ProposedGoalModal';
+import SomaPlanViewer from './components/SomaPlanViewer';
+import OnboardingWizard from './components/OnboardingWizard';
+import ReasoningTree from './components/ReasoningTree';
+import EmotionIndicator from './components/EmotionIndicator';
 // import EnhancedKnowledgeSystem from './components/EnhancedKnowledgeSystem';
 
 // STEVE & Workflow Integration
@@ -47,14 +59,16 @@ import WorkflowSteve from './components/WorkflowSteve';
 import Marketplace from './Marketplace';
 import FileBrowser from './components/FileBrowser';
 // import PulseInterface from './components/PulseInterface';
-import PulseIDE from './components/pulse/App';
+import PulseIDE from './panels/pulse/App';
 import FinanceModule from './components/FinanceModule';
 import SocialModule from './components/SocialModule';
-import ForecasterApp from './components/Forecaster/ForecasterApp';
-import MissionControlApp from './components/MissionControl/MissionControlApp';
-import KnowledgeApp from './components/Knowledge/KnowledgeApp';
-import FileIntelligenceApp from './components/FileIntelligence/FileIntelligenceApp';
-import ArbiteriumApp from './components/arbiterium/ArbiteriumApp';
+import ForecasterApp from './panels/Forecaster/ForecasterApp';
+import MissionControlApp from './panels/MissionControl/MissionControlApp';
+import KnowledgeApp from './panels/Knowledge/KnowledgeApp';
+import FileIntelligenceApp from './panels/FileIntelligence/FileIntelligenceApp';
+import ArbiteriumApp from './panels/arbiterium/ArbiteriumApp';
+import ArgusEye from './components/ArgusEye';
+import ReflectionsTab from './components/ReflectionsTab';
 // import FinanceModule from './components/FinanceModule';
 import { generateId } from './lib/utils/id-generator';
 import { FloatingPanel } from './components/ui/floating-panel';
@@ -65,8 +79,358 @@ import './styles/soma-ui-control.css';
 import './styles/emotes.css';
 import SettingsModule from './components/SettingsModule';
 import CommandPalette from './components/CommandPalette';
+import PerceptionPanel from './components/PerceptionPanel';
+import SelfModFeed from './components/SelfModFeed';
+import BootHealthWidget from './components/BootHealthWidget';
+import GoalsPanel from './components/GoalsPanel';
 import CharacterCard from './components/CharacterCard';
 import CharacterGacha from './components/CharacterGacha';
+
+// ==========================================
+// Command Center Panel (Steve + Perception + Status)
+// ==========================================
+const STEVE_WITTY = [
+  "Rerouting synaptic pathways...", "Judging your request...",
+  "Allocating brilliance...", "Consulting the architecture gods...",
+  "Optimizing sarcasm module...", "Processing inefficiency report..."
+];
+
+const CommandCenterPanel = ({
+  executeCommand, setShowDiagnostics, setDiagnosticLogs,
+  activeArbiters, totalArbiters, activeMicroAgents, totalMicroAgents,
+  totalFragments, systemMetrics, analyticsSummary, activityStream,
+  isConnected, formatUptime
+}) => {
+  const [steveMessages, setSteveMessages] = React.useState([
+    { role: 'steve', content: "System online. I assume you've broken something already?", ts: Date.now() }
+  ]);
+  const [steveInput, setSteveInput] = React.useState('');
+  const [steveThinking, setSteveThinking] = React.useState(false);
+  const [steveStatus, setSteveStatus] = React.useState({ online: false, status: 'idle', mood: 'idle', toolCount: 0 });
+  const [daemons, setDaemons] = React.useState([]);
+  const [perceptionData, setPerceptionData] = React.useState({ attention: null, recentSignals: [] });
+  const [wittyPhrase, setWittyPhrase] = React.useState('');
+  const steveScrollRef = React.useRef(null);
+
+  // Poll Steve status + daemon health every 10s
+  // inFlight ref prevents parallel requests if a fetch takes longer than the interval
+  React.useEffect(() => {
+    const inFlight = { current: false };
+    const fetchStatus = async () => {
+      if (inFlight.current) return;
+      inFlight.current = true;
+      try {
+        const [sRes, dRes, pRes] = await Promise.all([
+          fetch('/api/soma/steve/status'),
+          fetch('/api/daemon/status'),
+          fetch('/api/perception/health')
+        ]);
+        if (sRes.ok) setSteveStatus(await sRes.json());
+        if (dRes.ok) {
+          const d = await dRes.json();
+          setDaemons(d.daemon?.daemons || []);
+        }
+        if (pRes.ok) {
+          const p = await pRes.json();
+          setPerceptionData({ attention: p.attention, recentSignals: p.recentSignals || [] });
+        }
+      } catch {}
+      finally { inFlight.current = false; }
+    };
+    fetchStatus();
+    const t = setInterval(fetchStatus, 10000);
+    return () => clearInterval(t);
+  }, []);
+
+  // Auto-scroll Steve chat
+  React.useEffect(() => {
+    if (steveScrollRef.current) steveScrollRef.current.scrollTop = steveScrollRef.current.scrollHeight;
+  }, [steveMessages]);
+
+  // Cycle witty phrases while thinking
+  React.useEffect(() => {
+    if (!steveThinking) return;
+    setWittyPhrase(STEVE_WITTY[Math.floor(Math.random() * STEVE_WITTY.length)]);
+    const t = setInterval(() => setWittyPhrase(STEVE_WITTY[Math.floor(Math.random() * STEVE_WITTY.length)]), 2500);
+    return () => clearInterval(t);
+  }, [steveThinking]);
+
+  const sendToSteve = async (e) => {
+    e?.preventDefault();
+    const msg = steveInput.trim();
+    if (!msg || steveThinking) return;
+    setSteveInput('');
+    setSteveMessages(prev => [...prev, { role: 'user', content: msg, ts: Date.now() }]);
+    setSteveThinking(true);
+    try {
+      const history = steveMessages.slice(-8).map(m => ({ role: m.role === 'steve' ? 'assistant' : 'user', content: m.content }));
+      const ctrl = new AbortController();
+      const timer = setTimeout(() => ctrl.abort(), 30000);
+      let data;
+      try {
+        const res = await fetch('/api/soma/steve/chat', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ message: msg, history }),
+          signal: ctrl.signal
+        });
+        data = await res.json();
+      } finally {
+        clearTimeout(timer);
+      }
+      const reply = data.response || data.error || "My cognitive link is severed.";
+      setSteveMessages(prev => [...prev, { role: 'steve', content: reply, ts: Date.now(), actions: data.actions }]);
+    } catch {
+      setSteveMessages(prev => [...prev, { role: 'steve', content: "Architectural link interrupted.", ts: Date.now() }]);
+    } finally {
+      setSteveThinking(false);
+    }
+  };
+
+  const moodColor = { idle: 'emerald', architecting: 'amber', thinking: 'blue' }[steveStatus.mood] || 'emerald';
+  const moodDot = { idle: 'bg-emerald-400', architecting: 'bg-amber-400 animate-pulse', thinking: 'bg-blue-400 animate-pulse' }[steveStatus.mood] || 'bg-emerald-400';
+
+  return (
+    <div className="flex flex-col gap-4 h-full">
+      {/* ── Quick Actions Toolbar ── */}
+      <div className="flex items-center gap-2 flex-wrap">
+        <button onClick={() => executeCommand('start_all', 'Start All Agents')}
+          className="flex items-center gap-2 px-3 py-2 rounded-lg bg-fuchsia-500/10 hover:bg-fuchsia-500/20 border border-fuchsia-500/20 text-fuchsia-400 text-xs font-semibold transition-all">
+          <Play className="w-3.5 h-3.5" /> Start All
+        </button>
+        <button onClick={() => executeCommand('stop_all', 'Pause All Agents')}
+          className="flex items-center gap-2 px-3 py-2 rounded-lg bg-amber-500/10 hover:bg-amber-500/20 border border-amber-500/20 text-amber-400 text-xs font-semibold transition-all">
+          <Pause className="w-3.5 h-3.5" /> Pause All
+        </button>
+        <button onClick={() => executeCommand('reset_system', 'Reset System', 'warning')}
+          className="flex items-center gap-2 px-3 py-2 rounded-lg bg-blue-500/10 hover:bg-blue-500/20 border border-blue-500/20 text-blue-400 text-xs font-semibold transition-all">
+          <RotateCw className="w-3.5 h-3.5" /> Reset
+        </button>
+        <button onClick={() => { executeCommand('run_diagnostics', 'Diagnostics'); setShowDiagnostics(true); setDiagnosticLogs([]); }}
+          className="flex items-center gap-2 px-3 py-2 rounded-lg bg-zinc-500/10 hover:bg-zinc-500/20 border border-zinc-500/20 text-zinc-400 text-xs font-semibold transition-all">
+          <Search className="w-3.5 h-3.5" /> Diagnostics
+        </button>
+        <button onClick={() => executeCommand('clear_cache', 'Clear Cache')}
+          className="flex items-center gap-2 px-3 py-2 rounded-lg bg-zinc-500/10 hover:bg-zinc-500/20 border border-zinc-500/20 text-zinc-400 text-xs font-semibold transition-all">
+          <Trash2 className="w-3.5 h-3.5" /> Clear Cache
+        </button>
+        <button onClick={() => executeCommand('create_backup', 'Backup')}
+          className="flex items-center gap-2 px-3 py-2 rounded-lg bg-zinc-500/10 hover:bg-zinc-500/20 border border-zinc-500/20 text-zinc-400 text-xs font-semibold transition-all">
+          <Database className="w-3.5 h-3.5" /> Backup
+        </button>
+        <button onClick={() => executeCommand('optimize_system', 'Optimize')}
+          className="flex items-center gap-2 px-3 py-2 rounded-lg bg-purple-500/10 hover:bg-purple-500/20 border border-purple-500/20 text-purple-400 text-xs font-semibold transition-all">
+          <Zap className="w-3.5 h-3.5" /> Optimize
+        </button>
+      </div>
+
+      {/* ── Main 2-column layout ── */}
+      <div className="grid grid-cols-5 gap-4 flex-1 min-h-0 overflow-hidden">
+
+        {/* LEFT: Steve Worker Panel (2/5) */}
+        <div className="col-span-2 flex flex-col min-h-0 bg-[#0e0e11] border border-emerald-500/15 rounded-xl overflow-hidden shadow-lg">
+          {/* Steve header */}
+          <div className="flex items-center gap-3 px-4 py-3 border-b border-emerald-500/10 bg-emerald-500/5">
+            <div className="relative w-8 h-8 rounded-full overflow-hidden border border-emerald-500/30 bg-emerald-500/10 flex-shrink-0">
+              <img src="/steve_profile.gif" alt="Steve" className="w-full h-full object-cover"
+                onError={e => { e.target.style.display = 'none'; }} />
+              <div className="absolute inset-0 flex items-center justify-center text-emerald-400 text-xs font-bold">S</div>
+            </div>
+            <div className="flex-1 min-w-0">
+              <div className="text-emerald-300 font-semibold text-sm leading-none">STEVE</div>
+              <div className="text-zinc-500 text-[10px] mt-0.5 truncate">
+                {steveStatus.currentTask ? `Working: ${steveStatus.currentTask}` : 'Senior Architect · Autonomous'}
+              </div>
+            </div>
+            <div className="flex items-center gap-1.5">
+              <div className={`w-2 h-2 rounded-full ${moodDot}`} />
+              <span className={`text-${moodColor}-400 text-xs font-mono`}>{steveStatus.status || 'offline'}</span>
+            </div>
+          </div>
+
+          {/* Steve pills */}
+          <div className="flex flex-wrap gap-1.5 px-4 py-2 border-b border-white/5">
+            <span className={`text-[10px] px-2 py-0.5 rounded-full ${steveStatus.heartbeatActive ? 'bg-emerald-500/10 text-emerald-400' : 'bg-zinc-800 text-zinc-500'}`}>
+              {steveStatus.heartbeatActive ? '💓 Active' : '💤 Dormant'}
+            </span>
+            <span className="text-[10px] px-2 py-0.5 rounded-full bg-zinc-800 text-zinc-400">
+              {steveStatus.queueLength || 0} queued
+            </span>
+            <span className="text-[10px] px-2 py-0.5 rounded-full bg-zinc-800 text-zinc-400">
+              {steveStatus.stats?.tasksCompleted || 0} done
+            </span>
+            <span className={`text-[10px] px-2 py-0.5 rounded-full ${steveStatus.searchLinked ? 'bg-emerald-500/10 text-emerald-400' : 'bg-zinc-800 text-zinc-500'}`}>
+              {steveStatus.searchLinked ? '✓ RAG' : '○ RAG'}
+            </span>
+            <span className={`text-[10px] px-2 py-0.5 rounded-full ${steveStatus.learningLinked ? 'bg-emerald-500/10 text-emerald-400' : 'bg-zinc-800 text-zinc-500'}`}>
+              {steveStatus.learningLinked ? '✓ Learning' : '○ Learning'}
+            </span>
+          </div>
+
+          {/* Chat messages */}
+          <div ref={steveScrollRef} className="flex-1 overflow-y-auto custom-scrollbar p-3 space-y-2 min-h-0">
+            {steveMessages.map((m, i) => (
+              <div key={i} className={`flex ${m.role === 'user' ? 'justify-end' : 'justify-start'}`}>
+                <div className={`max-w-[85%] rounded-xl px-3 py-2 text-xs leading-relaxed ${
+                  m.role === 'user'
+                    ? 'bg-fuchsia-500/15 text-fuchsia-100 border border-fuchsia-500/20'
+                    : 'bg-zinc-800/80 text-zinc-200 border border-emerald-500/10'
+                }`}>
+                  {m.content}
+                  {m.actions?.length > 0 && (
+                    <div className="mt-1.5 pt-1.5 border-t border-white/10">
+                      {m.actions.map((a, j) => (
+                        <div key={j} className={`text-[10px] font-mono mt-0.5 ${a.success ? 'text-emerald-400' : 'text-rose-400'}`}>
+                          {a.success ? '✓' : '✗'} {a.cmd?.substring(0, 50)}
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              </div>
+            ))}
+            {steveThinking && (
+              <div className="flex justify-start">
+                <div className="bg-zinc-800/80 border border-emerald-500/10 rounded-xl px-3 py-2 text-xs text-emerald-400 animate-pulse">
+                  {wittyPhrase}
+                </div>
+              </div>
+            )}
+          </div>
+
+          {/* Pending queue preview */}
+          {steveStatus.queue?.length > 0 && (
+            <div className="px-3 pb-2 border-t border-white/5 pt-2">
+              <div className="text-zinc-600 text-[10px] uppercase tracking-wider mb-1">Queued Tasks</div>
+              <div className="space-y-1">
+                {steveStatus.queue.slice(0, 3).map((t, i) => (
+                  <div key={t.id || i} className="flex items-center gap-1.5 text-[10px] text-zinc-500 bg-zinc-900/60 rounded px-2 py-1">
+                    <span className="text-amber-500 font-mono">{t.priority}</span>
+                    <span className="truncate">{t.description?.substring(0, 55)}</span>
+                    <span className="text-zinc-700 ml-auto whitespace-nowrap">{t.source}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* Steve input */}
+          <form onSubmit={sendToSteve} className="flex items-center gap-2 p-3 border-t border-white/5">
+            <input
+              value={steveInput}
+              onChange={e => setSteveInput(e.target.value)}
+              placeholder="Give Steve a task or question..."
+              className="flex-1 bg-zinc-800/60 border border-zinc-700/50 rounded-lg px-3 py-2 text-xs text-zinc-200 placeholder-zinc-600 focus:outline-none focus:border-emerald-500/40"
+            />
+            <button type="submit" disabled={steveThinking || !steveInput.trim()}
+              className="p-2 rounded-lg bg-emerald-500/15 hover:bg-emerald-500/25 border border-emerald-500/20 text-emerald-400 disabled:opacity-40 transition-all">
+              <Zap className="w-3.5 h-3.5" />
+            </button>
+          </form>
+        </div>
+
+        {/* RIGHT: Status + Perception + Plan + Stream (3/5) */}
+        <div className="col-span-3 flex flex-col gap-3 min-h-0 overflow-y-auto custom-scrollbar pr-1">
+
+          {/* System Health Grid */}
+          <div className="grid grid-cols-3 gap-3">
+            {[
+              { label: 'Arbiters', value: `${activeArbiters}/${totalArbiters}`, color: 'blue', icon: Cpu },
+              { label: 'Micro-Agents', value: `${activeMicroAgents}/${totalMicroAgents}`, color: 'purple', icon: Network },
+              { label: 'Fragments', value: totalFragments, color: 'fuchsia', icon: Database },
+              { label: 'Uptime', value: formatUptime(systemMetrics.uptime), color: 'emerald', icon: Clock },
+              { label: 'Avg Response', value: `${analyticsSummary?.avgResponseTime || 0}ms`, color: 'amber', icon: Activity },
+              { label: 'Tokens', value: (analyticsSummary?.tokenUsage || 0).toLocaleString(), color: 'zinc', icon: Zap },
+            ].map(({ label, value, color, icon: Icon }) => (
+              <div key={label} className={`bg-${color}-500/5 border border-${color}-500/15 rounded-lg px-3 py-2.5 flex items-center gap-2.5`}>
+                <Icon className={`w-3.5 h-3.5 text-${color}-400 flex-shrink-0`} />
+                <div className="min-w-0">
+                  <div className="text-zinc-500 text-[10px]">{label}</div>
+                  <div className="text-zinc-100 font-mono text-xs font-semibold truncate">{value}</div>
+                </div>
+              </div>
+            ))}
+          </div>
+
+          {/* Perception: Daemon Health + Attention + Signals */}
+          {(daemons.length > 0 || perceptionData.attention || perceptionData.recentSignals.length > 0) && (
+            <div className="bg-[#151518]/60 border border-white/5 rounded-xl p-3 space-y-2">
+              <div className="text-zinc-400 text-[10px] uppercase tracking-wider font-semibold">Perception Layer</div>
+
+              {/* Daemons */}
+              {daemons.length > 0 && (
+                <div className="grid grid-cols-2 gap-1.5">
+                  {daemons.map(d => (
+                    <div key={d.name} className="flex items-center gap-2 bg-zinc-900/50 rounded-lg px-2.5 py-1.5">
+                      <div className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${d.active ? 'bg-emerald-400' : 'bg-rose-500'}`} />
+                      <span className="text-zinc-300 text-[11px] truncate flex-1">{d.name?.replace('Daemon', '')}</span>
+                      {d.restartCount > 0 && (
+                        <span className="text-amber-400 text-[10px] font-mono">{d.restartCount}↺</span>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              {/* Attention Focus */}
+              {perceptionData.attention && (
+                <div className="flex items-center gap-2 border-t border-white/5 pt-2">
+                  <span className="text-zinc-500 text-[10px] uppercase tracking-wider flex-shrink-0">Focus</span>
+                  <span className="text-fuchsia-300 text-[11px] font-mono truncate">{perceptionData.attention.focus}</span>
+                  {perceptionData.attention.expires && (
+                    <span className="text-zinc-600 text-[10px] ml-auto font-mono">
+                      {Math.max(0, Math.round((perceptionData.attention.expires - Date.now()) / 1000))}s
+                    </span>
+                  )}
+                </div>
+              )}
+
+              {/* Recent Signals */}
+              {perceptionData.recentSignals.length > 0 && (
+                <div className="border-t border-white/5 pt-2 space-y-1">
+                  <div className="text-zinc-600 text-[10px] uppercase tracking-wider">CNS — Recent Signals</div>
+                  {perceptionData.recentSignals.slice(0, 5).map((s, i) => (
+                    <div key={i} className="flex items-center gap-2">
+                      <span className="text-blue-400/70 text-[10px] font-mono flex-shrink-0 truncate max-w-[100px]">{s.topic}</span>
+                      <span className="text-zinc-600 text-[10px] truncate flex-1">{s.preview}</span>
+                      <span className="text-zinc-700 text-[9px] font-mono flex-shrink-0">{new Date(s.ts).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })}</span>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* SOMA Plan */}
+          <div className="bg-[#151518]/60 border border-white/5 rounded-xl overflow-hidden" style={{ height: '200px' }}>
+            <SomaPlanViewer isConnected={isConnected} />
+          </div>
+
+          {/* Activity Stream */}
+          <div className="bg-[#151518]/60 border border-white/5 rounded-xl p-3 flex flex-col" style={{ minHeight: '240px' }}>
+            <div className="text-zinc-400 text-[10px] uppercase tracking-wider mb-2 font-semibold">Activity Stream</div>
+            <div className="overflow-y-auto custom-scrollbar space-y-1 pr-1" style={{ maxHeight: '320px' }}>
+              {activityStream.map(log => (
+                <div key={log.id} className={`px-2.5 py-1.5 rounded-lg text-xs border flex items-start gap-2 ${
+                  log.type === 'success' ? 'bg-fuchsia-500/5 border-fuchsia-500/10 text-fuchsia-400' :
+                  log.type === 'error' ? 'bg-rose-500/5 border-rose-500/10 text-rose-400' :
+                  log.type === 'warning' ? 'bg-amber-500/5 border-amber-500/10 text-amber-400' :
+                  'bg-blue-500/5 border-blue-500/10 text-blue-400'}`}>
+                  <div className={`mt-1 w-1.5 h-1.5 rounded-full flex-shrink-0 ${
+                    log.type === 'success' ? 'bg-fuchsia-500' : log.type === 'error' ? 'bg-rose-500' :
+                    log.type === 'warning' ? 'bg-amber-500' : 'bg-blue-500'}`} />
+                  <span className="flex-1 leading-relaxed">{log.message}</span>
+                  <span className="text-[10px] opacity-50 font-mono whitespace-nowrap">{new Date(log.timestamp).toLocaleTimeString()}</span>
+                </div>
+              ))}
+            </div>
+          </div>
+
+        </div>
+      </div>
+    </div>
+  );
+};
 
 // ==========================================
 // Process Monitor Modal (Task Manager)
@@ -228,7 +592,7 @@ const SystemDetailModal = ({ metricId, systemMetrics, onClose }) => {
                 >
                   Load Top Processes
                 </button>
-                {loading && <div className="text-[10px] text-zinc-500 mt-2">Loading…</div>}
+                {loading && <div className="text-[10px] text-zinc-500 mt-2">Loadingâ€¦</div>}
                 {error && <div className="text-[10px] text-rose-400 mt-2">{error}</div>}
                 {processes.length > 0 && (
                   <div className="mt-3 space-y-2">
@@ -252,7 +616,7 @@ const SystemDetailModal = ({ metricId, systemMetrics, onClose }) => {
               >
                 Fetch GPU Telemetry
               </button>
-              {loading && <div className="text-[10px] text-zinc-500">Loading…</div>}
+              {loading && <div className="text-[10px] text-zinc-500">Loadingâ€¦</div>}
               {error && <div className="text-[10px] text-rose-400">{error}</div>}
               {gpuInfo.length === 0 && !loading && !error && (
                 <div className="text-center py-6 text-zinc-500">
@@ -334,7 +698,7 @@ const SystemDetailModal = ({ metricId, systemMetrics, onClose }) => {
                 >
                   Fetch Adapter Stats
                 </button>
-                {loading && <div className="text-[10px] text-zinc-500 mt-2">Loading…</div>}
+                {loading && <div className="text-[10px] text-zinc-500 mt-2">Loadingâ€¦</div>}
                 {error && <div className="text-[10px] text-rose-400 mt-2">{error}</div>}
                 {netAdapters.length > 0 && (
                   <div className="mt-3 space-y-2">
@@ -361,7 +725,6 @@ const SystemDetailModal = ({ metricId, systemMetrics, onClose }) => {
 // Main Command Bridge Component
 // ==========================================
 const SomaCommandBridge = () => {
-  console.log('[SOMA] Rendering Command Bridge...');
   // Navigation State
   const [activeModule, setActiveModule] = useState('core');
 
@@ -388,6 +751,7 @@ const SomaCommandBridge = () => {
   // Command Palette State
   const [isCommandPaletteOpen, setIsCommandPaletteOpen] = useState(false);
   const [isCharacterLabOpen, setIsCharacterLabOpen] = useState(false);
+  const [showQuickNote, setShowQuickNote] = useState(false);
 
   // Command Palette Shortcut
   useEffect(() => {
@@ -432,7 +796,19 @@ const SomaCommandBridge = () => {
   };
 
   const [isConnected, setIsConnected] = useState(false);
+  const firstConnect = useRef(true);       // suppress repeated "established" toasts
+  const lastConnectToast = useRef(0);      // debounce: min 60s between toasts
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
+  const [showOnboarding, setShowOnboarding] = useState(() => !localStorage.getItem('soma_onboarded'));
+
+  // SOMA Status Strip State
+  const [activeGoal, setActiveGoal] = useState('Monitor System Health');
+  const [goalProgress, setGoalProgress] = useState(50); // Example: 0-100%
+  const [tensionLevel, setTensionLevel] = useState(30); // Example: 0-100%
+  const [lastToolUsed, setLastToolUsed] = useState('system_monitor');
+  const [lastToolTimestamp, setLastToolTimestamp] = useState(Date.now());
+  const [proposedGoals, setProposedGoals] = useState([]); // New state for proposed goals
+  const [activeQuestion, setActiveQuestion] = useState(null); // New state for proactive questions
 
   // UI State
   const [showProcessModal, setShowProcessModal] = useState(false);
@@ -453,6 +829,7 @@ const SomaCommandBridge = () => {
   });
   const [systemCounts, setSystemCounts] = useState({ arbiters: 0, microAgents: 0, fragments: 0 });
   const [brainStats, setBrainStats] = useState(null);
+  const [driveTension, setDriveTension] = useState(null);
 
   // Categorized Agent Swarm
   const [agents, setAgents] = useState([]);
@@ -497,6 +874,12 @@ const SomaCommandBridge = () => {
   const [auditLogs, setAuditLogs] = useState([]);
   const [emergencyStop, setEmergencyStop] = useState(false);
 
+  // Orb Module State
+  const [orbConversation, setOrbConversation] = useState([]);
+  const [activeReasoningTree, setActiveReasoningTree] = useState(null);
+  const [orbSidebarCollapsed, setOrbSidebarCollapsed] = useState(false);
+  const [showOrbFace, setShowOrbFace] = useState(false);
+
   // ------------------------------------------
   // RESTORED STATES (Cognitive & SLC)
   // ------------------------------------------
@@ -520,7 +903,7 @@ const SomaCommandBridge = () => {
   const traceEndRef = useRef(null);
 
   const formatPercent = (value) => {
-    return Number.isFinite(value) ? value.toFixed(1) : '—';
+    return Number.isFinite(value) ? value.toFixed(1) : 'â€”';
   };
 
   const categorizeAgents = useCallback((rawAgents = []) => {
@@ -581,6 +964,26 @@ const SomaCommandBridge = () => {
   // Hooks Integration
   // ------------------------------------------
 
+  const handleOrbResponse = useCallback((response) => {
+    setOrbConversation(prev => [...prev, {
+      role: response.role,
+      text: response.text,
+      timestamp: response.timestamp || Date.now()
+    }]);
+    
+    if (response.reasoningTree) {
+      setActiveReasoningTree(response.reasoningTree);
+    }
+  }, []);
+
+  const {
+    active: isVisionActive,
+    channel: visionChannel,
+    lastPerception,
+    lastFrameUrl,
+    setChannel: setVisionChannel
+  } = useVision(somaBackend, isConnected);
+
   // 1. Audio Interaction
   const {
     isConnected: isOrbConnected,
@@ -591,8 +994,14 @@ const SomaCommandBridge = () => {
     isListening,
     isThinking,
     systemStatus: orbSystemStatus,
-    sendTextQuery
-  } = useSomaAudio();
+    sendTextQuery,
+    somaHealthy,
+    inputVolume,
+    speakText,
+    wakeWordActive,
+    startWakeWordListening,
+    stopWakeWordListening
+  } = useSomaAudio(handleOrbResponse);
 
   // Expose text query globally for manual input
   useEffect(() => {
@@ -612,8 +1021,95 @@ const SomaCommandBridge = () => {
     setIsSomaBusy(isThinking);
   }, [isThinking]);
 
-  // 4. Chat history restoration removed - no active chat UI in Command Bridge
-  // (Chat interface lives in individual modules like Arbiterium)
+  // 4. Orb conversation history — load from shared session when neural link is established
+  useEffect(() => {
+    if (!isOrbConnected || orbConversation.length > 0) return;
+    fetch(`/api/soma/history?limit=30`)
+      .then(r => r.json())
+      .then(data => {
+        if (data.messages?.length) setOrbConversation(data.messages);
+      })
+      .catch(() => {});
+  }, [isOrbConnected]);
+
+  // 5. Proactive voice — speak when orb is connected and SOMA sends autonomous messages
+  const speakTextRef = useRef(null);
+  useEffect(() => { speakTextRef.current = speakText; });
+  const isOrbConnectedRef = useRef(false);
+  useEffect(() => { isOrbConnectedRef.current = isOrbConnected; }, [isOrbConnected]);
+  const isTalkingRef = useRef(false);
+  useEffect(() => { isTalkingRef.current = isTalking; }, [isTalking]);
+  const isListeningRef = useRef(false);
+  useEffect(() => { isListeningRef.current = isListening; }, [isListening]);
+  const pendingGreetingRef = useRef(null); // queues greeting if orb not ready yet
+
+  useEffect(() => {
+    const onProactiveSpeak = (payload) => {
+      const text = payload.message || payload.text;
+      if (!text) return;
+      if (!isOrbConnectedRef.current || isTalkingRef.current || isListeningRef.current) {
+        // Orb not ready — hold the greeting until Neural Link connects
+        pendingGreetingRef.current = text;
+        return;
+      }
+      if (speakTextRef.current) speakTextRef.current(text);
+    };
+    somaBackend.on('soma_proactive', onProactiveSpeak);
+    return () => somaBackend.off('soma_proactive', onProactiveSpeak);
+  }, []);
+
+  // Auto-connect Neural Link on first user click (browser requires gesture before AudioContext)
+  const autoConnectedRef = useRef(false);
+  useEffect(() => {
+    const onFirstClick = () => {
+      if (autoConnectedRef.current || isOrbConnected) return;
+      autoConnectedRef.current = true;
+      connectOrb();
+      window.removeEventListener('click', onFirstClick);
+    };
+    window.addEventListener('click', onFirstClick);
+    return () => window.removeEventListener('click', onFirstClick);
+  }, [connectOrb, isOrbConnected]);
+
+  // Speak queued greeting the moment Neural Link comes up
+  useEffect(() => {
+    if (!isOrbConnected || !pendingGreetingRef.current) return;
+    const text = pendingGreetingRef.current;
+    pendingGreetingRef.current = null;
+    // Short delay so AudioContext finishes initializing
+    setTimeout(() => {
+      if (speakTextRef.current && !isTalkingRef.current) speakTextRef.current(text);
+    }, 800);
+  }, [isOrbConnected]);
+
+  // 6. User presence signal — throttled activity ping so SOMA knows the user is on-page
+  useEffect(() => {
+    let lastSent = 0;
+    const onActivity = () => {
+      const now = Date.now();
+      if (now - lastSent < 15000) return;
+      lastSent = now;
+      somaBackend.send('user_activity', { timestamp: now });
+    };
+    window.addEventListener('mousemove', onActivity, { passive: true });
+    window.addEventListener('keypress', onActivity, { passive: true });
+    return () => {
+      window.removeEventListener('mousemove', onActivity);
+      window.removeEventListener('keypress', onActivity);
+    };
+  }, []);
+
+  // Global Ctrl+Shift+N → toggle quick-note panel
+  useEffect(() => {
+    const handler = (e) => {
+      if ((e.ctrlKey || e.metaKey) && e.shiftKey && e.key === 'N') {
+        e.preventDefault();
+        setShowQuickNote(v => !v);
+      }
+    };
+    window.addEventListener('keydown', handler);
+    return () => window.removeEventListener('keydown', handler);
+  }, []);
 
   // Fetch personality traits when backend connects
   useEffect(() => {
@@ -625,7 +1121,10 @@ const SomaCommandBridge = () => {
   }, [isConnected]);
 
   useEffect(() => {
-    if (!isConnected) return;
+    // Only poll GPU/network when connected AND the dashboard is actually visible.
+    // These queries wake hardware (nvidia-smi / WMI adapter stats), so running
+    // them while the user is in a different module is pointless churn.
+    if (!isConnected || activeModule !== 'core') return;
 
     let isMounted = true;
     const pollSystemTelemetry = async () => {
@@ -663,12 +1162,12 @@ const SomaCommandBridge = () => {
     };
 
     pollSystemTelemetry();
-    const interval = setInterval(pollSystemTelemetry, 5000);
+    const interval = setInterval(pollSystemTelemetry, 30000); // 30s â€” hardware queries don't need sub-second freshness
     return () => {
       isMounted = false;
       clearInterval(interval);
     };
-  }, [isConnected]);
+  }, [isConnected, activeModule]);
 
   // Persist personality changes to backend (debounced)
   const personalityTimerRef = useRef(null);
@@ -703,7 +1202,7 @@ const SomaCommandBridge = () => {
       type: item.status === 'failed' || item.status === 'denied' ? 'error'
         : item.status === 'completed' || item.status === 'approved' ? 'success'
           : 'info',
-      message: `${item.agent || 'System'}: ${item.action || item.type || 'event'}${item.detail ? ` — ${item.detail}` : ''}`,
+      message: `${item.agent || 'System'}: ${item.action || item.type || 'event'}${item.detail ? ` â€” ${item.detail}` : ''}`,
       timestamp: item.timestamp || Date.now()
     });
 
@@ -740,12 +1239,21 @@ const SomaCommandBridge = () => {
     // Connection Handlers
     somaBackend.on('connect', () => {
       setIsConnected(true);
-      toast.success('SOMA Neural Link Established', { theme: 'dark' });
+      const now = Date.now();
+      // Only toast on true first connect or if it's been >60s since last one (genuine reconnect)
+      if (firstConnect.current || now - lastConnectToast.current > 60000) {
+        toast.success('SOMA Neural Link Established', { theme: 'dark' });
+        lastConnectToast.current = now;
+      }
+      firstConnect.current = false;
     });
 
     somaBackend.on('disconnect', () => {
       setIsConnected(false);
-      toast.warning('Neural Link Severed - Reconnecting...', { theme: 'dark' });
+      // Only warn if we were connected for a meaningful time (not a startup cycle)
+      if (!firstConnect.current) {
+        toast.warning('Neural Link Severed - Reconnecting...', { theme: 'dark', autoClose: 3000 });
+      }
     });
 
     somaBackend.on('diagnostic_log', (msg) => {
@@ -764,9 +1272,35 @@ const SomaCommandBridge = () => {
       }, ...prev].slice(0, 100));
     });
 
+    somaBackend.on('goal_created', (payload) => {
+      const { goal } = payload;
+      if (goal && goal.status === 'proposed') {
+        setProposedGoals(prev => {
+          // Prevent duplicates if the event fires multiple times
+          if (!prev.some(pg => pg.id === goal.id)) {
+            toast.info(`ðŸ“ New Proposed Goal: ${goal.title}`, { theme: 'dark', autoClose: 8000 });
+            return [...prev, goal];
+          }
+          return prev;
+        });
+      }
+    });
+
+    somaBackend.on('proactive_question', (payload) => {
+      // payload will contain: questionId, question, options (optional), goalId (optional), type, context
+      setActiveQuestion(payload);
+      toast.info(`â“ SOMA has a question for you!`, { theme: 'dark', autoClose: 8000 });
+      // Optionally, highlight the chat badge or open the chat
+    });
+
     // --- NERVOUS SYSTEM: Unified Pulse Listener ---
     somaBackend.on('pulse', (payload) => {
-      const { system, agents, brains, knowledge, events, neuralLoad, contextWindow, systemDetail, counts } = payload;
+      const { system, agents, brains, knowledge, events, neuralLoad, contextWindow, systemDetail, counts, currentGoal, goalProgress, tension } = payload;
+
+      // Update SOMA Status Strip data
+      if (currentGoal) setActiveGoal(currentGoal);
+      if (goalProgress !== undefined) setGoalProgress(goalProgress);
+      if (tension !== undefined) setTensionLevel(tension);
 
       // 1. Host Metrics
       if (system) {
@@ -848,6 +1382,9 @@ const SomaCommandBridge = () => {
         setMicroAgents(microAgentsList);
       }
 
+      // Drive tension (intrinsic motivation)
+      if (data.drive?.tension != null) setDriveTension(data.drive.tension);
+
       // Map Memory System (HMS)
       if (data.cache) setCacheTiers(data.cache);
 
@@ -903,6 +1440,48 @@ const SomaCommandBridge = () => {
       if (message) {
         toast[type || 'info'](message, { theme: 'dark' });
       }
+    });
+
+    somaBackend.on('soma_proactive', (payload) => {
+      const text = payload.message || payload.text || String(payload);
+      if (!text) return;
+      toast.info(`ðŸ’œ SOMA: ${text.substring(0, 100)}${text.length > 100 ? 'â€¦' : ''}`, { theme: 'dark', autoClose: 8000 });
+      setActivityStream(prev => [
+        { id: Date.now(), type: 'info', message: `[Autonomous] ${text}`, timestamp: Date.now() },
+        ...prev.slice(0, 49)
+      ]);
+    });
+
+    somaBackend.on('soma_activity', (payload) => {
+      const { source, description, output, status } = payload;
+      if (status !== 'ok') return;
+
+      // Update SOMA Status Strip for last tool used
+      if (source) {
+        setLastToolUsed(source);
+        setLastToolTimestamp(Date.now());
+      }
+
+      const summary = output
+        ? `[${source}] ${description} â†’ ${output.substring(0, 120)}`
+        : `[${source}] ${description}`;
+      setActivityStream(prev => [
+        { id: Date.now(), type: 'success', message: summary, timestamp: Date.now() },
+        ...prev.slice(0, 49)
+      ]);
+    });
+
+    // Repo file change — show contextual "Ask SOMA" prompt
+    somaBackend.on('repo_activity', (payload) => {
+      const { filename } = payload || {};
+      if (!filename) return;
+      toast.info(
+        `📁 ${filename} changed — Ask SOMA →`,
+        {
+          theme: 'dark', autoClose: 6000,
+          onClick: () => setActiveModule('orb'),
+        }
+      );
     });
 
     somaBackend.connect();
@@ -1028,7 +1607,7 @@ const SomaCommandBridge = () => {
 
         ws.onopen = () => {
           setCognitiveWsConnected(true);
-          toast.success('⚡ Real-time cognitive streaming enabled', { theme: 'dark' });
+          toast.success('âš¡ Real-time cognitive streaming enabled', { theme: 'dark' });
         };
 
         ws.onmessage = (event) => {
@@ -1049,10 +1628,10 @@ const SomaCommandBridge = () => {
                   },
                   ...prev.slice(0, 19)
                 ]);
-                toast.info(`💭 Thought complete: ${(data.data.confidence * 100).toFixed(1)}% confidence`, { theme: 'dark', autoClose: 2000 });
+                toast.info(`ðŸ’­ Thought complete: ${(data.data.confidence * 100).toFixed(1)}% confidence`, { theme: 'dark', autoClose: 2000 });
               }
             } else if (data.event === 'perception.low_confidence') {
-              toast.warn(`⚠️ Low confidence from ${data.data.actor}`, { theme: 'dark' });
+              toast.warn(`âš ï¸ Low confidence from ${data.data.actor}`, { theme: 'dark' });
             }
           } catch (error) {
             console.error('[CognitiveWS] Failed to parse message:', error);
@@ -1151,7 +1730,7 @@ const SomaCommandBridge = () => {
       const phase = payload.phase || 'trace';
       const tool = payload.tool ? ` ${payload.tool}` : '';
       const count = payload.count != null ? ` (${payload.count})` : '';
-      const msg = payload.preview ? ` — ${payload.preview}` : '';
+      const msg = payload.preview ? ` â€” ${payload.preview}` : '';
       addActivityLog('info', `[${phase}]${tool}${count}${msg}`);
     };
     somaBackend.on('trace', handleTrace);
@@ -1198,22 +1777,20 @@ const SomaCommandBridge = () => {
     somaBackend.send('command', { action: 'restart_agent', params: { id: agentId } });
   };
 
-  const handleFloatingChatMessage = async (message, { history = [], activeModule: page } = {}) => {
+  const handleFloatingChatSubmit = async (message, { history = [], activeModule: page } = {}) => {
     try {
-      const data = await somaBackend.fetch('/api/query', {
+      const data = await somaBackend.fetch('/api/soma/chat', {
         method: 'POST',
         body: JSON.stringify({
-          query: message,
-          context: {
-            source: 'floating-chat',
-            page: page || activeModule,           // what tab the user is on
-            history,                              // last 6 exchanges for continuity
-          }
+          message,
+          sessionId: getSharedSessionId(),
+          history: history.map(m => ({ role: m.role || (m.sender === 'user' ? 'user' : 'assistant'), content: m.content || m.text })),
+          context: { source: 'floating-chat', page: page || activeModule },
         })
       });
-      if (data && data.response) {
+      if (data && (data.response || data.message)) {
         return {
-          text: data.response,
+          text: data.response || data.message,
           characterSuggestion: data.characterSuggestion || null,
           activeCharacter: data.activeCharacter || null,
         };
@@ -1223,6 +1800,54 @@ const SomaCommandBridge = () => {
     }
     return null;
   };
+
+  const handleApproveGoal = useCallback(async (goalId) => {
+    try {
+      await somaBackend.sendMessage({
+        from: 'SomaCommandBridge',
+        to: 'GoalPlannerArbiter',
+        type: 'approve_goal',
+        payload: { goalId }
+      });
+      toast.success('Goal Approved!', { theme: 'dark' });
+      setProposedGoals(prev => prev.filter(goal => goal.id !== goalId));
+    } catch (error) {
+      console.error('Failed to approve goal:', error);
+      toast.error('Failed to approve goal', { theme: 'dark' });
+    }
+  }, []);
+
+  const handleRejectGoal = useCallback(async (goalId, reason = 'User rejected') => {
+    try {
+      await somaBackend.sendMessage({
+        from: 'SomaCommandBridge',
+        to: 'GoalPlannerArbiter',
+        type: 'reject_goal',
+        payload: { goalId, reason }
+      });
+      toast.info('Goal Rejected', { theme: 'dark' });
+      setProposedGoals(prev => prev.filter(goal => goal.id !== goalId));
+    } catch (error) {
+      console.error('Failed to reject goal:', error);
+      toast.error('Failed to reject goal', { theme: 'dark' });
+    }
+  }, []);
+
+  const handleSendQuestionResponse = useCallback(async (questionId, response) => {
+    try {
+      await somaBackend.sendMessage({
+        from: 'SomaCommandBridge',
+        to: 'GoalPlannerArbiter', // Assuming GoalPlannerArbiter processes the question
+        type: 'question_response',
+        payload: { questionId, response }
+      });
+      toast.success('Response sent to SOMA!', { theme: 'dark' });
+      setActiveQuestion(null); // Clear the active question after response
+    } catch (error) {
+      console.error('Failed to send question response:', error);
+      toast.error('Failed to send response', { theme: 'dark' });
+    }
+  }, []);
 
   // ------------------------------------------
   // RESTORED HANDLERS (Cognitive)
@@ -1316,6 +1941,7 @@ const SomaCommandBridge = () => {
   // ------------------------------------------
   return (
     <div className="flex h-screen ct-background text-zinc-200 font-sans selection:bg-white/20">
+      {showOnboarding && <OnboardingWizard onComplete={() => setShowOnboarding(false)} />}
       {showProcessModal && <ProcessMonitor agents={agents} onClose={() => setShowProcessModal(false)} />}
       {showSystemDetail && <SystemDetailModal metricId={showSystemDetail} systemMetrics={systemMetrics} onClose={() => setShowSystemDetail(null)} />}
       <SystemDiagnosticsApp
@@ -1351,25 +1977,26 @@ const SomaCommandBridge = () => {
       />
 
       {/* Sidebar */}
-      <div className={`${sidebarCollapsed ? 'w-16' : 'w-64'} bg-[#09090b]/80 backdrop-blur-xl border-r border-white/5 flex flex-col transition-all duration-300 overflow-hidden z-50`}>
-        <div className="p-4 border-b border-white/5">
-          <div className="flex items-center justify-between mb-2">
-            {!sidebarCollapsed && <h1 className="text-xl font-bold text-transparent bg-clip-text bg-gradient-to-b from-white to-white/50 tracking-tight">SOMA</h1>}
-            <button
-              onClick={() => setSidebarCollapsed(!sidebarCollapsed)}
-              className="text-zinc-500 hover:text-white transition-colors"
-            >
-              {sidebarCollapsed ? <ChevronRight className="w-5 h-5" /> : <ChevronLeft className="w-5 h-5" />}
+      <div className={`${sidebarCollapsed ? 'w-16' : 'w-[199px]'} bg-[#09090b]/80 backdrop-blur-xl border-r border-white/5 flex flex-col transition-all duration-300 overflow-hidden z-50`}>
+        <div className="h-14 flex items-center border-b border-white/5">
+          {sidebarCollapsed ? (
+            /* Collapsed: logo centered both axes */
+            <button onClick={() => setSidebarCollapsed(false)} className="w-full h-full flex items-center justify-center opacity-50 hover:opacity-80 transition-opacity">
+              <svg width="28" height="28" viewBox="0 0 32 32" fill="none" xmlns="http://www.w3.org/2000/svg">
+                <rect width="32" height="32" rx="8" fill="#1a1a1f"/>
+                <g transform="translate(4,4)">
+                  <path d="M12 2C10.5 2 9 2.5 8 3.5C7 2.5 5.5 2 4 2C2.5 2 1 3 1 5C1 6.5 1.5 8 2.5 9C1.5 10 1 11.5 1 13C1 14.5 2 16 3.5 16.5C3 17.5 3 18.5 3.5 19.5C4 20.5 5 21 6 21.5C7 22 8.5 22 10 22H14C15.5 22 17 22 18 21.5C19 21 20 20.5 20.5 19.5C21 18.5 21 17.5 20.5 16.5C22 16 23 14.5 23 13C23 11.5 22.5 10 21.5 9C22.5 8 23 6.5 23 5C23 3 21.5 2 20 2C18.5 2 17 2.5 16 3.5C15 2.5 13.5 2 12 2Z" fill="#a1a1aa"/>
+                </g>
+              </svg>
             </button>
-          </div>
-          {!sidebarCollapsed && (
-            <>
-              <div className="flex items-center space-x-2 mb-2">
-                <div className={`w-1.5 h-1.5 rounded-full ${isConnected ? 'bg-emerald-500 shadow-[0_0_8px_#10b981]' : 'bg-amber-500 shadow-[0_0_8px_#f59e0b]'} ${isConnected ? '' : 'animate-pulse'}`} />
-                <span className="text-[10px] text-zinc-500 font-bold tracking-widest uppercase">{isConnected ? 'Neural Link Active' : 'Neural Link Severed'}</span>
-              </div>
-              <p className="text-zinc-600 text-[9px] font-mono uppercase tracking-[0.2em]">Bridge Terminal v7.4</p>
-            </>
+          ) : (
+            /* Expanded: SOMA text vertically centered, chevron on right */
+            <div className="w-full flex items-center justify-between px-4">
+              <h1 className="text-2xl font-bold text-transparent bg-clip-text bg-gradient-to-b from-white to-white/50 tracking-tight">SOMA</h1>
+              <button onClick={() => setSidebarCollapsed(true)} className="text-zinc-500 hover:text-white transition-colors">
+                <ChevronLeft className="w-4 h-4" />
+              </button>
+            </div>
           )}
         </div>
 
@@ -1383,15 +2010,13 @@ const SomaCommandBridge = () => {
 
             { id: 'simulation', label: 'Simulation', icon: Box, color: 'orange' },
 
-            { id: 'analytics', label: 'Analytics', icon: BarChart3, color: 'indigo' },
             { id: 'forecaster', label: 'Forecaster', icon: TrendingUp, color: 'indigo' },
             { id: 'mission_control', label: 'Mission Control', icon: CircleDollarSign, color: 'rose' },
             { id: 'storage', label: 'Storage', icon: HardDrive, color: 'blue' },
             { id: 'knowledge', label: 'Knowledge', icon: Brain, color: 'cyan' },
-            { id: 'workflow', label: 'Workflow', icon: Workflow, color: 'lime' },
+            { id: 'reflections', label: 'Reflections', icon: Sparkles, color: 'purple' },
             { id: 'settings', label: 'Settings', icon: Settings, color: 'stone' },
             { id: 'arbiterium', label: 'Arbiterium', icon: Zap, color: 'fuchsia' },
-            { id: 'characters', label: 'Character Lab', icon: Sparkles, color: 'amber' },
           ].map(module => (
             <button
               key={module.id}
@@ -1404,15 +2029,31 @@ const SomaCommandBridge = () => {
             </button>
           ))}
         </nav>
+        {/* SOMA Status Strip */}
+        <SomaStatusStrip
+          activeGoal={activeGoal}
+          goalProgress={goalProgress}
+          tensionLevel={tensionLevel}
+          lastToolUsed={lastToolUsed}
+          lastToolTimestamp={lastToolTimestamp}
+          isSomaBusy={isSomaBusy}
+          isConnected={isConnected}
+          sidebarCollapsed={sidebarCollapsed}
+          wakeWordActive={wakeWordActive}
+          onWakeWordToggle={() => wakeWordActive ? stopWakeWordListening() : startWakeWordListening()}
+        />
       </div>
 
       {/* Main content */}
-      <div className={`flex-1 flex flex-col ${['terminal', 'orb', 'mission_control', 'knowledge'].includes(activeModule) ? 'overflow-hidden' : 'overflow-y-auto p-6'}`}>
+      <div className={`flex-1 flex flex-col ${['terminal', 'orb', 'mission_control', 'knowledge', 'reflections'].includes(activeModule) ? 'overflow-hidden' : activeModule === 'command' ? 'overflow-hidden p-6' : 'overflow-y-auto p-6'}`}>
 
         {/* CORE SYSTEM MODULE */}
         {activeModule === 'core' && (
           <div className="space-y-6">
-            <h2 className="text-2xl font-bold text-white mb-4 tracking-tight">Core System</h2>
+            <div className="flex items-center justify-between mb-4">
+              <h2 className="text-2xl font-bold text-white tracking-tight">Core System</h2>
+              <ArgusEye isConnected={isConnected} />
+            </div>
 
             {/* Metric Grid */}
             <div className="grid grid-cols-4 gap-4">
@@ -1461,6 +2102,14 @@ const SomaCommandBridge = () => {
                         {Number.isFinite(systemMetrics.neuralLoad?.load15) ? systemMetrics.neuralLoad.load15.toFixed(2) : '--'}
                       </span>
                     </div>
+                    {driveTension !== null && (
+                      <div className="flex justify-between text-xs pb-2 border-b border-white/5">
+                        <span className="text-zinc-500">Drive Tension</span>
+                        <span className={`font-mono font-bold ${driveTension >= 0.7 ? 'text-red-400' : driveTension >= 0.4 ? 'text-amber-400' : 'text-emerald-400'}`}>
+                          {(driveTension * 100).toFixed(0)}%{driveTension >= 0.7 ? ' ðŸ”´' : driveTension >= 0.4 ? ' ðŸŸ¡' : ' ðŸŸ¢'}
+                        </span>
+                      </div>
+                    )}
                     <div className="flex justify-between text-xs pb-2 border-b border-white/5">
                       <span className="text-zinc-500">Primary Node</span>
                       <span className="text-fuchsia-400 font-bold uppercase tracking-tighter">ONLINE (LOCAL)</span>
@@ -1487,6 +2136,7 @@ const SomaCommandBridge = () => {
             <div className="grid grid-cols-2 gap-6">
               {/* Dashboard Panels */}
               <NeuralDissonanceMonitor isConnected={isConnected} />
+              <EconomicSovereigntyMonitor isConnected={isConnected} />
               <AutonomousActivityFeed isConnected={isConnected} />
             </div>
 
@@ -1501,6 +2151,16 @@ const SomaCommandBridge = () => {
                 <MindsEye isConnected={isConnected} />
               </div>
             </div>
+
+            <div className="grid grid-cols-2 gap-6">
+              <PerceptionPanel isConnected={isConnected} />
+              <SelfModFeed isConnected={isConnected} />
+            </div>
+
+            <div className="grid grid-cols-2 gap-6">
+              <BootHealthWidget isConnected={isConnected} />
+              <GoalsPanel isConnected={isConnected} />
+            </div>
           </div>
         )}
 
@@ -1509,10 +2169,253 @@ const SomaCommandBridge = () => {
 
         {/* ORB MODULE */}
         {activeModule === 'orb' && (
-          <div className="flex flex-col items-center justify-center h-full w-full bg-black relative overflow-hidden">
-            <div className="absolute inset-0 bg-[radial-gradient(circle_at_center,_var(--tw-gradient-stops))] from-indigo-900/20 via-black to-black pointer-events-none" />
-            <h2 className="absolute top-8 text-xl font-light text-white/50 tracking-widest z-10 uppercase">SOMA Voice Interface</h2>
-            <div className="absolute top-8 right-8 z-20 flex flex-col items-end space-y-2">
+          <div className="flex h-full w-full bg-black relative overflow-hidden">
+            {/* Background Effect */}
+            <div className="absolute inset-0 bg-[radial-gradient(circle_at_center,_var(--tw-gradient-stops))] from-indigo-900/10 via-black to-black pointer-events-none" />
+            
+            {/* Left Sidebar: Conversation & Emotions */}
+            <motion.div 
+              initial={false}
+              animate={{ width: orbSidebarCollapsed ? 0 : 320, opacity: orbSidebarCollapsed ? 0 : 1 }}
+              transition={{ duration: 0.4, ease: "easeInOut" }}
+              className="border-r border-white/5 flex flex-col bg-zinc-900/20 backdrop-blur-sm relative z-20 overflow-hidden"
+            >
+              <div className="w-80 flex flex-col h-full">
+                <div className="p-6 border-b border-white/5">
+                  <div className="flex items-center justify-between mb-4">
+                    <h3 className="text-xs font-bold text-zinc-500 uppercase tracking-[0.2em]">Neural Session</h3>
+                    <button
+                      onClick={() => setOrbSidebarCollapsed(true)}
+                      className="p-1.5 rounded-lg text-zinc-600 hover:text-zinc-300 hover:bg-white/5 transition-all"
+                      title="Collapse Neural Session"
+                    >
+                      <ChevronLeft className="w-4 h-4" />
+                    </button>
+                  </div>
+                  <EmotionIndicator
+                    isTalking={isTalking}
+                    isThinking={isThinking} 
+                    isConnected={isOrbConnected} 
+                  />
+                </div>
+                
+                <div className="flex-1 overflow-y-auto p-4 custom-scrollbar space-y-4">
+                  {orbConversation.length === 0 ? (
+                    <div className="h-full flex flex-col items-center justify-center text-zinc-600 opacity-50 px-4 text-center">
+                      <MessageSquare className="w-8 h-8 mb-3" />
+                      <p className="text-xs">No active transmission logs. Establish link to begin.</p>
+                    </div>
+                  ) : (
+                    orbConversation.map((msg, idx) => (
+                      <div key={idx} className={`flex flex-col ${msg.role === 'user' ? 'items-end' : 'items-start'}`}>
+                        <div className={`max-w-[90%] p-3 rounded-2xl text-sm ${
+                          msg.role === 'user' 
+                            ? 'bg-blue-500/10 border border-blue-500/20 text-blue-100 rounded-tr-none' 
+                            : 'bg-purple-500/10 border border-purple-500/20 text-purple-100 rounded-tl-none'
+                        }`}>
+                          {msg.text}
+                        </div>
+                        <span className="text-[8px] text-zinc-600 mt-1 uppercase font-mono tracking-tighter">
+                          {msg.role === 'user' ? 'Human' : 'SOMA'} â€¢ {new Date(msg.timestamp).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}
+                        </span>
+                      </div>
+                    ))
+                  )}
+                </div>
+
+                {orbConversation.length > 0 && (
+                  <div className="p-4 border-t border-white/5">
+                    <button 
+                      onClick={() => setOrbConversation([])}
+                      className="w-full py-2 text-[10px] text-zinc-500 hover:text-zinc-300 uppercase tracking-widest transition-colors"
+                    >
+                      Clear Session Logs
+                    </button>
+                  </div>
+                )}
+              </div>
+            </motion.div>
+
+            {/* Re-expand Button — only visible when sidebar is collapsed */}
+            <AnimatePresence>
+              {orbSidebarCollapsed && (
+                <motion.div
+                  className="absolute top-8 left-4 z-30"
+                  initial={{ scale: 0, opacity: 0 }}
+                  animate={{ scale: 1, opacity: 1 }}
+                  exit={{ scale: 0, opacity: 0 }}
+                  transition={{ type: "spring", damping: 15, stiffness: 250 }}
+                >
+                  <motion.button
+                    onClick={() => setOrbSidebarCollapsed(false)}
+                    className="p-3 rounded-full border bg-purple-500/10 border-purple-500/30 text-purple-400 group relative overflow-visible"
+                    whileHover={{ scale: 1.15 }}
+                    whileTap={{ scale: 0.88 }}
+                    title="Expand Neural Session"
+                  >
+                    {/* Ring 1 — slow expanding pulse */}
+                    <motion.div
+                      className="absolute inset-0 rounded-full border border-purple-400/50"
+                      animate={{ scale: [1, 2, 1], opacity: [0.7, 0, 0.7] }}
+                      transition={{ duration: 2.2, repeat: Infinity, ease: "easeOut" }}
+                    />
+                    {/* Ring 2 — offset pulse */}
+                    <motion.div
+                      className="absolute inset-0 rounded-full border border-fuchsia-500/30"
+                      animate={{ scale: [1, 2.6, 1], opacity: [0.5, 0, 0.5] }}
+                      transition={{ duration: 2.2, repeat: Infinity, ease: "easeOut", delay: 0.8 }}
+                    />
+                    {/* Soft glow core */}
+                    <div className="absolute inset-0 rounded-full bg-purple-500/25 blur-sm" />
+                    {/* Brain icon — gentle breathe */}
+                    <motion.svg
+                      viewBox="0 0 24 24"
+                      fill="currentColor"
+                      className="w-5 h-5 relative z-10"
+                      animate={{ scale: [1, 1.12, 1] }}
+                      transition={{ duration: 2.5, repeat: Infinity, ease: "easeInOut" }}
+                    >
+                      <path d="M12 2C10.5 2 9 2.5 8 3.5C7 2.5 5.5 2 4 2C2.5 2 1 3 1 5C1 6.5 1.5 8 2.5 9C1.5 10 1 11.5 1 13C1 14.5 2 16 3.5 16.5C3 17.5 3 18.5 3.5 19.5C4 20.5 5 21 6 21.5C7 22 8.5 22 10 22H14C15.5 22 17 22 18 21.5C19 21 20 20.5 20.5 19.5C21 18.5 21 17.5 20.5 16.5C22 16 23 14.5 23 13C23 11.5 22.5 10 21.5 9C22.5 8 23 6.5 23 5C23 3 21.5 2 20 2C18.5 2 17 2.5 16 3.5C15 2.5 13.5 2 12 2Z" />
+                    </motion.svg>
+                    {/* Hover label */}
+                    <span className="absolute left-full ml-3 px-2 py-1 bg-black/80 border border-white/10 rounded text-[9px] text-purple-300 uppercase tracking-widest whitespace-nowrap opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none">
+                      Session Logs
+                    </span>
+                  </motion.button>
+                </motion.div>
+              )}
+            </AnimatePresence>
+
+            {/* Center: The Orb / Face */}
+            <div className="flex-1 flex flex-col items-center justify-center relative z-10">
+              <div className="h-[550px] w-full flex items-center justify-center pointer-events-none">
+                {showOrbFace ? (
+                  <RobotFace
+                    volume={volume}
+                    isConnected={isOrbConnected}
+                    isTalking={isTalking}
+                    isListening={isListening}
+                    isThinking={isThinking}
+                  />
+                ) : (
+                  <Orb volume={volume} isActive={isOrbConnected} isTalking={isTalking} isListening={isListening} isThinking={isThinking} isConnected={isConnected} />
+                )}
+              </div>
+
+              {/* Synth Wave — reacts to SOMA's voice in black/purple — HIDE WHEN FACE IS ACTIVE */}
+              {!showOrbFace && (
+                <div className="flex items-center justify-center mb-4 pointer-events-none">
+                  <SynthWave volume={volume} isTalking={isTalking} isActive={isOrbConnected} />
+                </div>
+              )}
+
+              <div className="mt-4 flex flex-col items-center gap-4 w-full max-w-xl px-10 relative z-[100]">
+                {/* Neural Link Button */}
+                <div className="flex items-center gap-3">
+                  <button
+                    className={`px-10 py-3 rounded-full font-bold uppercase tracking-[0.2em] text-xs transition-all shadow-lg pointer-events-auto ${isOrbConnected
+                      ? 'bg-rose-500/20 text-rose-400 border border-rose-500/50 hover:bg-rose-500/30'
+                      : 'bg-fuchsia-500/20 text-fuchsia-400 border border-fuchsia-500/30 hover:bg-fuchsia-500/30'
+                    }`}
+                    onClick={() => isOrbConnected ? disconnectOrb() : connectOrb()}
+                  >
+                    {isOrbConnected ? '● Disengage Neural Link' : '○ Establish Neural Link'}
+                  </button>
+                  {/* Wake Word Toggle */}
+                  <button
+                    title={wakeWordActive ? 'Wake word active — say "Hey SOMA"' : 'Enable wake word'}
+                    className={`w-9 h-9 rounded-full border text-xs transition-all pointer-events-auto flex items-center justify-center ${wakeWordActive
+                      ? 'bg-emerald-500/20 border-emerald-500/50 text-emerald-400 animate-pulse'
+                      : 'bg-white/5 border-white/10 text-zinc-500 hover:border-white/20'
+                    }`}
+                    onClick={() => wakeWordActive ? stopWakeWordListening() : startWakeWordListening()}
+                  >
+                    {wakeWordActive ? '◉' : '◎'}
+                  </button>
+                </div>
+
+                {/* Manual Input Field */}
+                {isOrbConnected && (
+                  <div className="w-full bg-white/5 border border-white/10 rounded-2xl p-2 flex items-center gap-2 focus-within:border-purple-500/50 transition-all">
+                    <input
+                      type="text"
+                      placeholder="Transmit manual command..."
+                      className="flex-1 bg-transparent border-none outline-none px-4 py-2 text-sm text-zinc-200 placeholder-zinc-600"
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter' && e.target.value.trim()) {
+                          const query = e.target.value.trim();
+                          e.target.value = '';
+                          if (window.somaTextQuery) window.somaTextQuery(query);
+                        }
+                      }}
+                    />
+                    <button
+                      onClick={(e) => {
+                        const input = e.target.closest('div').querySelector('input');
+                        const query = input.value.trim();
+                        if (query) {
+                          input.value = '';
+                          if (window.somaTextQuery) window.somaTextQuery(query);
+                        }
+                      }}
+                      className="p-2 bg-purple-500/20 hover:bg-purple-500/40 text-purple-400 rounded-xl transition-all"
+                    >
+                      <Zap className="w-4 h-4" />
+                    </button>
+                  </div>
+                )}
+                
+                <p className="text-[9px] text-zinc-600 uppercase tracking-widest">
+                  {isListening ? 'SOMA is listening...' : isThinking ? 'Processing neural patterns...' : isTalking ? 'SOMA is responding...' : 'Neural interface standby'}
+                </p>
+
+                {/* Whisper offline banner */}
+                {isOrbConnected && (orbSystemStatus.whisperServer === 'fallback' || orbSystemStatus.whisperServer === 'error') && (
+                  <div className="mt-3 w-full max-w-sm bg-amber-500/10 border border-amber-500/30 rounded-xl px-4 py-2.5 text-center">
+                    <p className="text-[10px] text-amber-400 font-bold uppercase tracking-widest mb-1">
+                      {orbSystemStatus.whisperServer === 'fallback' ? '⚠ Browser STT Active' : '✗ No STT Available'}
+                    </p>
+                    <p className="text-[9px] text-amber-300/70 leading-relaxed">
+                      {orbSystemStatus.whisperServer === 'fallback'
+                        ? 'Whisper server offline — using Chrome/Edge speech recognition. Firefox unsupported. For accuracy, run a Whisper server on :5002.'
+                        : 'No speech recognition available. Use the text input below or open Chrome/Edge.'}
+                    </p>
+                  </div>
+                )}
+              </div>
+            </div>
+
+            {/* Far Right: Status Indicators */}
+            <div className="absolute top-8 right-8 z-50 flex flex-col items-end space-y-3 pointer-events-none">
+              {/* Orb / Face toggle */}
+              <div className="flex items-center gap-2 mb-1 pointer-events-auto">
+                <span className="text-zinc-600 text-[10px] font-mono uppercase tracking-widest select-none">Orb</span>
+                <button
+                  onClick={() => setShowOrbFace(v => !v)}
+                  className="relative w-9 h-5 rounded-full transition-colors duration-300 focus:outline-none flex-shrink-0"
+                  style={{ backgroundColor: showOrbFace ? '#d946ef' : '#27272a', boxShadow: showOrbFace ? '0 0 8px #d946ef50' : 'none' }}
+                >
+                  <span className="absolute top-0.5 w-4 h-4 rounded-full bg-white shadow transition-all duration-300"
+                    style={{ left: showOrbFace ? '1.125rem' : '0.125rem' }} />
+                </button>
+                <span className="text-zinc-600 text-[10px] font-mono uppercase tracking-widest select-none">Face</span>
+              </div>
+
+              <div className="flex items-center space-x-3 mb-2 pointer-events-auto">
+                <div className="flex flex-col items-end">
+                  <span className="text-[10px] text-zinc-500 uppercase font-bold tracking-wider">User Mic</span>
+                  <div className="h-1 w-24 bg-white/5 rounded-full mt-1 overflow-hidden border border-white/5">
+                    <div 
+                      className="h-full bg-gradient-to-r from-blue-500 to-fuchsia-500 transition-all duration-75"
+                      style={{ width: `${Math.max(2, inputVolume * 100)}%`, opacity: isOrbConnected ? 1 : 0.2 }}
+                    />
+                  </div>
+                </div>
+                <div className={`p-2 rounded-full border ${inputVolume > 0.2 ? 'border-fuchsia-500/50 bg-fuchsia-500/10' : 'border-white/5 bg-white/5'} transition-all`}>
+                  <Mic className={`w-4 h-4 ${inputVolume > 0.2 ? 'text-fuchsia-400' : 'text-zinc-600'}`} />
+                </div>
+              </div>
+
               {[
                 { label: 'Backend', status: orbSystemStatus.somaBackend, required: true },
                 { label: 'Whisper', status: orbSystemStatus.whisperServer, required: true },
@@ -1525,84 +2428,34 @@ const SomaCommandBridge = () => {
                       s.status === 'initializing' ? 'bg-blue-500 animate-pulse' :
                         'bg-rose-500 shadow-[0_0_8px_rgba(239,68,68,0.5)]'
                     }`} />
-                  {/* Status tooltip */}
-                  {(s.status === 'error' || s.status === 'fallback' || s.status === 'initializing') && (
-                    <div className="absolute right-full mr-2 px-2 py-1 bg-black/90 border border-white/10 rounded text-[9px] text-zinc-300 whitespace-nowrap opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none">
-                      {s.status === 'error' && s.label === 'Whisper' && 'Run: python whisper_flask_server.py'}
-                      {s.status === 'error' && s.label === 'Backend' && 'Start SOMA backend on port 3001'}
-                      {s.status === 'fallback' && 'Using browser speech (lower quality)'}
-                      {s.status === 'initializing' && 'Starting up...'}
-                    </div>
-                  )}
                 </div>
               ))}
             </div>
-            <div className="relative z-10 h-[500px] w-full flex items-center justify-center">
-              <Orb volume={volume} isActive={isOrbConnected} isTalking={isTalking} isListening={isListening} isThinking={isThinking} />
-            </div>
-            <div className="relative z-10 mt-8 flex flex-col items-center gap-3">
-              {/* Neural Link Button */}
-              <div className="flex gap-4 bg-black/50 p-4 rounded-full border border-white/10 backdrop-blur-md">
-                <button
-                  className={`px-8 py-3 rounded-full font-bold uppercase tracking-widest text-xs transition-all ${isOrbConnected ? 'bg-rose-500/20 text-rose-400 border border-rose-500/50' : 'bg-fuchsia-500/20 text-fuchsia-400 border border-fuchsia-500/20'
-                    }`}
-                  onClick={() => isOrbConnected ? disconnectOrb() : connectOrb()}
+
+            {/* Right Sidebar: Reasoning Tree (Absolute overlay) */}
+            <AnimatePresence>
+              {activeReasoningTree && (
+                <motion.div 
+                  initial={{ x: '100%', opacity: 0 }}
+                  animate={{ x: 0, opacity: 1 }}
+                  exit={{ x: '100%', opacity: 0 }}
+                  transition={{ duration: 0.5, ease: "anticipate" }}
+                  className="absolute top-0 right-0 bottom-0 w-[400px] border-l border-white/5 flex flex-col bg-zinc-950/90 backdrop-blur-xl z-40 shadow-2xl"
                 >
-                  {isOrbConnected ? '● Disengage Link' : '○ Establish Neural Link'}
-                </button>
-              </div>
-
-              {/* Collapsible Text Input */}
-              {isOrbConnected && (
-                <div className="group relative">
-                  {/* Collapsed hint */}
-                  <div className="text-[9px] uppercase tracking-widest text-zinc-600 group-hover:text-zinc-400 transition-colors cursor-pointer text-center mb-1">
-                    Manual Input
-                  </div>
-
-                  {/* Expandable Input Panel */}
-                  <div className="max-h-0 group-hover:max-h-24 overflow-hidden transition-all duration-300 ease-in-out">
-                    <div className="bg-black/70 backdrop-blur-xl border border-white/10 rounded-2xl p-3 min-w-[400px]">
-                      <div className="flex gap-2">
-                        <input
-                          type="text"
-                          placeholder="Type your message to SOMA..."
-                          className="flex-1 bg-white/5 border border-white/10 rounded-xl px-4 py-2 text-sm text-zinc-200 placeholder-zinc-600 focus:outline-none focus:border-purple-500/50 focus:bg-white/10 transition-all"
-                          onKeyDown={(e) => {
-                            if (e.key === 'Enter' && e.target.value.trim()) {
-                              const query = e.target.value.trim();
-                              e.target.value = '';
-                              // Send to SOMA via voice interface
-                              if (window.somaTextQuery) {
-                                window.somaTextQuery(query);
-                              }
-                            }
-                          }}
-                        />
-                        <button
-                          onClick={(e) => {
-                            const input = e.target.closest('.flex').querySelector('input');
-                            const query = input.value.trim();
-                            if (query) {
-                              input.value = '';
-                              if (window.somaTextQuery) {
-                                window.somaTextQuery(query);
-                              }
-                            }
-                          }}
-                          className="px-4 py-2 bg-purple-500/20 hover:bg-purple-500/30 border border-purple-500/30 rounded-xl text-purple-300 text-xs font-bold uppercase tracking-wider transition-all"
-                        >
-                          Send
-                        </button>
-                      </div>
-                      <div className="text-[8px] text-zinc-600 mt-2 text-center">
-                        SOMA will respond via voice • Press Enter to send
-                      </div>
+                  <div className="p-6 flex-1 overflow-hidden flex flex-col">
+                    <div className="flex items-center justify-between mb-4">
+                      <h3 className="text-xs font-bold text-zinc-500 uppercase tracking-[0.2em]">Metacognitive Path</h3>
+                      <button onClick={() => setActiveReasoningTree(null)} className="text-zinc-600 hover:text-white p-1 hover:bg-white/5 rounded-full transition-colors">
+                        <X className="w-4 h-4" />
+                      </button>
+                    </div>
+                    <div className="flex-1 overflow-y-auto custom-scrollbar pr-2">
+                      <ReasoningTree tree={activeReasoningTree} />
                     </div>
                   </div>
-                </div>
+                </motion.div>
               )}
-            </div>
+            </AnimatePresence>
           </div>
         )}
 
@@ -1779,8 +2632,8 @@ const SomaCommandBridge = () => {
 
 
 
-        {/* ANALYTICS MODULE */}
-        {activeModule === 'analytics' && (
+        {/* ANALYTICS MODULE - removed, real metrics moved to Command Center */}
+        {false && (
           <div className="space-y-6">
             {/* Header with Time Range Controls and Export */}
             <div className="flex items-center justify-between">
@@ -2034,10 +2887,11 @@ const SomaCommandBridge = () => {
 
         {/* KNOWLEDGE MODULE */}
         {activeModule === 'knowledge' && <KnowledgeApp brainStats={brainStats} />}
+        {activeModule === 'reflections' && <ReflectionsTab />}
 
 
-        {/* WORKFLOW MODULE */}
-        {activeModule === 'workflow' && (
+        {/* WORKFLOW MODULE - removed, non-functional */}
+        {false && (
           <div className="h-full flex flex-col bg-[#09090b] text-zinc-200">
             {/* Header */}
             <div className="flex items-center justify-between p-4 border-b border-white/5 bg-[#151518]/50 backdrop-blur-sm">
@@ -2172,161 +3026,21 @@ const SomaCommandBridge = () => {
         )}
 
         {activeModule === 'command' && (
-          <div>
-            <h2 className="text-2xl font-bold text-white mb-2 tracking-tight">Command Center</h2>
-            <p className="text-zinc-500 mb-6 text-sm">Central control hub for system-wide operations</p>
-
-            <div className="grid grid-cols-3 gap-4 mb-6">
-              <button
-                onClick={() => {
-                  executeCommand('start_all', 'Start All Agents');
-                }}
-                className="bg-fuchsia-500/10 hover:bg-fuchsia-500/20 border border-fuchsia-500/20 text-fuchsia-400 p-5 rounded-xl flex flex-col items-center justify-center space-y-3 transition-all hover:scale-[1.02] active:scale-[0.98]"
-              >
-                <div className="p-3 bg-fuchsia-500/20 rounded-full">
-                  <Play className="w-6 h-6" />
-                </div>
-                <span className="font-semibold text-sm">Start All Agents</span>
-              </button>
-
-              <button
-                onClick={() => {
-                  executeCommand('stop_all', 'Pause All Agents');
-                }}
-                className="bg-amber-500/10 hover:bg-amber-500/20 border border-amber-500/20 text-amber-400 p-5 rounded-xl flex flex-col items-center justify-center space-y-3 transition-all hover:scale-[1.02] active:scale-[0.98]"
-              >
-                <div className="p-3 bg-amber-500/20 rounded-full">
-                  <Pause className="w-6 h-6" />
-                </div>
-                <span className="font-semibold text-sm">Pause All Agents</span>
-              </button>
-
-              <button
-                onClick={() => {
-                  executeCommand('reset_system', 'Reset System', 'warning');
-                }}
-                className="bg-blue-500/10 hover:bg-blue-500/20 border border-blue-500/20 text-blue-400 p-5 rounded-xl flex flex-col items-center justify-center space-y-3 transition-all hover:scale-[1.02] active:scale-[0.98]"
-              >
-                <div className="p-3 bg-blue-500/20 rounded-full">
-                  <RotateCw className="w-6 h-6" />
-                </div>
-                <span className="font-semibold text-sm">Reset System</span>
-              </button>
-            </div>
-
-            <div className="grid grid-cols-2 gap-6 mb-6">
-              <div className="col-span-2">
-                <h3 className="text-zinc-100 font-semibold mb-4 text-sm uppercase tracking-wider">Quick Actions</h3>
-                <div className="grid grid-cols-4 gap-4 mb-4">
-                  <div className="card-wrapper p-[1px]">
-                    <button
-                      onClick={() => {
-                        executeCommand('run_diagnostics', 'System Diagnostics');
-                        setShowDiagnostics(true);
-                        setDiagnosticLogs([]); // Clear previous logs
-                      }}
-                      className="card-inner p-4 shadow-lg flex flex-col h-full text-left group"
-                    >
-                      <div className="p-2.5 rounded-lg bg-blue-500/10 w-fit mb-3 group-hover:bg-blue-500/20 transition-colors">
-                        <Search className="w-5 h-5 text-blue-400" />
-                      </div>
-                      <div className="text-zinc-200 font-semibold text-sm">System Diagnostics</div>
-                      <div className="text-zinc-500 text-xs mt-1">Run full health check</div>
-                    </button>
-                  </div>
-
-                  <div className="card-wrapper p-[1px]">
-                    <button
-                      onClick={() => executeCommand('clear_cache', 'Clear Cache')}
-                      className="card-inner p-4 shadow-lg flex flex-col h-full text-left group"
-                    >
-                      <div className="p-2.5 rounded-lg bg-amber-500/10 w-fit mb-3 group-hover:bg-amber-500/20 transition-colors">
-                        <Trash2 className="w-5 h-5 text-amber-400" />
-                      </div>
-                      <div className="text-zinc-200 font-semibold text-sm">Clear Cache</div>
-                      <div className="text-zinc-500 text-xs mt-1">Free up memory resources</div>
-                    </button>
-                  </div>
-
-                  <div className="card-wrapper p-[1px]">
-                    <button
-                      onClick={() => executeCommand('create_backup', 'Create Backup')}
-                      className="card-inner p-4 shadow-lg flex flex-col h-full text-left group"
-                    >
-                      <div className="p-2.5 rounded-lg bg-fuchsia-500/10 w-fit mb-3 group-hover:bg-fuchsia-500/20 transition-colors">
-                        <Database className="w-5 h-5 text-fuchsia-400" />
-                      </div>
-                      <div className="text-zinc-200 font-semibold text-sm">Create Backup</div>
-                      <div className="text-zinc-500 text-xs mt-1">Snapshot current state</div>
-                    </button>
-                  </div>
-
-                  <div className="card-wrapper p-[1px]">
-                    <button
-                      onClick={() => executeCommand('optimize_system', 'Optimize System')}
-                      className="card-inner p-4 shadow-lg flex flex-col h-full text-left group"
-                    >
-                      <div className="p-2.5 rounded-lg bg-purple-500/10 w-fit mb-3 group-hover:bg-purple-500/20 transition-colors">
-                        <Zap className="w-5 h-5 text-purple-400" />
-                      </div>
-                      <div className="text-zinc-200 font-semibold text-sm">Optimize System</div>
-                      <div className="text-zinc-500 text-xs mt-1">Tune performance metrics</div>
-                    </button>
-                  </div>
-                </div>
-
-              </div>
-
-              <div className="bg-[#151518]/60 backdrop-blur-md border border-white/5 rounded-xl p-5 shadow-lg col-span-2">
-                <h3 className="text-zinc-100 font-semibold mb-4 text-sm uppercase tracking-wider">System Status</h3>
-                <div className="space-y-4">
-                  <div className="flex items-center justify-between pb-3 border-b border-white/5">
-                    <span className="text-zinc-400 text-sm">Arbiters</span>
-                    <span className="text-zinc-100 font-mono font-bold">
-                      {activeArbiters}/{totalArbiters}
-                    </span>
-                  </div>
-                  <div className="flex items-center justify-between pb-3 border-b border-white/5">
-                    <span className="text-zinc-400 text-sm">Micro-Agents</span>
-                    <span className="text-zinc-100 font-mono font-bold">
-                      {activeMicroAgents}/{totalMicroAgents}
-                    </span>
-                  </div>
-                  <div className="flex items-center justify-between pb-3 border-b border-white/5">
-                    <span className="text-zinc-400 text-sm">Knowledge Fragments</span>
-                    <span className="text-zinc-100 font-mono font-bold">{totalFragments}</span>
-                  </div>
-                  <div className="flex items-center justify-between">
-                    <span className="text-zinc-400 text-sm">System Uptime</span>
-                    <span className="text-zinc-100 font-mono font-bold">{formatUptime(systemMetrics.uptime)}</span>
-                  </div>
-                </div>
-              </div>
-            </div>
-
-            <div className="bg-[#151518]/60 backdrop-blur-md border border-white/5 rounded-xl p-5 shadow-lg">
-              <h3 className="text-zinc-100 font-semibold mb-4 text-sm uppercase tracking-wider">Activity Stream</h3>
-              <div className="space-y-2 max-h-96 overflow-y-auto custom-scrollbar pr-2">
-                {activityStream.map(log => (
-                  <div key={log.id} className={`p-3 rounded-lg text-sm border flex items-start space-x-3 ${log.type === 'success' ? 'bg-fuchsia-500/5 border-fuchsia-500/10 text-fuchsia-400' :
-                    log.type === 'error' ? 'bg-rose-500/5 border-rose-500/10 text-rose-400' :
-                      log.type === 'warning' ? 'bg-amber-500/5 border-amber-500/10 text-amber-400' :
-                        'bg-blue-500/5 border-blue-500/10 text-blue-400'
-                    }`}>
-                    <div className={`mt-0.5 w-1.5 h-1.5 rounded-full flex-shrink-0 ${log.type === 'success' ? 'bg-fuchsia-500' :
-                      log.type === 'error' ? 'bg-rose-500' :
-                        log.type === 'warning' ? 'bg-amber-500' :
-                          'bg-blue-500'
-                      }`} />
-                    <div className="flex-1 flex justify-between items-start">
-                      <span>{log.message}</span>
-                      <span className="text-[10px] opacity-60 font-mono whitespace-nowrap ml-4">{new Date(log.timestamp).toLocaleTimeString()}</span>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </div>
-          </div>
+          <CommandCenterPanel
+            executeCommand={executeCommand}
+            setShowDiagnostics={setShowDiagnostics}
+            setDiagnosticLogs={setDiagnosticLogs}
+            activeArbiters={activeArbiters}
+            totalArbiters={totalArbiters}
+            activeMicroAgents={activeMicroAgents}
+            totalMicroAgents={totalMicroAgents}
+            totalFragments={totalFragments}
+            systemMetrics={systemMetrics}
+            analyticsSummary={analyticsSummary}
+            activityStream={activityStream}
+            isConnected={isConnected}
+            formatUptime={formatUptime}
+          />
         )}
 
         {activeModule === 'settings' && (
@@ -2350,7 +3064,7 @@ const SomaCommandBridge = () => {
         )}
 
         {/* DEFAULT FALLBACK */}
-        {!['terminal', 'orb', 'kevin', 'simulation', 'core', 'arbiters', 'knowledge', 'analytics', 'storage', 'workflow', 'command', 'settings', 'mission_control', 'forecaster', 'marketplace', 'finance', 'arbiterium'].includes(activeModule) && (
+        {!['terminal', 'orb', 'kevin', 'simulation', 'core', 'arbiters', 'knowledge', 'reflections', 'storage', 'command', 'settings', 'mission_control', 'forecaster', 'marketplace', 'finance', 'arbiterium'].includes(activeModule) && (
           <div className="flex items-center justify-center h-full text-zinc-600 italic">
             Integration for Module "{activeModule}" is ongoing...
           </div>
@@ -2359,10 +3073,51 @@ const SomaCommandBridge = () => {
 
       {/* Global SOMA Chat - Available on all tabs except terminal */}
       {activeModule !== 'terminal' && (
-        <FloatingChat isServerRunning={isConnected} isBusy={isSomaBusy} onSendMessage={handleFloatingChatMessage} activeModule={activeModule} />
+        <FloatingChat
+          isServerRunning={isConnected}
+          isBusy={isSomaBusy}
+          onSendMessage={handleFloatingChatSubmit}
+          activeModule={activeModule}
+          activeQuestion={activeQuestion}
+          onSendQuestionResponse={handleSendQuestionResponse}
+          tensionLevel={tensionLevel}
+        />
       )}
 
-      {/* Character Lab Modal */}
+
+      {/* Floating Quick-Note button */}
+      {activeModule !== 'reflections' && activeModule !== 'terminal' && (
+        <button
+          onClick={() => setShowQuickNote(v => !v)}
+          title="Quick Note (Ctrl+Shift+N)"
+          className="fixed right-5 top-1/2 -translate-y-1/2 z-[90] w-11 h-11 rounded-2xl bg-zinc-900/90 backdrop-blur-sm border border-zinc-700/40 hover:border-fuchsia-500/50 shadow-lg hover:shadow-fuchsia-500/10 flex items-center justify-center transition-all duration-200 hover:scale-105 active:scale-90 group"
+        >
+          <Pencil className="w-4 h-4 text-zinc-500 group-hover:text-fuchsia-400 transition-colors duration-200" />
+        </button>
+      )}
+
+      {/* Quick-Note overlay panel */}
+      {showQuickNote && (
+        <div className="fixed right-0 top-0 bottom-0 w-[480px] z-[95] shadow-2xl border-l border-white/10">
+          <ReflectionsTab
+            mode="quick-note-only"
+            onClose={() => setShowQuickNote(false)}
+            context={activeModule}
+            onSendToSoma={(text) => handleFloatingChatSubmit(text, { history: [], activeModule })}
+          />
+        </div>
+      )}
+
+      {proposedGoals.length > 0 && (
+        <ProposedGoalModal
+          proposedGoals={proposedGoals}
+          onApprove={handleApproveGoal}
+          onReject={handleRejectGoal}
+          onClose={() => setProposedGoals([])} // Allows user to dismiss the modal without action
+        />
+      )}
+
+      {/* Character Lab Modal â€” hidden from nav, preserved for Dementia OS */}
       <CharacterGacha isOpen={isCharacterLabOpen || activeModule === 'characters'} onClose={() => { setIsCharacterLabOpen(false); if (activeModule === 'characters') setActiveModule('core'); }} />
     </div>
   );

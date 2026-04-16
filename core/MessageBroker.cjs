@@ -8,37 +8,44 @@
 const EventEmitter = require('events');
 const fs = require('fs').promises;
 const path = require('path');
+const SignalCompressor = require('./SignalCompressor.cjs');
+const SignalRegistry = require('./SignalSchema.cjs').default;
 
 class MessageBroker extends EventEmitter {
   constructor() {
     super();
 
-    // Registered arbiters
-    this.arbiters = new Map();
+    // 🔱 Sovereign CNS: Physically lock state across all module boundaries
+    if (!global.__SOMA_CNS__) {
+        global.__SOMA_CNS__ = {
+            arbiters: new Map(),
+            lobeIndex: new Map(),
+            classificationIndex: new Map(),
+            discoveryIndex: new Map(),
+            subscriptions: new Map(),
+            recentPublishes: [],
+            messageHistory: [],
+            metrics: {
+                messagesSent: 0,
+                messagesDelivered: 0,
+                messagesFailed: 0,
+                startTime: Date.now()
+            }
+        };
+    }
 
-    // Neural Indices
-    this.lobeIndex = new Map(); // lobe -> Set(names)
-    this.classificationIndex = new Map(); // classification -> Set(names)
+    const cns = global.__SOMA_CNS__;
+    this.arbiters = cns.arbiters;
+    this.lobeIndex = cns.lobeIndex;
+    this.classificationIndex = cns.classificationIndex;
+    this.discoveryIndex = cns.discoveryIndex;
+    this.subscriptions = cns.subscriptions;
+    this._recentPublishes = cns.recentPublishes;
+    this.messageHistory = cns.messageHistory;
+    this.metrics = cns.metrics;
 
-    // Discovery (Unused list)
-    this.discoveryIndex = new Map(); // filename -> metadata
-
-    // Topic subscriptions
-    this.subscriptions = new Map();
-
-    // Message history for replay/debugging (circular buffer)
-    this.messageHistory = [];
-    this.maxHistorySize = 1000;
-    this.historyWriteIndex = 0;  // Circular buffer write pointer
-    this.historyFull = false;     // Track if buffer has wrapped
-
-    // Metrics
-    this.metrics = {
-      messagesSent: 0,
-      messagesDelivered: 0,
-      messagesFailed: 0,
-      startTime: Date.now()
-    };
+    // CNS: Impulse Compression & Validation
+    this.signalRegistry = SignalRegistry;
   }
 
   // ===========================
@@ -165,7 +172,6 @@ class MessageBroker extends EventEmitter {
     }
 
     this.subscriptions.get(topic).add(handler);
-    console.log(`[MessageBroker] Subscribed to topic: ${topic}`);
 
     return () => this.unsubscribe(topic, handler);
   }
@@ -180,7 +186,37 @@ class MessageBroker extends EventEmitter {
     }
   }
 
+  /**
+   * Lobe-scoped subscription — handler only fires if the signal was published
+   * by an arbiter registered in the given lobe (or if the signal has no source lobe).
+   * This prevents 178 arbiters from all reacting to every signal.
+   *
+   * @param {string} lobe   - e.g. 'limbic', 'prefrontal', 'motor_cortex'
+   * @param {string} topic  - the signal topic
+   * @param {Function} handler - (envelope) => void
+   * @returns {Function} unsubscribe
+   */
+  subscribeByLobe(lobe, topic, handler) {
+    const filtered = (envelope) => {
+      // If the signal has a source, check whether it's from the target lobe
+      if (envelope.source) {
+        const sourceMeta = this.arbiters.get(envelope.source);
+        if (sourceMeta && sourceMeta.lobe && sourceMeta.lobe !== lobe) return; // wrong lobe — skip
+      }
+      if (typeof handler === 'function') {
+        handler(envelope);
+      } else {
+        console.warn(`[MessageBroker] 🛡️ Blocked invalid handler in lobe subscription: ${lobe}/${topic}`);
+      }
+    };
+    return this.subscribe(topic, filtered);
+  }
+
   async publish(topic, message) {
+    // Track in ring buffer for perception dashboard
+    this._recentPublishes.push({ topic, ts: Date.now(), preview: JSON.stringify(message).slice(0, 80) });
+    if (this._recentPublishes.length > 20) this._recentPublishes.shift();
+
     const handlers = this.subscriptions.get(topic);
     if (!handlers || handlers.size === 0) {
       return 0;
@@ -189,10 +225,10 @@ class MessageBroker extends EventEmitter {
     const envelope = this._createEnvelope(message, topic);
 
     // PERFORMANCE FIX: Parallelize handler execution with Promise.allSettled
-    // Previous: Sequential await (10 handlers @ 100ms each = 1 second)
-    // Now: Parallel execution (10 handlers @ 100ms each = ~100ms)
     const results = await Promise.allSettled(
-      Array.from(handlers).map(handler => handler(envelope))
+      Array.from(handlers)
+        .filter(h => typeof h === 'function')
+        .map(handler => handler(envelope))
     );
 
     // Count successes and failures
@@ -418,6 +454,51 @@ class MessageBroker extends EventEmitter {
       messagesFailed: 0,
       startTime: Date.now()
     };
+  }
+
+  // ===========================
+  // CNS: Structured Signals
+  // ===========================
+
+  /**
+   * Emit a structured COS Signal.
+   * Signals are buffered and compressed before delivery.
+   */
+  emitSignal(type, payload, priority = 'normal') {
+    const signal = {
+      id: this._generateMessageId(),
+      type,
+      payload,
+      priority,
+      timestamp: Date.now(),
+      source: 'MessageBroker' // Source is set by the emitter, but we default here
+    };
+
+    // CNS: Impulse Compression
+    const swallowed = this.compressor.process(signal);
+    if (!swallowed) {
+      this._deliverSignal(signal);
+    }
+  }
+
+  /**
+   * Internal method to deliver signals to subscribers.
+   */
+  async _deliverSignal(signal) {
+    // CNS: Attention & Focus Gate (The Amygdala)
+    if (this.attentionEngine && typeof this.attentionEngine.shouldNotice === 'function') {
+      if (!this.attentionEngine.shouldNotice(signal)) {
+        console.log(`[MessageBroker] 🙈 Attention Gate suppressed signal: ${signal.type}`);
+        return 0;
+      }
+    }
+
+    this.metrics.messagesSent++;
+    this._addToHistory(signal);
+
+    // Signals are published to topics matching their type
+    // e.g. signal 'repo.file.changed' -> topic 'repo.file.changed'
+    return await this.publish(signal.type, signal);
   }
 
   // ===========================
@@ -667,8 +748,141 @@ class MessageBroker extends EventEmitter {
     console.log(`History Size: ${this.messageHistory.length}`);
     console.log('============================\n');
   }
+
+  // ===========================
+  // Network Bridge (Remote Agents)
+  // ===========================
+  // Starts a WebSocket server so external processes (MAX, Agent0, etc.)
+  // can register as virtual arbiters and participate in the signal flow.
+  //
+  // Protocol (all JSON):
+  //   client → server:  { type: 'register', name, subscriptions: [topic, ...] }
+  //   client → server:  { type: 'publish', topic, payload }
+  //   client → server:  { type: 'message_response', id, result }
+  //   client → server:  { type: 'ping' }
+  //   server → client:  { type: 'registered', name }
+  //   server → client:  { type: 'signal', topic, payload }     ← pub/sub delivery
+  //   server → client:  { type: 'message', id, envelope }      ← direct sendMessage delivery
+  //   server → client:  { type: 'pong' }
+
+  startNetworkBridge(port = 4201) {
+    const { WebSocketServer } = require('ws');
+    const wss = new WebSocketServer({ port });
+
+    // topic → Set<WebSocket>  (which remotes subscribed to which topics)
+    const topicSubs = new Map();
+    // ws → agentName
+    const agentNames = new Map();
+    // pending direct-message responses: id → { resolve, timer }
+    const pending = new Map();
+
+    // Wire a single broker subscription per topic that fans out to all remote subscribers.
+    // Called once when the first remote agent subscribes to a topic.
+    const wireTopicForward = (topic) => {
+      this.subscribe(topic, (envelope) => {
+        const clients = topicSubs.get(topic);
+        if (!clients || clients.size === 0) return;
+        const msg = JSON.stringify({
+          type: 'signal',
+          topic,
+          payload: envelope.payload ?? envelope
+        });
+        for (const ws of clients) {
+          if (ws.readyState === 1) {
+            try { ws.send(msg); } catch { /* dead socket */ }
+          }
+        }
+      });
+    };
+
+    wss.on('connection', (ws) => {
+      ws.on('message', (raw) => {
+        let msg;
+        try { msg = JSON.parse(raw.toString()); } catch { return; }
+
+        // ── register ─────────────────────────────────────────────────
+        if (msg.type === 'register') {
+          const name = msg.name;
+          agentNames.set(ws, name);
+
+          // Register as a virtual arbiter — sendMessage({ to: name }) will call handleMessage
+          this.registerArbiter(name, {
+            instance: {
+              name,
+              remote: true,
+              handleMessage: (envelope) => new Promise((resolve) => {
+                if (ws.readyState !== 1) { resolve(null); return; }
+                const id = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+                const timer = setTimeout(() => {
+                  pending.delete(id);
+                  resolve(null);
+                }, 30000);
+                pending.set(id, { resolve, timer });
+                ws.send(JSON.stringify({ type: 'message', id, envelope }));
+              })
+            },
+            role: 'remote_agent',
+            classification: 'bridge',
+            lobe: 'network'
+          });
+
+          // Subscribe remote to requested topics
+          for (const topic of (msg.subscriptions || [])) {
+            if (!topicSubs.has(topic)) {
+              topicSubs.set(topic, new Set());
+              wireTopicForward(topic);
+            }
+            topicSubs.get(topic).add(ws);
+          }
+
+          ws.send(JSON.stringify({ type: 'registered', name }));
+          console.log(`[MessageBroker] 🌐 Remote agent "${name}" connected (subscribed to ${(msg.subscriptions || []).length} topics)`);
+        }
+
+        // ── publish ───────────────────────────────────────────────────
+        if (msg.type === 'publish' && agentNames.has(ws)) {
+          this.publish(msg.topic, {
+            from: agentNames.get(ws),
+            payload: msg.payload
+          });
+        }
+
+        // ── message_response ──────────────────────────────────────────
+        if (msg.type === 'message_response' && pending.has(msg.id)) {
+          const { resolve, timer } = pending.get(msg.id);
+          clearTimeout(timer);
+          pending.delete(msg.id);
+          resolve(msg.result);
+        }
+
+        // ── ping ──────────────────────────────────────────────────────
+        if (msg.type === 'ping') {
+          ws.send(JSON.stringify({ type: 'pong' }));
+        }
+      });
+
+      ws.on('close', () => {
+        const name = agentNames.get(ws);
+        if (name) {
+          for (const clients of topicSubs.values()) clients.delete(ws);
+          this.unregisterArbiter(name);
+          agentNames.delete(ws);
+          console.log(`[MessageBroker] 🌐 Remote agent "${name}" disconnected`);
+        }
+      });
+
+      ws.on('error', () => { /* close fires after error */ });
+    });
+
+    this._networkBridge = wss;
+    console.log(`[MessageBroker] 🌐 Network bridge listening on ws://localhost:${port}`);
+    return wss;
+  }
 }
 
-// Singleton instance
-const messageBroker = new MessageBroker();
+// 🔱 Sovereign Singleton: Ensure one master broker across all CJS/ESM boundaries
+if (!global.__SOMA_BROKER__) {
+    global.__SOMA_BROKER__ = new MessageBroker();
+}
+const messageBroker = global.__SOMA_BROKER__;
 module.exports = messageBroker;

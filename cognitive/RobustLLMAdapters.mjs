@@ -8,7 +8,7 @@ import http from 'http';
 const GEMINI_KEY = process.env.GEMINI_API_KEY;
 const DEEPSEEK_KEY = process.env.DEEPSEEK_API_KEY;
 const OLLAMA_ENDPOINT = process.env.OLLAMA_ENDPOINT || 'http://localhost:11434';
-const OLLAMA_MODEL = process.env.OLLAMA_MODEL || 'soma-1t-v1';
+const OLLAMA_MODEL = process.env.OLLAMA_MODEL || 'gemma3:4b';
 
 // ============= OLLAMA ADAPTER (LOCAL FALLBACK) =============
 async function callOllama(prompt, opts = {}) {
@@ -185,14 +185,14 @@ async function callDeepSeek(prompt, opts = {}) {
 // Each adapter tries its primary provider, then falls back to Ollama
 
 export async function gemaAdapter(query, opts = {}) {
-    console.log('[GEMA Adapter] Using SOMA-1T (Local) as primary common sense engine...');
+    console.log('[GEMA Adapter] Using GEMMA-3 (Local) as primary common sense engine...');
     try {
         // Primary: Local Ollama (soma-1t-v1)
         const result = await callOllama(query, opts);
-        console.log('[GEMA Adapter] ✓ SOMA-1T (Ollama) succeeded');
+        console.log('[GEMA Adapter] ✓ GEMMA-3 (Ollama) succeeded');
         return { ...result, meta: { ...result.meta, adapter: 'gema-soma1t-local' } };
     } catch (ollamaError) {
-        console.log(`[GEMA Adapter] ✗ SOMA-1T failed: ${ollamaError.message}. Falling back to Gemini...`);
+        console.log(`[GEMA Adapter] ✗ GEMMA-3 failed: ${ollamaError.message}. Falling back to Gemini...`);
         try {
             // Fallback: Gemini
             const result = await callGemini(query, opts);

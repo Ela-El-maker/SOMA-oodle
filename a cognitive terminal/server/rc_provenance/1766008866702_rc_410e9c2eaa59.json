@@ -1,0 +1,65 @@
+{
+  "traceId": "rc_410e9c2eaa59",
+  "ts": "2025-12-17T22:01:06.702Z",
+  "query": "Good, I didn't really need the analytical part. I just needed you to acknowledge that",
+  "meta": {},
+  "candidates": [
+    {
+      "source": "PROMETHEUS",
+      "text": "Acknowledged. Moving on.\n",
+      "confidence": 0.85,
+      "role": "prometheus"
+    },
+    {
+      "source": "LOGOS",
+      "text": "Acknowledged.\n",
+      "confidence": 0.85,
+      "role": "logos"
+    },
+    {
+      "source": "AURORA",
+      "text": "Understood. I acknowledge that you didn't need the analytical part and only wanted confirmation. I'll keep my responses concise moving forward.\n",
+      "confidence": 0.85,
+      "role": "aurora"
+    }
+  ],
+  "fused": {
+    "text": "Acknowledged.\n",
+    "weights": [
+      {
+        "source": "PROMETHEUS",
+        "norm": 0.32432432432432434,
+        "conf": 0.85
+      },
+      {
+        "source": "LOGOS",
+        "norm": 0.35135135135135126,
+        "conf": 0.85
+      },
+      {
+        "source": "AURORA",
+        "norm": 0.32432432432432434,
+        "conf": 0.85
+      }
+    ],
+    "confidence": 0.8499999999999999,
+    "provenance": [
+      {
+        "source": "PROMETHEUS",
+        "snippet": "Acknowledged. Moving on.\n",
+        "confidence": 0.85
+      },
+      {
+        "source": "LOGOS",
+        "snippet": "Acknowledged.\n",
+        "confidence": 0.85
+      },
+      {
+        "source": "AURORA",
+        "snippet": "Understood. I acknowledge that you didn't need the analytical part and only wanted confirmation. I'll keep my responses concise moving forward.\n",
+        "confidence": 0.85
+      }
+    ]
+  },
+  "iter": 0
+}

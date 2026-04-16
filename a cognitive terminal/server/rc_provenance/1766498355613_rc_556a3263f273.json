@@ -1,0 +1,49 @@
+{
+  "traceId": "rc_556a3263f273",
+  "ts": "2025-12-23T13:59:15.608Z",
+  "query": "No, I get that but I'm not trying to do any type of...",
+  "meta": {},
+  "candidates": [
+    {
+      "source": "PROMETHEUS",
+      "text": "Acknowledge the user's understanding and await further clarification of their intent.\n",
+      "confidence": 0.85,
+      "role": "prometheus"
+    },
+    {
+      "source": "LOGOS",
+      "text": "Okay, I understand you're acknowledging a previous point but want to clarify that your current objective is *not* related to a specific type of action or process. To provide a helpful response, I need to understand what that specific action or process is that you are *not* trying to do.\n\nPlease provide more context. For example, are you *not* trying to:\n\n*   **...do any type of data manipulation?** (e.g., cleaning, transforming, aggregating)\n*   **...do any type of machine learning?** (e.g., training a model, making predictions)\n*   **...do any type of web scraping?** (e.g., extracting data from websites)\n*   **...do any type of system administration?** (e.g., configuring servers, managing users)\n*   **...do any type of UI development?** (e.g., creating buttons, handling events)\n*   **...do any type of database operation?** (e.g., creating tables, querying data)\n*   **...do any type of network programming?** (e.g., sending/receiving data over a socket)\n*   **...do any type of file system operation?** (e.g., reading/writing files)\n*   **...do any type of mathematical calculation?** (e.g., solving equations, performing statistical analysis)\n*   **...do any type of string processing?** (e.g., searching, replacing, formatting)\n\nOnce you clarify what you *aren't* trying to do, I can better understand your actual goal and provide relevant assistance.\n",
+      "confidence": 0.85,
+      "role": "logos"
+    }
+  ],
+  "fused": {
+    "text": "Okay, I understand you're acknowledging a previous point but want to clarify that your current objective is *not* related to a specific type of action or process. To provide a helpful response, I need to understand what that specific action or process is that you are *not* trying to do.\n\nPlease provide more context. For example, are you *not* trying to:\n\n*   **...do any type of data manipulation?** (e.g., cleaning, transforming, aggregating)\n*   **...do any type of machine learning?** (e.g., training a model, making predictions)\n*   **...do any type of web scraping?** (e.g., extracting data from websites)\n*   **...do any type of system administration?** (e.g., configuring servers, managing users)\n*   **...do any type of UI development?** (e.g., creating buttons, handling events)\n*   **...do any type of database operation?** (e.g., creating tables, querying data)\n*   **...do any type of network programming?** (e.g., sending/receiving data over a socket)\n*   **...do any type of file system operation?** (e.g., reading/writing files)\n*   **...do any type of mathematical calculation?** (e.g., solving equations, performing statistical analysis)\n*   **...do any type of string processing?** (e.g., searching, replacing, formatting)\n\nOnce you clarify what you *aren't* trying to do, I can better understand your actual goal and provide relevant assistance.\n",
+    "weights": [
+      {
+        "source": "PROMETHEUS",
+        "norm": 0.48,
+        "conf": 0.85
+      },
+      {
+        "source": "LOGOS",
+        "norm": 0.5199999999999999,
+        "conf": 0.85
+      }
+    ],
+    "confidence": 0.8499999999999999,
+    "provenance": [
+      {
+        "source": "PROMETHEUS",
+        "snippet": "Acknowledge the user's understanding and await further clarification of their intent.\n",
+        "confidence": 0.85
+      },
+      {
+        "source": "LOGOS",
+        "snippet": "Okay, I understand you're acknowledging a previous point but want to clarify that your current objective is *not* related to a specific type of action or process. To provide a helpful response, I need",
+        "confidence": 0.85
+      }
+    ]
+  },
+  "iter": 0
+}

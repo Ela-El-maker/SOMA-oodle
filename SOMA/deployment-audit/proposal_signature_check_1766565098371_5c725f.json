@@ -1,0 +1,15 @@
+{
+  "event": "proposal_signature_check",
+  "ts": 1766565098371,
+  "data": {
+    "packageId": "pkg_1766565098366",
+    "ok": true,
+    "validCount": 1,
+    "details": [
+      {
+        "pub": "-----BEGIN PUBLIC KEY-----\nMIIBIjANBgkqh",
+        "ok": true
+      }
+    ]
+  }
+}

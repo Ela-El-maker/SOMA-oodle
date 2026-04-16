@@ -48,7 +48,7 @@ class BrainAdapter {
     this.model = config.model;
     // Fallback configuration for local SOMA 1T v1 model
     this.fallbackEndpoint = process.env.LLAMA_ENDPOINT || 'http://localhost:11434';
-    this.fallbackModel = 'soma-1t-v1'; // Local fallback model
+    this.fallbackModel = process.env.OLLAMA_MODEL || 'gemma3:4b';
   }
 
   async think(prompt, context = {}) {

@@ -1,0 +1,22 @@
+{
+  "userId": "1300d826e7e5dac3",
+  "sessions": 1,
+  "totalMessages": 5,
+  "avgMsgLength": 19,
+  "questionRatio": 0.2,
+  "vocabRichness": 0.946,
+  "avgWordLength": 4.88,
+  "typicalStyle": "declarative-articulate",
+  "hourHistogram": {
+    "11": 5
+  },
+  "topicFreq": {
+    "goals": 1
+  },
+  "recentTopics": [
+    "goals"
+  ],
+  "lastSeen": 1773329616703,
+  "lastUpdated": 1773330485428,
+  "createdAt": 1773329616704
+}

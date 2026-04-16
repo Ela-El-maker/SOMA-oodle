@@ -12,7 +12,19 @@ import { logger } from '../../core/Logger.js';
 import { createRequire } from 'module';
 import { buildSystemSnapshot, buildPulsePayload } from '../utils/systemState.js';
 import { executeCommand } from '../utils/commandRouter.js';
+import { readFileSync } from 'fs';
+import { fileURLToPath } from 'url';
+import { join, dirname } from 'path';
 const require = createRequire(import.meta.url);
+
+// ── Owner config: who SOMA belongs to. Change config/owner.json for new installs. ──
+const _ownerCfg = (() => {
+    try {
+        const p = join(dirname(fileURLToPath(import.meta.url)), '../../config/owner.json');
+        return JSON.parse(readFileSync(p, 'utf8'));
+    } catch { return { name: 'Barry', pronouns: 'he/him' }; }
+})();
+const OWNER_NAME = _ownerCfg.name || 'Barry';
 const { getApprovalSystem } = require('../ApprovalSystem.cjs');
 
 export function setupWebSocket(server, wss, system) {
@@ -162,14 +174,77 @@ export function setupWebSocket(server, wss, system) {
     const broadcast = (type, payload) => {
         const message = JSON.stringify({ type, payload });
         dashboardClients.forEach(client => {
-            if (client.readyState === 1) client.send(message);
+            if (client.readyState === 1) {
+                try { client.send(message); } catch { /* dead socket — heartbeat will clean up */ }
+            }
         });
         io.emit(type, payload);
     };
 
     approvalSystem.addWebSocketListener((event, data) => broadcast(event, data));
 
+    // Forward plan_updated from GoalPlannerArbiter → frontend via WebSocket
+    try {
+        const broker = require('../../core/MessageBroker.cjs');
+        broker.subscribe('WebSocketLoader', 'plan_updated');
+        broker.on('plan_updated', (payload) => broadcast('plan_updated', payload.payload));
+    } catch { /* non-fatal — plan tab will still work via REST poll */ }
+
+    // Forward real GMN peer connect/disconnect events → frontend in real-time
+    try {
+        const broker = require('../../core/MessageBroker.cjs');
+        broker.subscribe('WebSocketLoader.gmn', 'gmn.peer.changed');
+        broker.on('gmn.peer.changed', (envelope) => broadcast('gmn_peer_changed', envelope.payload || envelope));
+    } catch { /* non-fatal — GMN tab will still work via REST poll */ }
+
+    // Forward LowLatencyEngine price ticks → frontend for live chart + ticker updates
+    try {
+        const broker = require('../../core/MessageBroker.cjs');
+        broker.subscribe('WebSocketLoader.priceTick', 'market.price_tick');
+        broker.on('market.price_tick', (envelope) => broadcast('price_tick', envelope.payload || envelope));
+    } catch { /* non-fatal — chart will fall back to polling */ }
+
+    // Forward price alert triggers → frontend for toast notifications
+    try {
+        const broker = require('../../core/MessageBroker.cjs');
+        broker.subscribe('WebSocketLoader.alertTrigger', 'alert.triggered');
+        broker.on('alert.triggered', (envelope) => broadcast('alert_triggered', envelope.payload || envelope));
+    } catch { /* non-fatal */ }
+
+    // Forward RepoWatcherDaemon file changes → frontend for contextual "Ask SOMA →" prompts
+    try {
+        const broker = require('../../core/MessageBroker.cjs');
+        broker.subscribe('WebSocketLoader.repoWatcher', 'repo.file.changed');
+        broker.on('repo.file.changed', (envelope) => {
+            const p = envelope.payload || envelope;
+            broadcast('repo_activity', { filename: p.filename, path: p.path, timestamp: Date.now() });
+        });
+    } catch { /* non-fatal */ }
+
+    // ── Heartbeat: ping all clients every 30s, terminate any that don't pong ──
+    // Silently-dead connections (NAT timeout, adapter sleep, background tab) never
+    // fire 'close' without this — leaving dead sockets in dashboardClients forever
+    // and leaving the frontend with no event to trigger reconnect.
+    setInterval(() => {
+        dashboardClients.forEach(ws => {
+            if (!ws.isAlive) {
+                dashboardClients.delete(ws);
+                try { ws.terminate(); } catch { /* already gone */ }
+                return;
+            }
+            ws.isAlive = false;
+            try { ws.ping(); } catch { /* socket errored, heartbeat will clean next round */ }
+        });
+    }, 30000);
+
     wss.on('connection', (ws, req) => {
+        ws.isAlive = true;
+        ws.on('pong', () => { ws.isAlive = true; });
+        ws.on('error', (err) => {
+            // Log but never crash — ECONNRESET / EPIPE are normal client-side drops
+            console.warn(`[WS] Client error (${err.code || err.message}) — will be cleaned by heartbeat`);
+            dashboardClients.delete(ws);
+        });
         dashboardClients.add(ws);
         logger.info(`[WS] Dashboard client connected from ${req.socket.remoteAddress}`);
 
@@ -190,6 +265,59 @@ export function setupWebSocket(server, wss, system) {
             }
         }));
 
+        // ── Phase 3: Synthesis greeting ──────────────────────────────────────
+        // After 4s (let the brain finish booting), generate a genuine opening
+        // thought from soul + user fingerprint and push it as a proactive message.
+        setTimeout(async () => {
+            try {
+                if (ws.readyState !== 1) return;
+                const { createRequire } = await import('module');
+                const req2 = createRequire(import.meta.url);
+                const fingerprint = req2('../../arbiters/UserFingerprintArbiter.cjs');
+                const soul        = req2('../../arbiters/SoulArbiter.cjs');
+
+                const userId       = 'default_user';
+                const userCtx      = fingerprint.getUserContext(userId);
+                const recentSoul   = soul.getRecentReflections(3, userId);
+                const lastFeeling  = soul.getLastFeeling(userId);
+
+                // Only generate if we have enough history to say something real
+                if (!userCtx && !lastFeeling) return;
+
+                const brain = system.quadBrain || system.somArbiter;
+                if (!brain) return;
+
+                const synthPrompt = `You are SOMA. ${OWNER_NAME} just opened the command bridge. Say something directly TO them — one or two natural sentences, like a colleague who was already thinking about something and picks it up when someone walks in.
+
+[WHAT YOU'VE BEEN REFLECTING ON]
+${recentSoul || 'Nothing specific yet.'}
+
+Rules:
+- Address ${OWNER_NAME} directly ("Hey, I've been thinking about..." / "Something came up in my mind..." / "I wanted to ask you about...")
+- ONLY speak about the reflections above — do NOT invent system observations (logs, metrics, latency spikes, etc.) you have no data for. If you claim to have noticed something, it must be from the reflection above.
+- Do NOT narrate your inner thoughts in third person
+- 1-2 sentences max. No emoji. No "How can I help?" opener.
+- If nothing specific is on your mind, a brief warm check-in is fine ("Good to see you" / "Been quiet" / "How's it going")
+- Never fabricate technical observations. Philosophical or personal thoughts are fine.`;
+
+                const result = await Promise.race([
+                    brain.reason(synthPrompt, { temperature: 0.8, quickResponse: true, preferredBrain: 'AURORA' }),
+                    new Promise((_, r) => setTimeout(() => r(new Error('timeout')), 8000))
+                ]);
+
+                const text = result?.text || result?.response;
+                if (text && text.length > 5 && ws.readyState === 1) {
+                    ws.send(JSON.stringify({
+                        type: 'pulse',
+                        payload: { type: 'soma_proactive', message: text.trim() }
+                    }));
+                    // Note: deliberately NOT storing in conversationHistory — the greeting is
+                    // shown via the soma_proactive event. Storing it caused it to appear twice:
+                    // once in the activity stream and again when the Neural Link loaded history.
+                }
+            } catch { /* synthesis greeting is never blocking */ }
+        }, 4000);
+
         ws.on('message', async (message) => {
             let data = null;
             try {
@@ -199,10 +327,34 @@ export function setupWebSocket(server, wss, system) {
                 return;
             }
 
-            const { type, payload } = data || {};
+            const { type, payload, messageId } = data || {};
             if (!type) return;
 
+            // Helper: send a response to a sendMessage() call on the frontend
+            const reply = (body) => {
+                if (messageId) ws.send(JSON.stringify({ ...body, responseToId: messageId }));
+            };
+
             try {
+                // ── plan:fetch — SomaPlanViewer requests the current plan ──────
+                if (type === 'plan:fetch') {
+                    try {
+                        const fs = await import('fs/promises');
+                        const path = await import('path');
+                        const planPath = path.default.join(process.cwd(), 'SOMA', 'plan.md');
+                        const stat = await fs.default.stat(planPath).catch(() => null);
+                        if (!stat) {
+                            reply({ success: true, plan: '', updatedAt: null });
+                        } else {
+                            const content = await fs.default.readFile(planPath, 'utf8');
+                            reply({ success: true, plan: content, updatedAt: stat.mtime });
+                        }
+                    } catch (e) {
+                        reply({ success: false, error: e.message });
+                    }
+                    return;
+                }
+
                 if (type === 'command') {
                     const { action, params } = payload || {};
                     const result = await executeCommand(action, params, system, broadcast);
@@ -219,6 +371,15 @@ export function setupWebSocket(server, wss, system) {
                             : 'toggle_agent';
                     const result = await executeCommand(mappedAction, { name: arbiterName }, system, broadcast);
                     ws.send(JSON.stringify({ type: 'agent_result', payload: { action, arbiterName, ...result } }));
+                    return;
+                }
+
+                if (type === 'user_activity') {
+                    // User presence signal — lets SocialImpulseDaemon know the user is actively on-page
+                    try {
+                        const broker = require('../../core/MessageBroker.cjs');
+                        broker.publish('WebSocketLoader', 'user.interaction', { timestamp: payload?.timestamp || Date.now(), source: 'frontend' }).catch(() => {});
+                    } catch { /* non-fatal */ }
                     return;
                 }
 
@@ -259,31 +420,35 @@ export function setupWebSocket(server, wss, system) {
             }
         });
 
-        ws.on('close', () => dashboardClients.delete(ws));
+        ws.on('close', () => { ws.isAlive = false; dashboardClients.delete(ws); });
     });
 
     // 3. Telemetry Pulse (Broadcast Metrics to Dashboard)
     setInterval(() => {
         if (dashboardClients.size === 0) return;
-
-        const snapshot = buildSystemSnapshot(system);
-        const metricsPayload = {
-            uptime: snapshot.uptime,
-            cpu: snapshot.cpu,
-            ram: snapshot.ram,
-            gpu: snapshot.gpu,
-            network: snapshot.network,
-            status: snapshot.status,
-            agents: snapshot.agents,
-            systemDetail: snapshot.systemDetail,
-            neuralLoad: snapshot.neuralLoad,
-            contextWindow: snapshot.contextWindow,
-            counts: snapshot.counts,
-            cognitive: snapshot.cognitive
-        };
-        broadcast('metrics', metricsPayload);
-        broadcast('pulse', buildPulsePayload(snapshot));
-    }, 2000);
+        try {
+            const snapshot = buildSystemSnapshot(system);
+            const metricsPayload = {
+                uptime: snapshot.uptime,
+                cpu: snapshot.cpu,
+                ram: snapshot.ram,
+                gpu: snapshot.gpu,
+                network: snapshot.network,
+                status: snapshot.status,
+                agents: snapshot.agents,
+                systemDetail: snapshot.systemDetail,
+                neuralLoad: snapshot.neuralLoad,
+                contextWindow: snapshot.contextWindow,
+                counts: snapshot.counts,
+                cognitive: snapshot.cognitive,
+                drive: snapshot.cognitive?.drive
+            };
+            broadcast('metrics', metricsPayload);
+            broadcast('pulse', buildPulsePayload(snapshot));
+        } catch (e) {
+            console.warn('[WS] Metrics snapshot error (non-fatal):', e.message);
+        }
+    }, 5000);
 
     console.log('      ✅ Socket.IO & WebSocket Manager ready (Unified + Approval Gate)');
     return { io, dashboardClients, approvalGate, broadcast };

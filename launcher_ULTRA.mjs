@@ -6,14 +6,18 @@
 
 import { fileURLToPath } from 'url';
 import { dirname, join } from 'path';
+import path from 'path';
 import http from 'http';
 import { config as dotenvConfig } from 'dotenv';
 import fs from 'fs';
 import express from 'express';
 import { WebSocketServer } from 'ws';
 
-// Load environment variables FIRST
+// Load environment variables FIRST — .env first, then config/api-keys.env overrides
+// (api-keys.env has the real DeepSeek key; .env may have placeholder values)
 dotenvConfig();
+const apiKeysPath = join(dirname(fileURLToPath(import.meta.url)), 'config', 'api-keys.env');
+if (fs.existsSync(apiKeysPath)) dotenvConfig({ path: apiKeysPath, override: true });
 
 import { CONFIG } from './core/SomaConfig.js';
 import { SomaBootstrapV2 as SomaBootstrap } from './core/SomaBootstrapV2.js';
@@ -106,6 +110,9 @@ function killPortOwner(port) {
         if (!pidStr) return false;
 
         for (const pid of pidStr.split(',').map(s => s.trim()).filter(Boolean)) {
+            // Skip PID 0 — Windows system process, cannot and should not be killed
+            if (pid === '0') continue;
+
             let cmdline = '';
             try {
                 cmdline = execSync(`wmic process where ProcessId=${pid} get CommandLine /value`, { encoding: 'utf8', timeout: 2000 });
@@ -145,12 +152,22 @@ async function main() {
     try {
         cLog('ULTRA', '🟢 Initializing SOMA System...');
 
-        // 1. Kill Zombies
+        // ─── Database Health Check ───────────────────────────
+        const dbPath = path.join(__dirname, 'soma-memory.db');
+        if (fs.existsSync(dbPath)) {
+            const stats = fs.statSync(dbPath);
+            const sizeGB = stats.size / (1024 * 1024 * 1024);
+            if (sizeGB > 2.0) {
+                cLog('DATABASE', `⚠️  CRITICAL BLOAT: Database is ${sizeGB.toFixed(2)} GB!`, colors.red);
+                cLog('DATABASE', '⚠️  Reasoning timeouts are LIKELY. Run "node purge_memories.mjs" immediately.', colors.yellow);
+            } else {
+                cLog('DATABASE', `✅ Health: ${sizeGB.toFixed(2)} GB`, colors.green);
+            }
+        }
+
+        // 1. Kill Zombies on main port only (cluster port 7777 has Windows system PIDs that cause loop)
         const PORT = 3001; // FIXED PORT
-        const CLUSTER_PORT = parseInt(process.env.SOMA_CLUSTER_PORT || '7777');
-        
         killPortOwner(PORT);
-        killPortOwner(CLUSTER_PORT);
 
         // 2. Pre-Flight
         await SystemValidator.runPreFlightChecks();
@@ -184,9 +201,36 @@ async function main() {
             }
         });
 
-        // Minimal health endpoint early so port binds immediately
+        // Health endpoint — shallow at boot, deep once system is ready
         app.get('/health', (req, res) => {
-            res.json({ ok: true, status: global.__SOMA_SERVER_READY ? 'healthy' : 'initializing', uptime: process.uptime() });
+            const ready = global.__SOMA_SERVER_READY;
+            if (!ready) {
+                return res.json({ ok: true, status: 'initializing', uptime: process.uptime() });
+            }
+            try {
+                // Deep check — wrapped so a non-serializable brain state never hangs the endpoint
+                const sys = global.__SOMA_SYSTEM;
+                const rawStatus = sys?.quadBrain?.getStatus?.() ?? null;
+                const brainOk = rawStatus
+                    ? (rawStatus.providers?.some(p => p.available) ?? true)
+                    : true;
+                res.json({
+                    ok: brainOk,
+                    status: brainOk ? 'healthy' : 'degraded',
+                    uptime: process.uptime(),
+                    brain: rawStatus ? {
+                        name: rawStatus.name ?? null,
+                        providers: (rawStatus.providers || []).map(p => ({ name: p.name, available: p.available }))
+                    } : null,
+                    memory: {
+                        heapUsedMB: Math.round(process.memoryUsage().heapUsed / 1024 / 1024),
+                        heapTotalMB: Math.round(process.memoryUsage().heapTotal / 1024 / 1024)
+                    }
+                });
+            } catch (e) {
+                // Fallback: always send something so the Orb connect loop doesn't hang
+                res.json({ ok: true, status: 'healthy', uptime: process.uptime() });
+            }
         });
 
         // 4. Start Server EARLY (bind port before heavy bootstrap)
@@ -206,7 +250,20 @@ async function main() {
 
         // Mark server as ready so unhandled rejections don't crash it
         global.__SOMA_SERVER_READY = true;
+        global.__SOMA_SYSTEM = bootstrap.system; // expose for /health deep check
         cLog('ULTRA', 'SOMA Fully Operational');
+
+        // Start MessageBroker network bridge — lets external agents (MAX, etc.)
+        // register as virtual arbiters and participate in the signal flow
+        try {
+            const { createRequire } = await import('module');
+            const req = createRequire(import.meta.url);
+            const broker = req('./core/MessageBroker.cjs');
+            const bridgePort = parseInt(process.env.SOMA_BRIDGE_PORT || '4201');
+            broker.startNetworkBridge(bridgePort);
+        } catch (e) {
+            cLog('WARN', `Network bridge skipped: ${e.message}`);
+        }
 
     } catch (error) {
         logSync(`[FATAL] main() error: ${error.message}\n${error.stack}`);

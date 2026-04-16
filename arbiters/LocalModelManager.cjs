@@ -8,7 +8,7 @@
  * - Ollama integration (create, list, delete models)
  * - Performance tracking (compare models)
  *
- * Goal: Wean SOMA off Gemini API onto local soma-1t model
+ * Goal: Wean SOMA off Gemini API onto local GEMMA-3 model
  */
 
 const EventEmitter = require('events');
@@ -28,7 +28,7 @@ class LocalModelManager extends EventEmitter {
 
     // Model configuration
     this.baseModel = config.baseModel || 'gemma3:4b'; // Base model to fine-tune from
-    this.somaModelPrefix = config.somaModelPrefix || 'soma-1t'; // e.g., soma-1t-v1, soma-1t-v2
+    this.somaModelPrefix = config.somaModelPrefix || 'GEMMA-3'; // e.g., GEMMA-3-v1, GEMMA-3-v2
     this.currentModel = null;
     this.modelVersion = 0; // Increments with each fine-tune
 
@@ -180,7 +180,7 @@ class LocalModelManager extends EventEmitter {
 
   /**
    * Extract version number from model name
-   * e.g., "soma-1t-v3" → 3
+   * e.g., "GEMMA-3-v3" → 3
    */
   _extractVersion(modelName) {
     const match = modelName.match(/-v(\d+)$/);

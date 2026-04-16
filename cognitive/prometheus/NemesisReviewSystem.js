@@ -43,6 +43,9 @@ export class NemesisReviewSystem {
       revisionsForced: 0
     };
 
+    // CNS pub/sub — broadcast evaluation outcomes for downstream adaptation
+    this.messageBroker = config.messageBroker || null;
+
     // SQLite persistence — scores survive restarts, enable long-term trend analysis
     this.db = null;
     this._initDb();
@@ -87,6 +90,7 @@ export class NemesisReviewSystem {
         breakdown: numericEval.breakdown
       };
       this.persistScore(brainName, query, result);
+      this.messageBroker?.publish('nemesis:evaluation_complete', { brainName, score, needsRevision: false, fate: numericEval.fate }).catch(() => {});
       return result;
     }
 
@@ -104,6 +108,7 @@ export class NemesisReviewSystem {
         breakdown: numericEval.breakdown
       };
       this.persistScore(brainName, query, result);
+      this.messageBroker?.publish('nemesis:evaluation_complete', { brainName, score, needsRevision: true, fate: numericEval.fate }).catch(() => {});
       return result;
     }
 
@@ -135,9 +140,10 @@ export class NemesisReviewSystem {
       elapsedMs: Date.now() - startTime
     };
     this.persistScore(brainName, query, result);
+    this.messageBroker?.publish('nemesis:evaluation_complete', { brainName, score, needsRevision: result.needsRevision, fate: numericEval.fate }).catch(() => {});
     return result;
   }
-  
+
   /**
    * Calculate triography metrics for a response
    */

@@ -24,7 +24,7 @@ export const useEmotionalState = (isConnected) => {
 
     const fetchEmotionalState = async () => {
       try {
-        const response = await fetch('/api/emotions');
+        const response = await fetch('/api/soma/orb-emotions');
 
         if (!response.ok) {
           throw new Error(`HTTP ${response.status}`);

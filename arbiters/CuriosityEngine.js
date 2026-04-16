@@ -43,6 +43,8 @@ export class CuriosityEngine extends EventEmitter {
     this.messageBroker = opts.messageBroker;
     this.simulationArbiter = opts.simulationArbiter; // 🎮 Physics Engine Link
     this.worldModel = opts.worldModel; // 🌍 World Model for Epistemic Curiosity
+    this.brain = opts.brain || null;             // QuadBrain (DeepSeek) for enriching queries
+    this.webResearcher = opts.webResearcher || null; // CuriosityWebAccessConnector — Puppeteer + free scrapers + Brave (last resort)
 
     // Curiosity state
     this.curiosityQueue = []; // Questions/explorations to pursue
@@ -122,6 +124,7 @@ export class CuriosityEngine extends EventEmitter {
     if (this.messageBroker) {
       this.messageBroker.subscribe('curiosity:stimulate', this._handleCuriosityStimulation.bind(this));
       this.messageBroker.subscribe('learning:completed', this._handleLearningCompletion.bind(this));
+      this.messageBroker.subscribe('system.focus.shifted', this._handleFocusShift.bind(this));
       console.log(`[${this.name}]    Subscribed to MessageBroker events`);
     }
 
@@ -287,9 +290,11 @@ export class CuriosityEngine extends EventEmitter {
         }
       }
 
-      // Check known limitations
+      // Check known limitations — skip permanently unresolvable ones (explored > 50 times)
       for (const [limitation, severity] of this.selfModel.limitations) {
         if (severity > 0.5) {
+          const timesExplored = this.explorationHistory.get(limitation) || 0;
+          if (timesExplored > 50) continue; // Physical/hardware limits can't be resolved by research
           gaps.push({
             type: 'limitation',
             gap: limitation,
@@ -525,22 +530,62 @@ export class CuriosityEngine extends EventEmitter {
   }
 
   /**
+   * Use the brain to turn a curiosity question into a sharp, searchable query.
+   * Falls back to the raw question if brain is unavailable or too slow.
+   */
+  async _enrichQuestionForSearch(question, item) {
+    if (!this.brain) return question;
+    try {
+      const prompt = `You are SOMA's search query optimizer. Convert this internal curiosity question into a sharp, specific web search query (max 12 words, no filler).
+
+Curiosity: "${question}"
+Type: ${item.type || 'exploration'}
+
+Return ONLY the search query, nothing else.`;
+
+      const result = await Promise.race([
+        this.brain.reason(prompt, { quickResponse: true, preferredBrain: 'LOGOS', systemOverride: 'search_optimizer' }),
+        new Promise((_, reject) => setTimeout(() => reject(new Error('timeout')), 5000))
+      ]);
+
+      const enriched = result?.text?.trim().replace(/^["']|["']$/g, '');
+      if (enriched && enriched.length > 5 && enriched.length < 150) {
+        console.log(`[${this.name}] ✨ Enriched query: "${enriched}"`);
+        return enriched;
+      }
+    } catch { /* fall through to raw question */ }
+    return question;
+  }
+
+  /**
+   * Humanize a snake_case/internal identifier into readable text
+   */
+  _humanize(str) {
+    return String(str)
+      .replace(/_/g, ' ')
+      .replace(/([a-z])([A-Z])/g, '$1 $2')
+      .toLowerCase()
+      .trim();
+  }
+
+  /**
    * Convert a knowledge gap to a question
    */
   _gapToQuestion(gap) {
+    const label = this._humanize(gap.gap);
     switch (gap.type) {
       case 'capability_gap':
-        return `What do I need to learn to improve my ${gap.gap} capability?`;
+        return `Best techniques for improving ${label} in AI systems`;
       case 'limitation':
-        return `How can I overcome my limitation in ${gap.gap}?`;
+        return `How to implement ${label} effectively in modern software`;
       case 'fragment_expertise_gap':
-        return `How can the ${gap.gap} fragment gain more expertise?`;
+        return `Advanced concepts and practical applications of ${label}`;
       case 'graph_sparsity':
-        return `What connections am I missing between different knowledge domains?`;
+        return `Connections between ${label} and related knowledge domains`;
       case 'unexplored_domain':
-        return `What should I know about ${gap.gap}?`;
+        return `Overview and key concepts of ${label}`;
       default:
-        return `What don't I know about ${gap.gap}?`;
+        return `Latest developments and best practices in ${label}`;
     }
   }
 
@@ -611,35 +656,54 @@ export class CuriosityEngine extends EventEmitter {
     // 🎓 CURIOSITY-DRIVEN LEARNING: Trigger autonomous learning/training
     await this._triggerAutonomousLearning(item);
 
-    // REAL EXPLORATION: Dispatch to EdgeWorkerOrchestrator
-    if (this.messageBroker && item.type !== 'physical_experiment') {
-      this.messageBroker.publish('curiosity:exploring', {
-        question: item.question,
-        type: item.type,
-        priority: item.finalPriority,
-        timestamp: Date.now()
-      });
+    // REAL EXPLORATION: Free scrapers → Puppeteer dendrite → Brave only as last resort
+    if (item.type !== 'physical_experiment') {
+      // Enrich the raw question into a focused web search query using the brain
+      const searchQuery = await this._enrichQuestionForSearch(item.question, item);
 
-      // Dispatch real research task
-      await this.messageBroker.sendMessage({
-        from: this.name,
-        to: 'EdgeWorkerOrchestrator',
-        type: 'deploy_learning_task',
-        payload: {
-          type: 'web_crawl',
-          priority: 'high',
-          data: {
-            crawlTarget: {
-              name: 'curiosity_research',
-              type: 'general',
-              queries: [item.question],
-              maxPages: 3
-            },
-            source: 'curiosity_engine'
+      // Publish so other systems (dashboards, logs) can observe
+      if (this.messageBroker) {
+        this.messageBroker.publish('curiosity:exploring', {
+          question: searchQuery,
+          type: item.type,
+          priority: item.finalPriority,
+          timestamp: Date.now()
+        });
+      }
+
+      // Tier 1: CuriosityWebAccessConnector — Puppeteer scraping first, Brave only if scraping fails
+      // NOTE: Brave is 500 searches/month — WebAccessConnector already handles this conservatively
+      if (this.webResearcher) {
+        console.log(`[${this.name}] 🔭 Research via WebAccessConnector: "${searchQuery}"`);
+        this.webResearcher.handleCuriosity({
+          question: searchQuery,
+          type: item.type,
+          priority: item.finalPriority
+        }).catch(e => console.warn(`[${this.name}] WebResearcher error: ${e.message}`));
+
+      // Tier 2: EdgeWorkerOrchestrator — free HTML scraping (StackOverflow, GitHub, MDN, Dev.to)
+      } else if (this.messageBroker) {
+        await this.messageBroker.sendMessage({
+          from: this.name,
+          to: 'EdgeWorkerOrchestrator',
+          type: 'deploy_learning_task',
+          payload: {
+            type: 'web_crawl',
+            priority: 'high',
+            data: {
+              crawlTarget: {
+                name: 'curiosity_research',
+                type: 'general',
+                queries: [searchQuery],
+                maxPages: 3
+              },
+              source: 'curiosity_engine',
+              originalQuestion: item.question
+            }
           }
-        }
-      });
-      console.log(`[${this.name}] 🚀 Dispatched research task to EdgeWorkers: "${item.question}"`);
+        });
+        console.log(`[${this.name}] 🚀 Dispatched (EdgeWorker fallback): "${searchQuery}"`);
+      }
     }
 
     // Return exploration state
@@ -651,7 +715,6 @@ export class CuriosityEngine extends EventEmitter {
       item
     };
 
-    this.stats.explorationsStarted++;
     this._dirty = true;
     // Completion is tracked async via learning:completed event
 
@@ -950,7 +1013,27 @@ export class CuriosityEngine extends EventEmitter {
     this.stimulateCuriosity(data);
   }
 
+  _handleFocusShift(signal) {
+    const { topic } = signal.payload || {};
+    if (!topic || topic === 'general') return;
+    // Boost queue items that match the new focus topic so they surface sooner
+    let boosted = 0;
+    for (const item of this.curiosityQueue) {
+      const text = `${item.question || ''} ${item.gap || ''}`.toLowerCase();
+      if (text.includes(topic.toLowerCase())) {
+        item.finalPriority = (item.finalPriority || item.priority || 0) + 0.3;
+        boosted++;
+      }
+    }
+    if (boosted > 0) {
+      this.curiosityQueue.sort((a, b) => (b.finalPriority || 0) - (a.finalPriority || 0));
+      console.log(`[${this.name}] 🎯 Focus shifted to "${topic}" — boosted ${boosted} queue items`);
+    }
+  }
+
   async _handleLearningCompletion(data) {
+    this.stats.explorationsCompleted++;
+    this._dirty = true;
     this._onLearningSuccess(data);
   }
 

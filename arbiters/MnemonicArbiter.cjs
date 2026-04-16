@@ -107,6 +107,8 @@ class MnemonicArbiter extends BaseArbiter {
       this.registerMessageHandler('recall', this._handleRecall.bind(this));
       this.registerMessageHandler('forget', this._handleForget.bind(this));
       this.registerMessageHandler('stats', this._handleStats.bind(this));
+      this.registerMessageHandler('recall_recent', this._handleRecallRecent.bind(this));
+      this.registerMessageHandler('deep_cleanup', this._handleDeepCleanup.bind(this));
 
       this.log('info', 'MnemonicArbiter ready - 3-tier hybrid memory online');
     } catch (error) {
@@ -301,6 +303,17 @@ class MnemonicArbiter extends BaseArbiter {
    * Remember - Store new memory across all tiers
    */
   async remember(content, metadata = {}) {
+    // SAFETY GUARD: Prevent massive blobs from bloating the DB and hanging reasoning
+    if (content && content.length > 100000) {
+      this.log('warn', `⚠️ Skipping memory storage: Content too large (${Math.round(content.length/1024)}KB). Probable state dump.`);
+      return { success: false, error: 'Content exceeds memory size limit' };
+    }
+
+    if (content && (content.includes('"experiences":') || content.includes('"state":'))) {
+      this.log('warn', '⚠️ Skipping memory storage: State dump detected.');
+      return { success: false, error: 'State dumps should not be stored in semantic memory' };
+    }
+
     const id = this._generateId(content);
     const now = Date.now();
 
@@ -509,6 +522,47 @@ class MnemonicArbiter extends BaseArbiter {
   }
 
   /**
+   * RecallRecent - Retrieve memories from a specified duration
+   */
+  async recallRecent(durationMs = 86400000, limit = 10) { // Default to 24 hours (86,400,000 ms) and 10 memories
+    const startTime = Date.now();
+    const cutoffTime = Date.now() - durationMs;
+
+    // Directly query the cold tier (SQLite) for time-based retrieval
+    return await new Promise((resolve) => {
+      setImmediate(() => {
+        const stmt = this.db.prepare(`
+          SELECT id, content, metadata, created_at, accessed_at, importance
+          FROM memories
+          WHERE created_at > ? OR accessed_at > ?
+          ORDER BY accessed_at DESC, created_at DESC
+          LIMIT ?
+        `);
+
+        const results = stmt.all(cutoffTime, cutoffTime, limit);
+
+        const mapped = results.map(r => ({
+          id: r.id,
+          content: r.content,
+          metadata: JSON.parse(r.metadata || '{}'),
+          createdAt: r.created_at,
+          accessedAt: r.accessed_at,
+          importance: r.importance,
+          tier: 'cold'
+        }));
+
+        this.log('info', `Recalled ${mapped.length} recent memories from cold tier (duration: ${durationMs / 3600000}h)`);
+
+        resolve({
+          results: mapped,
+          tier: 'cold',
+          latency: Date.now() - startTime
+        });
+      });
+    });
+  }
+
+  /**
    * Forget - Remove from all tiers
    */
   async forget(id) {
@@ -537,6 +591,50 @@ class MnemonicArbiter extends BaseArbiter {
     this.log('info', `Memory forgotten: ${id}`);
 
     return { id, forgotten: true };
+  }
+
+  /**
+   * Deep Cleanup - Automated Digital Constipation Fix
+   */
+  async deepCleanup() {
+    this.log('info', '🧹 Starting Deep Memory Cleanup (Digital Constipation Fix)...');
+    
+    if (!this.db) return { success: false, error: 'Cold storage not available' };
+
+    try {
+      // 1. Purge Garbage
+      const result = await new Promise((resolve) => {
+        setImmediate(() => {
+          const res = this.db.prepare(`
+            DELETE FROM memories 
+            WHERE length(content) > 100000 
+               OR content LIKE '%"experiences":%'
+               OR content LIKE '%[MessageBroker] Arbiter not found%'
+          `).run();
+          resolve(res);
+        });
+      });
+
+      this.log('info', `✅ Purged ${result.changes} garbage entries from DB.`);
+
+      // 2. Index Optimization
+      if (result.changes > 50) {
+        this.log('info', '⏳ Reclaiming disk space (VACUUM)...');
+        await new Promise(resolve => setImmediate(() => { this.db.exec("VACUUM;"); resolve(); }));
+        this.log('info', '✨ Vacuum complete.');
+      }
+
+      this.db.exec("ANALYZE;");
+
+      return {
+        success: true,
+        purged: result.changes
+      };
+
+    } catch (error) {
+      this.log('error', `Deep cleanup failed: ${error.message}`);
+      return { success: false, error: error.message };
+    }
   }
 
   // ===========================
@@ -685,6 +783,31 @@ class MnemonicArbiter extends BaseArbiter {
         this.log('info', `Cleaned ${deleted.changes} old memories`);
       }
 
+      // Cap total memories at 5,000 — prune least-accessed entries older than 7 days
+      // when we exceed the ceiling. Preserves high-importance and recently-used memories.
+      const MEMORY_CAP = 5000;
+      const totalCount = await new Promise(resolve => setImmediate(() => {
+        resolve(this.db.prepare('SELECT COUNT(*) as c FROM memories').get().c);
+      }));
+      if (totalCount > MEMORY_CAP) {
+        const excess = totalCount - MEMORY_CAP;
+        const weekAgo = Date.now() - (7 * 24 * 60 * 60 * 1000);
+        const pruned = await new Promise(resolve => setImmediate(() => {
+          const res = this.db.prepare(`
+            DELETE FROM memories WHERE id IN (
+              SELECT id FROM memories
+              WHERE created_at < ? AND importance < 5
+              ORDER BY access_count ASC, accessed_at ASC
+              LIMIT ?
+            )
+          `).run(weekAgo, excess);
+          resolve(res);
+        }));
+        if (pruned.changes > 0) {
+          this.log('info', `Memory cap: pruned ${pruned.changes} low-access entries (total was ${totalCount})`);
+        }
+      }
+
       // Save vectors periodically
       await this._saveVectorStore();
 
@@ -753,13 +876,27 @@ class MnemonicArbiter extends BaseArbiter {
     await this.sendMessage(envelope.from, 'stats_response', stats);
   }
 
+  async _handleDeepCleanup(envelope) {
+    const result = await this.deepCleanup();
+    await this.sendMessage(envelope.from, 'deep_cleanup_response', result);
+  }
+
+  async _handleRecallRecent(envelope) {
+    const result = await this.recallRecent(
+      envelope.payload.durationMs,
+      envelope.payload.limit
+    );
+    await this.sendMessage(envelope.from, 'recall_recent_response', result);
+  }
+
   getAvailableCommands() {
     return [
       ...super.getAvailableCommands(),
       'remember',
       'recall',
       'forget',
-      'stats'
+      'stats',
+      'recall_recent'
     ];
   }
 }

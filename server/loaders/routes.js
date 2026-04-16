@@ -1,9 +1,11 @@
-import os from 'os';
+﻿import os from 'os';
 import path from 'path';
 import fs from 'fs/promises';
 import { exec } from 'child_process';
 import { createRequire } from 'module';
 const require = createRequire(import.meta.url);
+const multer = require('multer');
+const _reflectionsUpload = multer({ dest: os.tmpdir() });
 import { ContentExtractor } from '../utils/ContentExtractor.js';
 import financeRoutes from '../../server/finance/financeRoutes.js';
 import marketDataRoutes from '../../server/finance/marketDataRoutes.js';
@@ -16,22 +18,24 @@ import exchangeRoutes from '../../server/finance/exchangeRoutes.js';
 import binanceRoutes from '../../server/finance/binanceRoutes.js';
 import hyperliquidRoutes from '../../server/finance/hyperliquidRoutes.js';
 import backtestRoutes from '../../server/finance/backtestRoutes.js';
+import alertRoutes from '../../server/finance/alertRoutes.js';
 import createGuardianRoutes from '../../server/finance/guardianRoutes.js';
 import autonomousRoutes from '../../server/finance/autonomousRoutes.js';
 import gridBotRoutes from '../../server/finance/gridBotRoutes.js';
-import conceiveRoutes from '../../server/routes/conceiveRoutes.js';
 import kevinRoutes from '../../server/routes/kevinRoutes.js';
 import pulseRoutes from '../../server/routes/pulseRoutes.js';
 import arbiteriumRoutes from '../../server/routes/arbiteriumRoutes.js';
 import knowledgeRoutes from '../../server/routes/knowledgeRoutes.js';
 import researchRoutes from '../../server/routes/researchRoutes.js';
 import somaRoutes from '../../server/routes/somaRoutes.js';
+import notificationRoutes from '../../server/routes/notificationRoutes.js';
+import perceptionRoutes from '../../server/routes/perceptionRoutes.js';
 import { toggleAutopilot, getAutopilotStatus } from './extended.js';
 import { buildSystemSnapshot } from '../utils/systemState.js';
 import { executeCommand } from '../utils/commandRouter.js';
 
-export function loadRoutes(app, system) {
-    console.log('\n[Loader] 🛣️  Mounting Production API Routes...');
+export async function loadRoutes(app, system) {
+    console.log('\n[Loader] ðŸ›£ï¸  Mounting Production API Routes...');
 
     const allowedRoots = (process.env.SOMA_ALLOWED_PATHS || '')
         .split(';')
@@ -97,13 +101,311 @@ export function loadRoutes(app, system) {
     };
 
     const checkReady = (req, res, next) => {
-        if (system.ready || req.path === '/health' || req.path === '/api/status') return next();
+        const publicPaths = [
+            '/health', 
+            '/api/status', 
+            '/reason', 
+            '/orb-emotions',
+            '/api/soma/reason',
+            '/api/soma/orb-emotions',
+            '/api/balancer/stats',
+            '/api/daemon/status',
+            '/api/memory/status',
+            '/api/goals/active',
+            '/api/beliefs',
+            '/api/velocity/status'
+        ];
+        if (system.ready || publicPaths.includes(req.path)) return next();
         return res.status(503).json({ error: 'SOMA is still waking up...', status: 'initializing' });
     };
 
     // 1. Core Endpoints
     app.get('/health', (req, res) => {
         res.json({ ok: true, status: system.ready ? 'healthy' : 'initializing', uptime: process.uptime() });
+    });
+
+    // â”€â”€ SYSTEM SELF-AWARENESS ENDPOINTS (Used by CommandBridgeInterface) â”€â”€
+
+    app.get('/api/balancer/stats', (req, res) => {
+        const balancer = system.loadBalancer || system.shadowClones;
+        res.json({
+            success: true,
+            stats: balancer?.getStats ? balancer.getStats() : { active: 0, total: 0, clones: [] }
+        });
+    });
+
+    app.get('/api/daemon/status', (req, res) => {
+        const manager = system.daemonManager;
+        res.json({
+            success: true,
+            daemon: {
+                status: manager ? 'active' : 'inactive',
+                watchdog: manager?._watchdogHandle ? 'running' : 'idle',
+                daemons: manager ? manager.health() : []
+            }
+        });
+    });
+
+    app.get('/api/perception/health', (req, res) => {
+        const manager = system.daemonManager;
+        const broker = system.messageBroker;
+        const attention = broker?.attentionEngine;
+        res.json({
+            success: true,
+            daemons: manager ? manager.health() : [],
+            attention: attention ? {
+                focus: attention.focusTopic || 'general',
+                expires: attention.focusExpiry || null
+            } : null,
+            recentSignals: broker?._recentPublishes?.slice(-10).reverse() || []
+        });
+    });
+
+    app.get('/api/memory/status', (req, res) => {
+        const mnemonic = system.mnemonic || system.mnemonicArbiter;
+        const stats = mnemonic?.getMemoryStats ? mnemonic.getMemoryStats() : null;
+        res.json({
+            success: true,
+            ...normalizeMemoryStats(stats)
+        });
+    });
+
+    app.get('/api/goals/active', (req, res) => {
+        const gp = system.goalPlanner || system.goalPlannerArbiter;
+        const gr = gp?.getActiveGoals ? gp.getActiveGoals({}) : { goals: [] };
+        res.json({
+            success: true,
+            goals: gr.goals || []
+        });
+    });
+
+    app.get('/api/beliefs', (req, res) => {
+        const bs = system.beliefSystem || system.beliefSystemArbiter;
+        const result = bs?.queryBeliefs ? bs.queryBeliefs() : { beliefs: [] };
+        res.json({ success: true, beliefs: result.beliefs || [] });
+    });
+
+    app.get('/api/velocity/status', (req, res) => {
+        const vt = system.velocityTracker || system.learningVelocityTracker;
+        res.json({
+            success: true,
+            metrics: vt?.getMetrics ? vt.getMetrics() : { velocity: 1.0, progress: 0 }
+        });
+    });
+
+    // â”€â”€ ORB & EMOTIONAL ENGINE (Top-level mounting for stability) â”€â”€
+    
+    app.get('/api/soma/orb-emotions', (req, res) => {
+        try {
+            const brain = system.quadBrain;
+            const emotional = brain?.emotionalEngine || brain?.emotions || system.limbicArbiter || system.emotionalEngine;
+            
+            if (!emotional) return res.json({ success: false, error: 'No emotional data' });
+
+            const mood = typeof emotional.getCurrentMood === 'function' ? emotional.getCurrentMood() : { mood: 'balanced' };
+            const peptides = emotional.state || emotional.chemistry || {};
+
+            res.json({
+                success: true,
+                state: {
+                    dominantEmotion: mood.mood || emotional.getSystemWeather?.() || 'stable',
+                    peptides: peptides,
+                    valence: mood.intensity || 0.5,
+                    arousal: mood.energy === 'high' ? 0.8 : 0.5
+                }
+            });
+        } catch (error) {
+            res.json({ success: false, error: error.message });
+        }
+    });
+
+    app.post('/api/soma/reason', async (req, res) => {
+        try {
+            const { query, conversationId, context: reqContext } = req.body;
+            if (!query) return res.status(400).json({ error: 'query is required' });
+
+            const brain = system.quadBrain || system.somArbiter || system.kevinArbiter;
+            if (!brain || typeof brain.reason !== 'function') {
+                return res.status(503).json({ success: false, error: 'Reasoning engine offline' });
+            }
+
+            // 1. Memory Recall
+            let memoryContext = '';
+            if (system.mnemonicArbiter && typeof system.mnemonicArbiter.recall === 'function') {
+                try {
+                    const mem = await Promise.race([
+                        system.mnemonicArbiter.recall(query, 5),
+                        new Promise((_, r) => setTimeout(() => r(new Error('timeout')), 3000))
+                    ]);
+                    const hits = (mem?.results || (Array.isArray(mem) ? mem : []))
+                        .filter(m => (m.similarity || 1) > 0.35)
+                        .slice(0, 3);
+                    if (hits.length > 0) {
+                        memoryContext = `\n[SOMA MEMORY]\n${hits.map(m => `â€¢ ${(m.content || m).toString().substring(0, 150)}`).join('\n')}\n[/SOMA MEMORY]\n`;
+                    }
+                } catch (e) {}
+            }
+
+            // 2. Persona & Character
+            const activePersona = system.identityArbiter?.getActivePersona?.();
+            const personaContext = activePersona
+                ? `\n[ACTIVE PERSONA: ${activePersona.name}]\n${activePersona.description || activePersona.summary || ''}\n`
+                : '';
+
+            // 3. Absolute Awareness - Self-Inspection
+            let awarenessContext = '';
+            if (system.commandBridge) {
+                try {
+                    const awareness = await system.commandBridge.getSelfAwareness();
+                    awarenessContext = `\n[ABSOLUTE AWARENESS - SYSTEM SNAPSHOT]\n` +
+                        `- Metrics: CPU ${awareness.metrics?.cpu}%, RAM ${awareness.metrics?.memory?.usage}%, Uptime ${Math.round(awareness.metrics?.uptime/3600)}h\n` +
+                        `- Arbiters: ${awareness.arbiters?.active}/${awareness.arbiters?.total} active\n` +
+                        `- Goals: ${awareness.goals?.total} active goals\n` +
+                        `- Beliefs: ${awareness.beliefs?.total} core beliefs\n` +
+                        `- Memory: ${awareness.memory?.cold?.size} memories stored\n` +
+                        `[/ABSOLUTE AWARENESS]\n`;
+                } catch (e) {}
+            }
+
+            // 4. Reasoning
+            const finalPrompt = `${personaContext}${awarenessContext}${memoryContext}\n${query}`;
+            console.log(`[ReasonRoute] ðŸ§  Calling Brain (${brain.name}) with prompt length: ${finalPrompt.length}`);
+            
+            const result = await brain.reason(finalPrompt, {
+                sessionId: conversationId || 'orb-link',
+                temperature: 0.4,
+                quickResponse: true, // Voice queries need fast conversational responses
+                ...(reqContext || {})
+            });
+
+            console.log(`[ReasonRoute] ðŸ“¥ Brain result:`, JSON.stringify(result).substring(0, 200));
+
+            // 5. Response Extraction
+            const responseTextRaw = result?.text || result?.response || result?.output || (typeof result === 'string' ? result : '');
+            let responseText = responseTextRaw || (result?.success ? "I've processed your request but have no specific text to return." : "My reasoning engine failed to produce a response.");
+
+            // Strip leaked internal reasoning chains (QUERY:/ANALYSIS:/LOGIC_TRAIL: blocks)
+            // These appear when the model ignores the voice instruction and outputs chain-of-thought
+            if (/^(QUERY|ANALYSIS|ASSESSMENT|CONCLUSION|LOGIC_TRAIL):/im.test(responseText)) {
+                // Try to extract just the RESPONSE: block if present
+                const responseBlock = responseText.match(/RESPONSE:\s*["']?([\s\S]+?)(?:\n[A-Z_]+:|$)/i);
+                if (responseBlock) {
+                    responseText = responseBlock[1].trim().replace(/^["']|["']$/g, '');
+                } else {
+                    // Strip all header blocks, keep everything after the last header
+                    responseText = responseText
+                        .replace(/^(QUERY|ANALYSIS|ASSESSMENT OF QUERY|ASSESSMENT|CONCLUSION|LOGIC_TRAIL):[\s\S]*?(?=\n[A-Z][A-Z_]+:|$)/gim, '')
+                        .trim();
+                }
+            }
+
+            // â”€â”€ FINAL STAGE TOOL SAFETY NET â”€â”€
+            const toolCallMatch = responseText.match(/\{[\s\S]*?"tool"[\s\S]*?\}/);
+            if (toolCallMatch && !reqContext?.isAgenticTask) {
+                try {
+                    const toolCall = JSON.parse(toolCallMatch[0]);
+                    console.log(`[ReasonRoute] ðŸ› ï¸  Caught leaked tool call: ${toolCall.tool}`);
+                    const toolResult = await system.toolRegistry.execute(toolCall.tool, toolCall.args);
+                    
+                    const followUp = await brain.reason(query, {
+                        ...reqContext,
+                        sessionId: conversationId || 'orb-link',
+                        recentLearnings: `[Tool Result] ${toolCall.tool} returned: ${JSON.stringify(toolResult)}`,
+                        systemOverride: "The tool has finished. Answer the user's question now in natural language."
+                    });
+                    responseText = followUp.text || followUp.response || responseText;
+                } catch (e) {
+                    console.warn('[ReasonRoute] Failed to recover leaked tool call:', e.message);
+                }
+            }
+
+            res.json({
+                success: true,
+                response: responseText,
+                brain: result?.brain || 'SOMA',
+                confidence: result?.confidence || 0.8,
+                reasoningTree: result?.thoughtProcess || null
+            });
+        } catch (error) {
+            console.error('[Routes] /api/soma/reason error:', error.message);
+            res.status(500).json({ success: false, error: error.message });
+        }
+    });
+
+    // â”€â”€ Arbiter Inventory: SOMA's self-knowledge of available capabilities â”€â”€
+    app.get('/api/arbiter/inventory', (req, res) => {
+        if (!system.arbiterLoader) return res.status(503).json({ error: 'ArbiterLoader offline' });
+        res.json({ success: true, inventory: system.arbiterLoader.getInventory() });
+    });
+
+    app.post('/api/arbiter/load', async (req, res) => {
+        const { capability, file } = req.body || {};
+        if (!system.arbiterLoader) return res.status(503).json({ error: 'ArbiterLoader offline' });
+        try {
+            const instance = capability
+                ? await system.arbiterLoader.loadForCapability(capability)
+                : await system.arbiterLoader.loadByFile(file);
+            if (!instance) return res.status(404).json({ success: false, error: 'Arbiter not found or failed to load' });
+            res.json({ success: true, name: instance.name || file || capability });
+        } catch (err) {
+            res.status(500).json({ success: false, error: err.message });
+        }
+    });
+
+    app.post('/api/arbiter/rebuild-manifest', async (req, res) => {
+        if (!system.arbiterLoader) return res.status(503).json({ error: 'ArbiterLoader offline' });
+        try {
+            const count = await system.arbiterLoader.rebuildManifest();
+            res.json({ success: true, capabilities: count });
+        } catch (err) {
+            res.status(500).json({ success: false, error: err.message });
+        }
+    });
+
+    // â”€â”€ Engineering Swarm: on-demand self-modification trigger â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    // Accepts { filepath, request } and streams SSE phase events back.
+    // Used by MAX and manual triggers. Safe: CommandPolicyEngine blocks dangerous cmds.
+    app.post('/api/soma/engineering/modify', async (req, res) => {
+        const { filepath, request: modRequest } = req.body || {};
+
+        if (!filepath || !modRequest) {
+            return res.status(400).json({ error: 'filepath and request are both required' });
+        }
+
+        const swarm = system.engineeringSwarm;
+        if (!swarm) {
+            return res.status(503).json({ error: 'EngineeringSwarm offline â€” system still booting (try again in ~90s)' });
+        }
+
+        // SSE headers
+        res.setHeader('Content-Type', 'text/event-stream');
+        res.setHeader('Cache-Control', 'no-cache');
+        res.setHeader('Connection', 'keep-alive');
+        res.flushHeaders();
+
+        const send = (event, data) => {
+            try { res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`); } catch { /* client disconnected */ }
+        };
+
+        send('accepted', { filepath, request: modRequest, timestamp: new Date().toISOString() });
+        console.log(`[EngineeringRoute] ðŸ”§ Swarm modify started â€” ${filepath}: ${modRequest.slice(0, 80)}`);
+
+        try {
+            const result = await swarm.modifyCode(filepath, modRequest, (phase, message) => {
+                send('phase', { phase, message });
+            });
+
+            if (result.success) {
+                send('complete', { success: true, sessionId: result.sessionId, duration: result.duration });
+            } else {
+                send('error', { success: false, error: result.error });
+            }
+        } catch (err) {
+            console.error('[EngineeringRoute] Swarm error:', err.message);
+            send('error', { success: false, error: err.message });
+        } finally {
+            res.end();
+        }
     });
 
     app.get('/api/health', (req, res) => {
@@ -234,7 +536,8 @@ export function loadRoutes(app, system) {
         if (!system.toolRegistry?.execute) return res.status(503).json({ success: false, error: 'Tool registry not available' });
 
         try {
-            if (system.approvalSystem?.requestApproval) {
+            const sensoryTools = ['vision_scan', 'computer_control', 'get_self_awareness', 'get_time', 'system_scan'];
+            if (!sensoryTools.includes(name) && system.approvalSystem?.requestApproval) {
                 const classification = system.approvalSystem.classifyTool?.(name, args) || { riskType: 'file_execute', riskScore: 0.5 };
                 const approval = await system.approvalSystem.requestApproval({
                     type: classification.riskType,
@@ -418,7 +721,7 @@ export function loadRoutes(app, system) {
         });
     });
 
-    // Unified Activity Feed — aggregates events from all autonomous systems
+    // Unified Activity Feed â€” aggregates events from all autonomous systems
     app.get('/api/activity/recent', (req, res) => {
         const limit = Math.min(parseInt(req.query.limit) || 50, 200);
         const feed = [];
@@ -429,7 +732,7 @@ export function loadRoutes(app, system) {
         if (goalPlanner) {
             for (const id of goalPlanner.activeGoals || []) {
                 const g = goalPlanner.goals?.get(id);
-                if (g) feed.push({ id: g.id, type: 'goal_active', agent: 'GoalPlanner', action: g.title, detail: `${g.metrics?.progress || 0}% — ${g.category}`, timestamp: g.startedAt || g.createdAt, status: g.status });
+                if (g) feed.push({ id: g.id, type: 'goal_active', agent: 'GoalPlanner', action: g.title, detail: `${g.metrics?.progress || 0}% â€” ${g.category}`, timestamp: g.startedAt || g.createdAt, status: g.status });
             }
             for (const g of (goalPlanner.completedGoals || []).slice(0, 10)) {
                 feed.push({ id: g.id, type: 'goal_completed', agent: 'GoalPlanner', action: g.title, detail: g.category, timestamp: g.completedAt, status: 'completed' });
@@ -620,7 +923,7 @@ export function loadRoutes(app, system) {
         res.json({ success: true, message: 'Character deactivated, SOMA personality restored' });
     });
 
-    app.get('/api/beliefs', (req, res) => res.json(system.beliefSystem?.queryBeliefs?.({}) || { beliefs: [] }));
+    
     app.get('/api/beliefs/contradictions', (req, res) => res.json({ success: true, contradictions: system.beliefSystem?.contradictions ? Array.from(system.beliefSystem.contradictions.values()) : [] }));
     app.get('/api/analytics/summary', (req, res) => res.json({ success: true, summary: system.analytics?.getSummary?.() || {} }));
     app.get('/api/memory/status', (req, res) => {
@@ -667,7 +970,232 @@ export function loadRoutes(app, system) {
         res.json({ success: true, ...result });
     });
 
-    // 4. STORAGE & FILE SYSTEM (Fixing Storage Tab)
+    
+    
+    // ── SIREN API: Neural Voice Synthesis ───────────────────────
+    app.post('/api/siren/synthesize', async (req, res) => {
+        try {
+            const { text, emotion, requestId } = req.body;
+            const synthesis = system.vocalSynthesis || Array.from(system.arbiters?.values() || []).find(a => a.name === 'VocalSynthesisArbiter');
+            if (!synthesis) return res.status(503).json({ success: false, error: 'Vocal Synthesis Arbiter not available' });
+            const result = await synthesis.handleSynthesis({ text, emotion, requestId });
+            res.json(result);
+        } catch (error) { res.status(500).json({ success: false, error: error.message }); }
+    });
+// ── ARCHIVE API: Research Library ──────────────────────────
+    app.get('/api/archive/list', async (req, res) => {
+        try {
+            const archivePath = path.join(process.cwd(), 'data', 'vault', 'archive');
+            await fs.mkdir(archivePath, { recursive: true });
+            const files = await fs.readdir(archivePath);
+            res.json({ success: true, files });
+        } catch (error) { res.json({ success: false, error: error.message }); }
+    });
+
+    app.post('/api/archive/link', async (req, res) => {
+        try {
+            const { path: targetPath } = req.body;
+            const indexer = system.mnemonicIndexer || Array.from(system.arbiters?.values() || []).find(a => a.name === 'MnemonicIndexerArbiter');
+            if (!indexer) return res.status(503).json({ success: false, error: 'Indexer not available' });
+            indexer.scanDirectory(targetPath).catch(err => console.error('[Archive] Scan error:', err));
+            res.json({ success: true, message: 'Indexing started', path: targetPath });
+        } catch (error) { res.status(500).json({ success: false, error: error.message }); }
+    });
+
+    // ── REFLECTIONS API: Brainstorming Laboratory ───────────────
+    app.get('/api/reflections/list', async (req, res) => {
+        try {
+            const vaultPath = path.join(process.cwd(), 'data', 'vault', 'reflections');
+            await fs.mkdir(vaultPath, { recursive: true });
+            const files = await fs.readdir(vaultPath);
+            const notes = files.filter(f => f.endsWith('.md')).map(f => ({ name: f, path: path.join(vaultPath, f) }));
+            res.json({ success: true, notes });
+        } catch (error) { res.json({ success: false, error: error.message }); }
+    });
+
+    app.post('/api/reflections/quick-note', async (req, res) => {
+        try {
+            const { text, title, context } = req.body;
+            if (!system.reflections) return res.status(503).json({ error: 'Reflections Arbiter not available' });
+            const result = await system.reflections.appendQuickNote(text, { title, context });
+            res.json(result);
+        } catch (error) { res.status(500).json({ error: error.message }); }
+    });
+
+    app.post('/api/reflections/distill', async (req, res) => {
+        try {
+            const { chatLog, title } = req.body;
+            if (!system.reflections) return res.status(503).json({ error: 'Reflections Arbiter not available' });
+            const result = await system.reflections.distillSession(chatLog, title);
+            res.json(result);
+        } catch (error) { res.status(500).json({ error: error.message }); }
+    });
+
+    // ── REFLECTIONS: Note CRUD + Graph ─────────────────────────────
+    app.get('/api/reflections/note/:name', async (req, res) => {
+        try {
+            const vaultPath = path.resolve(process.cwd(), 'data', 'vault', 'reflections');
+            const safeName = path.basename(req.params.name); // strip any dir traversal
+            const filePath = path.resolve(vaultPath, safeName);
+            if (!filePath.startsWith(vaultPath)) return res.status(403).json({ error: 'Forbidden' });
+            const content = await fs.readFile(filePath, 'utf8');
+            res.json({ success: true, content, name: safeName });
+        } catch (error) { res.status(404).json({ success: false, error: error.message }); }
+    });
+
+    app.put('/api/reflections/note', async (req, res) => {
+        try {
+            const { name, content } = req.body;
+            if (!name || content === undefined) return res.status(400).json({ error: 'name and content required' });
+            const vaultPath = path.resolve(process.cwd(), 'data', 'vault', 'reflections');
+            await fs.mkdir(vaultPath, { recursive: true });
+            const safeName = path.basename(name.replace(/[^a-zA-Z0-9_\-. ]/g, '_'));
+            const fileName = safeName.endsWith('.md') ? safeName : safeName + '.md';
+            const filePath = path.resolve(vaultPath, fileName);
+            if (!filePath.startsWith(vaultPath)) return res.status(403).json({ error: 'Forbidden' });
+            await fs.writeFile(filePath, content, 'utf8');
+            res.json({ success: true, name: fileName });
+        } catch (error) { res.status(500).json({ success: false, error: error.message }); }
+    });
+
+    app.delete('/api/reflections/note/:name', async (req, res) => {
+        try {
+            const vaultPath = path.resolve(process.cwd(), 'data', 'vault', 'reflections');
+            const safeName = path.basename(req.params.name);
+            const filePath = path.resolve(vaultPath, safeName);
+            if (!filePath.startsWith(vaultPath)) return res.status(403).json({ error: 'Forbidden' });
+            await fs.unlink(filePath);
+            res.json({ success: true });
+        } catch (error) { res.status(500).json({ success: false, error: error.message }); }
+    });
+
+    app.get('/api/reflections/search', async (req, res) => {
+        try {
+            const q = (req.query.q || '').toLowerCase().trim();
+            if (!q || q.length < 2) return res.json({ success: true, results: [] });
+            const vaultPath = path.resolve(process.cwd(), 'data', 'vault', 'reflections');
+            await fs.mkdir(vaultPath, { recursive: true });
+            const files = (await fs.readdir(vaultPath)).filter(f => f.endsWith('.md'));
+            const results = [];
+            for (const f of files) {
+                const raw = await fs.readFile(path.join(vaultPath, f), 'utf8').catch(() => '');
+                const stripped = raw.replace(/^---[\s\S]*?---\s*\n?/, '');
+                const idx = stripped.toLowerCase().indexOf(q);
+                if (idx !== -1 || f.toLowerCase().includes(q)) {
+                    const snippet = idx !== -1
+                        ? '...' + stripped.slice(Math.max(0, idx - 30), idx + 100).replace(/\n/g, ' ').trim() + '...'
+                        : '';
+                    results.push({ name: f, snippet });
+                }
+            }
+            res.json({ success: true, results });
+        } catch (error) { res.status(500).json({ success: false, error: error.message }); }
+    });
+
+    app.get('/api/reflections/analyze', async (req, res) => {
+        try {
+            const vaultPath = path.resolve(process.cwd(), 'data', 'vault', 'reflections');
+            await fs.mkdir(vaultPath, { recursive: true });
+            const files = (await fs.readdir(vaultPath)).filter(f => f.endsWith('.md'));
+            if (files.length === 0) return res.json({ success: true, insights: { patterns: [], gaps: [], clusters: [] } });
+
+            const noteContents = (await Promise.all(
+                files.slice(0, 30).map(async f => {
+                    const raw = await fs.readFile(path.join(vaultPath, f), 'utf8').catch(() => '');
+                    const stripped = raw.replace(/^---[\s\S]*?---\s*\n?/, '').trim();
+                    return `[${f.replace('.md', '')}]\n${stripped.slice(0, 500)}`;
+                })
+            )).join('\n\n---\n\n');
+
+            const prompt = `You are analyzing a personal knowledge vault of ${files.length} notes. Find meaningful cognitive patterns, blind spots/gaps, and concept clusters.
+
+NOTES:
+${noteContents}
+
+Return ONLY valid JSON (no markdown, no explanation):
+{"patterns":[{"title":"...","description":"..."}],"gaps":[{"title":"...","description":"..."}],"clusters":[{"title":"...","description":"..."}]}`;
+
+            let insights = { patterns: [], gaps: [], clusters: [] };
+            const brain = system.quadBrain || system.somArbiter;
+            if (brain?.reason) {
+                try {
+                    const result = await Promise.race([
+                        brain.reason(prompt, { brain: 'LOGOS' }),
+                        new Promise((_, reject) => setTimeout(() => reject(new Error('timeout')), 30000))
+                    ]);
+                    const text = result?.text || result?.response?.text || (typeof result === 'string' ? result : '');
+                    const m = text.match(/\{[\s\S]*\}/);
+                    if (m) insights = JSON.parse(m[0]);
+                } catch (err) { console.error('[Reflections] Analyze failed:', err.message); }
+            }
+            res.json({ success: true, insights });
+        } catch (error) { res.status(500).json({ success: false, error: error.message }); }
+    });
+
+    app.post('/api/reflections/upload', _reflectionsUpload.single('file'), async (req, res) => {
+        try {
+            if (!req.file) return res.status(400).json({ error: 'No file provided' });
+            const extractor = new ContentExtractor();
+            const content = await extractor.extract(req.file.path);
+            await fs.unlink(req.file.path).catch(() => {});
+            if (!content) return res.status(422).json({ error: 'Could not extract text from file' });
+            const originalName = req.file.originalname;
+            const ext = path.extname(originalName).toLowerCase();
+            const noteTitle = path.basename(originalName, ext).replace(/[^a-zA-Z0-9_\-. ]/g, '_');
+            const tags = [ext.slice(1) || 'file', 'upload'];
+            const date = new Date().toISOString();
+            const mdContent = `---\ntitle: ${originalName}\nsource: upload\ningested: ${date}\ntags: [${tags.join(', ')}]\n---\n\n# ${originalName}\n\n${content}\n\n---\n*Ingested via Project Reflections*\n`;
+            const vaultPath = path.resolve(process.cwd(), 'data', 'vault', 'reflections');
+            await fs.mkdir(vaultPath, { recursive: true });
+            const filename = `${noteTitle}_${Date.now()}.md`;
+            await fs.writeFile(path.join(vaultPath, filename), mdContent);
+            res.json({ success: true, filename });
+        } catch (error) { res.status(500).json({ success: false, error: error.message }); }
+    });
+
+    app.get('/api/reflections/graph', async (req, res) => {
+        try {
+            const vaultPath = path.resolve(process.cwd(), 'data', 'vault', 'reflections');
+            await fs.mkdir(vaultPath, { recursive: true });
+            const files = (await fs.readdir(vaultPath)).filter(f => f.endsWith('.md'));
+            const nodes = files.map(f => ({ id: f.replace('.md', '') }));
+            const edges = [];
+            const nodeIds = new Set(nodes.map(n => n.id));
+            for (const file of files) {
+                const content = await fs.readFile(path.join(vaultPath, file), 'utf8');
+                const source = file.replace('.md', '');
+                for (const [, target] of content.matchAll(/\[\[([^\]]+)\]\]/g)) {
+                    const cleanTarget = target.split('|')[0].trim(); // handle [[Note|Alias]]
+                    if (nodeIds.has(cleanTarget)) edges.push({ source, target: cleanTarget });
+                }
+            }
+            res.json({ success: true, nodes, edges });
+        } catch (error) { res.status(500).json({ success: false, error: error.message }); }
+    });
+
+    
+    // ── ULTRAQUANT API: Knowledge Compaction ─────────────────────
+    app.post('/api/ultraquant/compact', async (req, res) => {
+        try {
+            const { partition } = req.body; // 'reflections' or 'archive'
+            if (!system.ultraQuant) return res.status(503).json({ error: 'UltraQuant Arbiter not available' });
+            
+            const targetPath = path.join(process.cwd(), 'data', 'vault', partition || 'reflections');
+            system.ultraQuant.compactPartition(targetPath).catch(err => console.error('[UltraQuant] Compaction error:', err));
+            
+            res.json({ success: true, message: 'Compaction of ' + (partition || 'reflections') + ' initiated.' });
+        } catch (error) { res.status(500).json({ success: false, error: error.message }); }
+    });
+// ── ARGUS API: Visual Frame Ingestion ──────────────────────────
+    app.post('/api/argus/frame', async (req, res) => {
+        try {
+            const { frameData, timestamp, source } = req.body;
+            if (!system.argus) return res.status(503).json({ error: 'Argus Arbiter not available' });
+            await system.argus.handleFrame({ frameData, timestamp, source });
+            res.json({ success: true });
+        } catch (error) { res.status(500).json({ success: false, error: error.message }); }
+    });
+// 4. STORAGE & FILE SYSTEM (Fixing Storage Tab)
     app.get('/api/fs/browse', checkReady, async (req, res) => {
         try {
             const targetPath = path.resolve(process.cwd(), req.query.path || '.');
@@ -698,11 +1226,11 @@ export function loadRoutes(app, system) {
 
             setImmediate(async () => {
                 const envOptions = {
-                    maxFiles: parseInt(process.env.SOMA_INDEX_MAX_FILES || '500000', 10),
-                    maxDepth: parseInt(process.env.SOMA_INDEX_MAX_DEPTH || '20', 10),
-                    concurrency: parseInt(process.env.SOMA_INDEX_CONCURRENCY || '4', 10),
-                    throttleMs: parseInt(process.env.SOMA_INDEX_THROTTLE_MS || '0', 10),
-                    useHash: process.env.SOMA_INDEX_USE_HASH === 'true'
+                    maxFiles:    parseInt(process.env.SOMA_INDEX_MAX_FILES       || '50000', 10),
+                    maxDepth:    parseInt(process.env.SOMA_INDEX_MAX_DEPTH       || '15', 10),
+                    concurrency: parseInt(process.env.SOMA_INDEX_CONCURRENCY     || '2', 10),
+                    throttleMs:  parseInt(process.env.SOMA_INDEX_THROTTLE_MS     || '5', 10),
+                    useHash:     process.env.SOMA_INDEX_USE_HASH === 'true'
                 };
 
                 system.ws?.broadcast?.('trace', {
@@ -927,7 +1455,7 @@ export function loadRoutes(app, system) {
     };
 
     safeMount('/api/soma', checkReady, somaRoutes(system));
-    safeMount('/api/knowledge', checkReady, knowledgeRoutes(system.knowledgeGraph || system.knowledge));
+    safeMount('/api/knowledge', checkReady, knowledgeRoutes(system));
     safeMount('/api/research', checkReady, researchRoutes(system));
     safeMount('/api/kevin', kevinRoutes);
     safeMount('/api/pulse', pulseRoutes({
@@ -935,11 +1463,30 @@ export function loadRoutes(app, system) {
         goalPlanner: system.goalPlanner,
         contextManager: system.contextManager,
         pulseArbiter: system.pulseArbiter,
-        steveArbiter: system.executiveCortex
+        steveArbiter: system.steveArbiter
     }));
 
     // 5b. ARBITERIUM
     safeMount('/api/arbiterium', checkReady, arbiteriumRoutes(system));
+
+    // 5c. CAPABILITY REGISTRY
+    app.get('/api/capabilities', (req, res) => {
+        const reg = system.capabilityRegistry;
+        if (!reg) return res.json({ capabilities: [], status: 'not_ready' });
+        res.json({ capabilities: reg.getStats(), status: 'ok' });
+    });
+    app.post('/api/capabilities/:name/enable', (req, res) => {
+        const reg = system.capabilityRegistry;
+        if (!reg) return res.status(503).json({ error: 'not ready' });
+        const ok = reg.enable(req.params.name);
+        res.json({ success: ok });
+    });
+    app.post('/api/capabilities/:name/disable', (req, res) => {
+        const reg = system.capabilityRegistry;
+        if (!reg) return res.status(503).json({ error: 'not ready' });
+        const ok = reg.disable(req.params.name);
+        res.json({ success: ok });
+    });
 
     // 6. FINANCE (Full Trading Stack)
     safeMount('/api/finance', checkReady, financeRoutes);
@@ -955,16 +1502,87 @@ export function loadRoutes(app, system) {
     safeMount('/api/binance', checkReady, binanceRoutes);
     safeMount('/api/hyperliquid', checkReady, hyperliquidRoutes);
     safeMount('/api/backtest', checkReady, backtestRoutes);
+    safeMount('/api/alerts', checkReady, alertRoutes);
     safeMount('/api/guardian', checkReady, createGuardianRoutes(system.guardian || null));
     safeMount('/api/autonomous', checkReady, autonomousRoutes);
     safeMount('/api/gridbot',   checkReady, gridBotRoutes);
-    safeMount('/api/conceive',  conceiveRoutes);
+    safeMount('/api/notifications', notificationRoutes);  // no checkReady — used during settings modal before system.ready
+    safeMount('/api/perception', perceptionRoutes);        // no checkReady — COS daemons may load before system.ready
+    // Conceive module â€” optional, not always committed to repo
+    try {
+        const { default: conceiveRoutes } = await import('../../server/routes/conceiveRoutes.js');
+        safeMount('/api/conceive', conceiveRoutes);
+        console.log('    âœ… Conceive routes mounted');
+    } catch (e) {
+        console.warn('    âš ï¸  conceiveRoutes.js not found â€” Conceive module disabled (safe to ignore)');
+    }
 
-    // 7. MISSING COMPONENTS (Dream, Muse, etc.)
+    // â”€â”€ ASI System Routes â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    app.get('/api/asi/status', (req, res) => {
+        try {
+            res.json({
+                kernel:        system.asiKernel?.getStatus()       || null,
+                benchmark:     system.benchmark?.getStatus()       || null,
+                constitutional: system.constitutional?.getStatus() || null,
+                transfer:      system.transfer?.getStatus()        || null,
+                longHorizon:   system.longHorizon?.getStatus()     || null,
+            });
+        } catch (e) { res.status(500).json({ error: e.message }); }
+    });
+
+    app.get('/api/asi/benchmark', (req, res) => {
+        try { res.json(system.benchmark?.getDashboardData() || {}); }
+        catch (e) { res.status(500).json({ error: e.message }); }
+    });
+
+    app.get('/api/asi/transfers', (req, res) => {
+        try { res.json(system.transfer?.getTransfers() || []); }
+        catch (e) { res.status(500).json({ error: e.message }); }
+    });
+
+    app.get('/api/asi/constitutional', (req, res) => {
+        try { res.json({ constraints: system.constitutional?.getConstraints() || [], audit: system.constitutional?.audit(20) || [] }); }
+        catch (e) { res.status(500).json({ error: e.message }); }
+    });
+
+    app.post('/api/asi/cycle', checkReady, async (req, res) => {
+        try {
+            if (!system.asiKernel) return res.status(503).json({ error: 'ASI Kernel not initialized' });
+            const result = await system.asiKernel.runCycle();
+            res.json({ ok: true, cycle: result });
+        } catch (e) { res.status(500).json({ error: e.message }); }
+    });
+
+    app.post('/api/asi/vision', checkReady, async (req, res) => {
+        try {
+            const { description, horizon } = req.body;
+            if (!description) return res.status(400).json({ error: 'description required' });
+            if (!system.longHorizon) return res.status(503).json({ error: 'LongHorizonPlanner not initialized' });
+            const vision = await system.longHorizon.setVision(description, horizon || '30d');
+            res.json({ ok: true, vision });
+        } catch (e) { res.status(500).json({ error: e.message }); }
+    });
+
+    
+    // ── ORACLE API: Neural Predestination ───────────────────────
+    app.get('/api/oracle/forecast', (req, res) => {
+        // Access MAX through the system bridge
+        const oracle = system.max?.oracle || system.oracleKernel;
+        if (!oracle) return res.json({ success: false, error: 'Oracle Kernel offline' });
+        
+        const forecasts = Array.from(oracle.activeVoyages.entries()).map(([goalId, data]) => ({
+            goalId,
+            path: data.path,
+            confidence: data.confidence
+        }));
+        
+        res.json({ success: true, forecasts });
+    });
+// 7. MISSING COMPONENTS (Dream, Muse, etc.)
     app.get('/api/dream/insights', (req, res) => {
-        const raw = system.dreamArbiter?.getInsights?.() || [];
-        const insights = Array.isArray(raw) ? { recentInsights: raw } : raw;
-        res.json({ success: true, insights, narrative: system.dreamArbiter?.getNarrative?.() || null });
+        const raw = system.dreamArbiter?.getInsights?.() || { recentInsights: [] };
+        const insights = raw.recentInsights || [];
+        res.json({ success: true, recentInsights: insights, narrative: system.dreamArbiter?.getNarrative?.() || null });
     });
     app.get('/api/muse/sparks', (req, res) => res.json({ success: true, sparks: system.museArbiter?.getSparks?.() || [] }));
     app.get('/api/theory-of-mind/insights', (req, res) => {
@@ -989,7 +1607,15 @@ export function loadRoutes(app, system) {
         const activeGoals = allActive.filter(g => g && ['self_evolution','curiosity_engine','self_inspection','github_discovery'].includes(g.metadata?.source || g.source));
         res.json({ success: true, active: true, stats: eng.stats, activeGoals });
     });
-    app.get('/api/velocity/status', (req, res) => res.json({ success: true, status: system.velocityTracker?.getStatus?.() || { velocity: 0 } }));
+    app.get('/api/velocity/status', (req, res) => {
+        try {
+            const vt = system.velocityTracker;
+            const stats = (vt && typeof vt.getStats === 'function') ? vt.getStats() : { velocity: 0 };
+            res.json({ success: true, status: stats });
+        } catch (e) {
+            res.json({ success: true, status: { velocity: 0, error: e.message } });
+        }
+    });
     app.get('/api/slc/status', (req, res) => res.json({ success: true, status: system.slcArbiter?.getStatus?.() || { phase: 'idle' } }));
     
     // Personality Traits
@@ -1039,7 +1665,63 @@ export function loadRoutes(app, system) {
     });
 
     app.get('/api/conversation/history', (req, res) => res.json({ success: true, history: system.conversationManager?.getHistory?.(req.query.count || 20) || [] }));
-    app.get('/api/soma/vision/last', (req, res) => res.json({ success: true, url: system.visionArbiter?.getLastImage?.() || null }));
+    app.get('/api/soma/vision/last', (req, res) => res.json({ success: true, url: system.argus?.getLastImage?.() || system.visionArbiter?.getLastImage?.() || null }));
+
+    app.get('/api/soma/analytics', (req, res) => {
+        const quad = system.quadBrain;
+        const mem = system.mnemonicArbiter;
+        const arb = system.arbiterRegistry || system.arbiters;
+        const totalArbiters = arb ? (arb.size || Object.keys(arb).length || 0) : 0;
+        res.json({ success: true, summary: {
+            totalQueries:     quad?.totalQueries || 0,
+            successRate:      quad?.successRate != null ? Math.round(quad.successRate * 100) : 100,
+            activeArbiters:   totalArbiters,
+            totalArbiters:    totalArbiters,
+            avgResponseTime:  quad?.avgResponseTime || 0,
+            tokenUsage:       quad?.totalTokens || 0,
+            memoryUsage:      Math.round(process.memoryUsage().heapUsed / 1024 / 1024),
+            cacheHitRate:     quad?.cacheHitRate != null ? Math.round(quad.cacheHitRate * 100) : 0,
+            uptime:           Math.round(process.uptime()),
+        }});
+    });
+
+    app.get('/api/skills/stats', (req, res) => {
+        const sa = system.skillAcquisition || system.skillTracker;
+        if (sa?.getStats) {
+            const raw = sa.getStats();
+            return res.json({ success: true, stats: { ...raw, tracked: true } });
+        }
+        // Derive rough skill scores from available system metrics
+        const uptime = process.uptime();
+        const mem = system.mnemonicArbiter;
+        const quad = system.quadBrain;
+        const tracked = uptime > 300 && (mem || quad);
+        if (!tracked) return res.json({ success: true, stats: { tracked: false } });
+        const memCount = mem?.getStats?.()?.totalMemories || 0;
+        const queryCount = quad?.totalQueries || 0;
+        res.json({ success: true, stats: {
+            coding:    Math.min(100, Math.round(queryCount * 0.4)),
+            reasoning: Math.min(100, Math.round(queryCount * 0.5)),
+            memory:    Math.min(100, Math.round(memCount * 0.3)),
+            creativity:Math.min(100, Math.round(queryCount * 0.3)),
+            vision:    system.argus ? Math.min(100, 40) : 0,
+            strategy:  Math.min(100, Math.round(queryCount * 0.35)),
+            tracked: true
+        }});
+    });
+
+    // Plan viewer â€” reliable REST endpoint (bypasses WS sendMessage race conditions)
+    app.get('/api/soma/plan', async (req, res) => {
+        try {
+            const planPath = path.join(process.cwd(), 'SOMA', 'plan.md');
+            const stat = await fs.stat(planPath).catch(() => null);
+            if (!stat) return res.json({ success: true, plan: '', updatedAt: null });
+            const content = await fs.readFile(planPath, 'utf8');
+            res.json({ success: true, plan: content, updatedAt: stat.mtime });
+        } catch (e) {
+            res.status(500).json({ success: false, error: e.message });
+        }
+    });
 
     // 8. SOCIAL (Fixing Social Tab)
     app.get('/api/identity/personas', (req, res) => res.json({ success: true, personas: Array.from(system.identityArbiter?.personas?.values() || []) }));
@@ -1157,8 +1839,80 @@ export function loadRoutes(app, system) {
         } catch (e) { res.status(500).json({ success: false, error: e.message }); }
     });
 
+    // â”€â”€ Drive tension status â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    app.get('/api/drive/status', (req, res) => {
+        const drive = system.drive;
+        if (!drive) return res.json({ success: false, error: 'DriveArbiter not loaded', tension: null, satisfaction: null });
+        res.json({
+            success: true,
+            tension: drive.tension,
+            satisfaction: drive.satisfaction,
+            stats: drive.stats || {}
+        });
+    });
+
+    // â”€â”€ ORB: File context injection (@filename in OrbWidget queries) â”€â”€â”€â”€â”€â”€
+    app.post('/api/fs/read', async (req, res) => {
+        const { path: filePath } = req.body || {};
+        if (!filePath) return res.status(400).json({ success: false, error: 'path is required' });
+        if (!isAllowedPath(filePath)) {
+            return res.status(403).json({ success: false, error: 'Path outside allowed roots' });
+        }
+        try {
+            const content = await fs.readFile(path.resolve(filePath), 'utf8');
+            res.json({ success: true, content, path: filePath });
+        } catch (e) {
+            res.status(404).json({ success: false, error: e.message });
+        }
+    });
+
+    // â”€â”€ Shared conversation history â€” used by CT, FloatingChat, Orb â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    // Note: messages are stored under the backend's internal session UUID (not the
+    // frontend's soma_session_id). getRecentMessages() returns the active session.
+    app.get('/api/soma/history', async (req, res) => {
+        const { limit = 30 } = req.query;
+        try {
+            const history = system.conversationHistory
+                ? system.conversationHistory.getRecentMessages(parseInt(limit))
+                : [];
+            const messages = (history || []).map(h => ({
+                role: h.role === 'assistant' ? 'soma' : 'user',
+                text: h.content || h.text || '',
+                timestamp: h.timestamp || Date.now()
+            }));
+            res.json({ success: true, messages });
+        } catch (e) {
+            res.json({ success: true, messages: [] });
+        }
+    });
+
+    // â”€â”€ ORB: Conversation history (persist sessions across refreshes) â”€â”€â”€â”€
+    app.get('/api/orb/history', async (req, res) => {
+        const { limit = 30 } = req.query;
+        try {
+            const history = system.conversationHistory
+                ? system.conversationHistory.getRecentMessages(parseInt(limit))
+                : [];
+            const messages = (history || []).map(h => ({
+                role: h.role === 'assistant' ? 'soma' : 'user',
+                text: h.content || h.text || '',
+                timestamp: h.timestamp || Date.now()
+            }));
+            res.json({ success: true, messages });
+        } catch (e) {
+            res.json({ success: true, messages: [] });
+        }
+    });
+
     const kevin = system.kevinArbiter || system.kevinManager;
     if (kevin) app.locals.kevinArbiter = kevin;
 
-    console.log('      ✅ All production routes mounted (Full Tab Coverage Active)');
+    console.log('      âœ… All production routes mounted (Full Tab Coverage Active)');
 }
+
+
+
+
+
+
+

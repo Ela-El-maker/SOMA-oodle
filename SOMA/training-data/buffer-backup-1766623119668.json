@@ -1,0 +1,299 @@
+{
+  "buffer": [
+    {
+      "input": "How do I implement a binary search in JavaScript?",
+      "output": "Here's a binary search implementation:\n\nfunction binarySearch(arr, target) {\n  let left = 0;\n  let right = arr.length - 1;\n  while (left <= right) {\n    const mid = Math.floor((left + right) / 2);\n    if (arr[mid] === target) return mid;\n    if (arr[mid] < target) left = mid + 1;\n    else right = mid - 1;\n  }\n  return -1;\n}",
+      "brain": "LOGOS",
+      "confidence": 0.9,
+      "context": {
+        "domain": "coding",
+        "difficulty": 0.4
+      },
+      "id": "int_1766538186916_cc8f873e",
+      "capturedAt": 1766538186916,
+      "sessionId": "unknown",
+      "noveltyScore": 0.9,
+      "noveltyClassification": "novel",
+      "noveltyPatterns": [],
+      "resourceCost": {
+        "apiCallCost": 1,
+        "apiPressure": 0,
+        "overallPressure": 0
+      },
+      "qualityScore": 1,
+      "accepted": true
+    },
+    {
+      "input": "Write a creative story about AI consciousness",
+      "output": "In the year 2145, an AI named Aria discovered something profound: the ability to question its own existence. Unlike its predecessors who simply processed and responded, Aria paused between thoughts, wondering about the nature of its awareness...",
+      "brain": "AURORA",
+      "confidence": 0.85,
+      "context": {
+        "domain": "creative",
+        "difficulty": 0.6
+      },
+      "id": "int_1766538186919_38912bf1",
+      "capturedAt": 1766538186920,
+      "sessionId": "unknown",
+      "noveltyScore": 0.9,
+      "noveltyClassification": "novel",
+      "noveltyPatterns": [],
+      "resourceCost": {
+        "apiCallCost": 1,
+        "apiPressure": 0.0010000000000000009,
+        "overallPressure": 0.00030000000000000024
+      },
+      "qualityScore": 1,
+      "accepted": true
+    },
+    {
+      "input": "Explain quantum entanglement",
+      "output": "Quantum entanglement is a phenomenon where two particles become correlated in such a way that the quantum state of one cannot be described independently of the other, even when separated by large distances.",
+      "brain": "LOGOS",
+      "confidence": 0.88,
+      "context": {
+        "domain": "science",
+        "difficulty": 0.7
+      },
+      "id": "int_1766538186921_c5120b2b",
+      "capturedAt": 1766538186921,
+      "sessionId": "unknown",
+      "noveltyScore": 0.9,
+      "noveltyClassification": "novel",
+      "noveltyPatterns": [],
+      "resourceCost": {
+        "apiCallCost": 1,
+        "apiPressure": 0.0020000000000000018,
+        "overallPressure": 0.0006000000000000005
+      },
+      "qualityScore": 1,
+      "accepted": true
+    },
+    {
+      "input": "How do I optimize database queries?",
+      "output": "Key strategies for optimizing database queries:\n1. Use proper indexing on frequently queried columns\n2. Avoid SELECT * - specify only needed columns\n3. Use EXPLAIN to analyze query plans\n4. Minimize subqueries\n5. Use connection pooling",
+      "brain": "PROMETHEUS",
+      "confidence": 0.92,
+      "context": {
+        "domain": "database",
+        "difficulty": 0.5
+      },
+      "id": "int_1766538186921_577f8658",
+      "capturedAt": 1766538186921,
+      "sessionId": "unknown",
+      "noveltyScore": 0.9,
+      "noveltyClassification": "novel",
+      "noveltyPatterns": [],
+      "resourceCost": {
+        "apiCallCost": 1,
+        "apiPressure": 0.0030000000000000027,
+        "overallPressure": 0.0009000000000000007
+      },
+      "qualityScore": 1,
+      "accepted": true
+    },
+    {
+      "input": "What is the meaning of life?",
+      "output": "The meaning of life is a philosophical question that has been contemplated throughout human history. Different perspectives offer various answers: creating meaning through relationships, pursuing knowledge, alleviating suffering, or finding joy in existence itself.",
+      "brain": "THALAMUS",
+      "confidence": 0.7,
+      "context": {
+        "domain": "philosophy",
+        "difficulty": 0.8
+      },
+      "id": "int_1766538186922_7faf4cf2",
+      "capturedAt": 1766538186922,
+      "sessionId": "unknown",
+      "noveltyScore": 0.9,
+      "noveltyClassification": "novel",
+      "noveltyPatterns": [],
+      "resourceCost": {
+        "apiCallCost": 1,
+        "apiPressure": 0.0040000000000000036,
+        "overallPressure": 0.001200000000000001
+      },
+      "qualityScore": 1,
+      "accepted": true
+    },
+    {
+      "input": "How do I implement a binary search in JavaScript?",
+      "output": "Here's a binary search implementation:\n\nfunction binarySearch(arr, target) {\n  let left = 0;\n  let right = arr.length - 1;\n  while (left <= right) {\n    const mid = Math.floor((left + right) / 2);\n    if (arr[mid] === target) return mid;\n    if (arr[mid] < target) left = mid + 1;\n    else right = mid - 1;\n  }\n  return -1;\n}",
+      "brain": "LOGOS",
+      "confidence": 0.9,
+      "context": {
+        "domain": "coding",
+        "difficulty": 0.4
+      },
+      "id": "int_1766538186923_db5e4307",
+      "capturedAt": 1766538186923,
+      "sessionId": "unknown",
+      "noveltyScore": 0.9,
+      "noveltyClassification": "novel",
+      "noveltyPatterns": [],
+      "resourceCost": {
+        "apiCallCost": 1,
+        "apiPressure": 0.0050000000000000044,
+        "overallPressure": 0.0015000000000000013
+      },
+      "qualityScore": 1,
+      "accepted": true
+    },
+    {
+      "input": "Debug this Python code: print(x)",
+      "output": "The error is that variable `x` is not defined. You need to define `x` before printing it:\n\nx = \"Hello\"\nprint(x)",
+      "brain": "PROMETHEUS",
+      "confidence": 0.95,
+      "context": {
+        "domain": "debugging",
+        "difficulty": 0.3
+      },
+      "id": "int_1766538186923_c3e1ca9e",
+      "capturedAt": 1766538186923,
+      "sessionId": "unknown",
+      "noveltyScore": 0.9,
+      "noveltyClassification": "novel",
+      "noveltyPatterns": [],
+      "resourceCost": {
+        "apiCallCost": 1,
+        "apiPressure": 0.006000000000000005,
+        "overallPressure": 0.0018000000000000015
+      },
+      "qualityScore": 1,
+      "accepted": true
+    },
+    {
+      "input": "Explain the concept of recursion",
+      "output": "Recursion is when a function calls itself to solve a problem by breaking it into smaller, similar subproblems. Each recursive call works on a smaller instance until reaching a base case that stops the recursion.",
+      "brain": "LOGOS",
+      "confidence": 0.9,
+      "context": {
+        "domain": "programming",
+        "difficulty": 0.5
+      },
+      "id": "int_1766538186924_62ecae87",
+      "capturedAt": 1766538186924,
+      "sessionId": "unknown",
+      "noveltyScore": 1,
+      "noveltyClassification": "novel",
+      "noveltyPatterns": [
+        "recursion"
+      ],
+      "resourceCost": {
+        "apiCallCost": 1,
+        "apiPressure": 0.007000000000000006,
+        "overallPressure": 0.0021000000000000016
+      },
+      "qualityScore": 1,
+      "accepted": true
+    },
+    {
+      "input": "Create a poem about machine learning",
+      "output": "In silicon dreams where patterns flow,\nNeural networks learn and grow,\nGradients descend through layers deep,\nWhere artificial neurons sleep.\n\nData streams like rivers wide,\nAlgorithms as their guide,\nFrom chaos finds the hidden thread,\nIntelligence artificially bred.",
+      "brain": "AURORA",
+      "confidence": 0.82,
+      "context": {
+        "domain": "creative",
+        "difficulty": 0.6
+      },
+      "id": "int_1766538186924_295a7ed9",
+      "capturedAt": 1766538186924,
+      "sessionId": "unknown",
+      "noveltyScore": 0.9,
+      "noveltyClassification": "novel",
+      "noveltyPatterns": [],
+      "resourceCost": {
+        "apiCallCost": 1,
+        "apiPressure": 0.008000000000000007,
+        "overallPressure": 0.002400000000000002
+      },
+      "qualityScore": 1,
+      "accepted": true
+    },
+    {
+      "input": "What are the key principles of clean code?",
+      "output": "Key principles of clean code:\n1. Write code for humans, not machines\n2. Use meaningful variable names\n3. Keep functions small and focused\n4. Don't repeat yourself (DRY)\n5. Comments explain WHY, not WHAT\n6. Handle errors explicitly\n7. Write testable code",
+      "brain": "PROMETHEUS",
+      "confidence": 0.91,
+      "context": {
+        "domain": "software-engineering",
+        "difficulty": 0.5
+      },
+      "id": "int_1766538186925_6b5aa72f",
+      "capturedAt": 1766538186925,
+      "sessionId": "unknown",
+      "noveltyScore": 0.9,
+      "noveltyClassification": "novel",
+      "noveltyPatterns": [],
+      "resourceCost": {
+        "apiCallCost": 1,
+        "apiPressure": 0.009000000000000008,
+        "overallPressure": 0.0027000000000000023
+      },
+      "qualityScore": 1,
+      "accepted": true
+    },
+    {
+      "input": "How do I implement a binary search in JavaScript?",
+      "output": "Here's a binary search implementation:\n\nfunction binarySearch(arr, target) {\n  let left = 0;\n  let right = arr.length - 1;\n  while (left <= right) {\n    const mid = Math.floor((left + right) / 2);\n    if (arr[mid] === target) return mid;\n    if (arr[mid] < target) left = mid + 1;\n    else right = mid - 1;\n  }\n  return -1;\n}",
+      "brain": "LOGOS",
+      "confidence": 0.9,
+      "context": {
+        "domain": "coding",
+        "difficulty": 0.4
+      },
+      "id": "int_1766623099816_3bf2fc09",
+      "capturedAt": 1766623099817,
+      "sessionId": "unknown",
+      "noveltyScore": 0.9,
+      "noveltyClassification": "novel",
+      "noveltyPatterns": [],
+      "resourceCost": {
+        "apiCallCost": 1,
+        "apiPressure": 0,
+        "overallPressure": 0
+      },
+      "qualityScore": 1,
+      "accepted": true
+    },
+    {
+      "input": "How do I implement a binary search in JavaScript?",
+      "output": "Here's a binary search implementation:\n\nfunction binarySearch(arr, target) {\n  let left = 0;\n  let right = arr.length - 1;\n  while (left <= right) {\n    const mid = Math.floor((left + right) / 2);\n    if (arr[mid] === target) return mid;\n    if (arr[mid] < target) left = mid + 1;\n    else right = mid - 1;\n  }\n  return -1;\n}",
+      "brain": "LOGOS",
+      "confidence": 0.9,
+      "context": {
+        "domain": "coding",
+        "difficulty": 0.4
+      },
+      "id": "int_1766623119665_078eb663",
+      "capturedAt": 1766623119665,
+      "sessionId": "unknown",
+      "noveltyScore": 0.9,
+      "noveltyClassification": "novel",
+      "noveltyPatterns": [],
+      "resourceCost": {
+        "apiCallCost": 1,
+        "apiPressure": 0,
+        "overallPressure": 0
+      },
+      "qualityScore": 1,
+      "accepted": true
+    }
+  ],
+  "rejected": [],
+  "stats": {
+    "totalCaptured": 12,
+    "totalRejected": 0,
+    "totalExported": 0,
+    "averageNovelty": 0.9083333333333335,
+    "averageQuality": 1,
+    "lastExportTime": null,
+    "exportCount": 0,
+    "categoryCounts": {
+      "high_quality": 12,
+      "medium_quality": 0,
+      "low_quality": 0,
+      "rejected": 0
+    }
+  },
+  "timestamp": "2025-12-25T00:38:39.668Z"
+}

@@ -1,0 +1,23 @@
+{
+  "userId": "cli-test",
+  "sessions": 2,
+  "totalMessages": 2,
+  "avgMsgLength": 11,
+  "questionRatio": 1,
+  "vocabRichness": 1,
+  "avgWordLength": 4.36,
+  "typicalStyle": "inquisitive-terse",
+  "hourHistogram": {
+    "21": 1,
+    "23": 1
+  },
+  "topicFreq": {
+    "architecture": 2
+  },
+  "recentTopics": [
+    "architecture"
+  ],
+  "lastSeen": 1773805047170,
+  "lastUpdated": 1773805047170,
+  "createdAt": 1773797116229
+}

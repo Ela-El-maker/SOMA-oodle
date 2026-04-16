@@ -35,7 +35,7 @@ class GoalPlannerArbiter extends BaseArbiter {
     this.maxActiveGoals = config.maxActiveGoals || 20;
     this.maxCompletedHistory = config.maxCompletedHistory || 100;
     this.stalledThresholdDays = config.stalledThresholdDays || 7;
-    this.planningIntervalHours = config.planningIntervalHours || 6;
+    this.planningIntervalHours = config.planningIntervalHours || 0.5; // every 30 min
     
     // Prioritization weights
     this.priorityWeights = {
@@ -73,7 +73,12 @@ class GoalPlannerArbiter extends BaseArbiter {
     // Persistence
     this.dataDir = config.dataDir || path.join(process.cwd(), 'data');
     this.persistPath = path.join(this.dataDir, 'goals.json');
+    this.planPath = path.join(process.cwd(), 'SOMA', 'plan.md');
     this._dirty = false;
+
+    // Swarm outcome cache — populated by swarm.experience signals
+    this._swarmHistory = [];   // { success, filepath, ts }
+    this._cooldownCategories = new Map(); // category -> expiresAt — suppresses repeated failures
 
     // NEMESIS Phase 2.2: Reality check system
     this.nemesis = PrometheusNemesis ? new PrometheusNemesis({
@@ -129,33 +134,27 @@ class GoalPlannerArbiter extends BaseArbiter {
   }
 
   _subscribeBrokerMessages() {
-    // Goal management
-    messageBroker.subscribe(this.name, 'create_goal');
-    messageBroker.subscribe(this.name, 'update_goal_progress');
-    messageBroker.subscribe(this.name, 'query_goals');
-    messageBroker.subscribe(this.name, 'cancel_goal');
-    
-    // System observations for autonomous goal generation
-    messageBroker.subscribe(this.name, 'velocity_report');
-    messageBroker.subscribe(this.name, 'code_analysis_complete');
-    messageBroker.subscribe(this.name, 'memory_metrics');
-    messageBroker.subscribe(this.name, 'fitness_score_update');
-    messageBroker.subscribe(this.name, 'discovery_complete');
-    messageBroker.subscribe(this.name, 'contradiction_detected'); // BeliefSystemArbiter
-    messageBroker.subscribe(this.name, 'practice_reminder'); // SkillAcquisitionArbiter
-    messageBroker.subscribe(this.name, 'skill_degraded'); // SkillAcquisitionArbiter
-    messageBroker.subscribe(this.name, 'resource_pressure_critical'); // ResourceBudgetArbiter
+    // Direct topic subscriptions (correct broker API: subscribe(topic, handler))
+    // DriveArbiter publishes here when tension >= planningThreshold
+    messageBroker.subscribe('drive.planning.needed', (envelope) => {
+      this.runPlanningCycle().catch(() => {});
+    });
 
-    // Conflict resolution (Conservative vs Progressive)
-    messageBroker.subscribe(this.name, 'arbitration_request'); // ProgressiveArbiter
-    messageBroker.subscribe(this.name, 'goal_concern'); // ConservativeArbiter
-    messageBroker.subscribe(this.name, 'goal_enhancement_suggestion'); // ProgressiveArbiter
+    // Broadcast goal lifecycle events so other arbiters can react
+    messageBroker.subscribe('planning_pulse', (envelope) => {
+      this.runPlanningCycle().catch(() => {});
+    });
 
-    // Planning triggers
-    messageBroker.subscribe(this.name, 'planning_pulse');
-    messageBroker.subscribe(this.name, 'time_pulse');
-    
-    this.logger.info(`[${this.name}] Subscribed to message types`);
+    // Swarm outcome feedback — EngineeringSwarmArbiter publishes here after every patch attempt
+    messageBroker.subscribe('swarm.experience', (envelope) => {
+      const data = envelope?.data || envelope;
+      if (data && typeof data.success === 'boolean') {
+        this._swarmHistory.push({ success: data.success, filepath: data.filepath, ts: Date.now() });
+        if (this._swarmHistory.length > 200) this._swarmHistory.shift();
+      }
+    });
+
+    this.logger.info(`[${this.name}] Subscribed to broker topics`);
   }
 
   async handleMessage(message = {}) {
@@ -174,6 +173,25 @@ class GoalPlannerArbiter extends BaseArbiter {
         
         case 'cancel_goal':
           return await this.cancelGoal(payload.goalId, payload.reason);
+
+        case 'swarm_goal_failed':
+          return await this._handleSwarmGoalFailure(payload.goalId, payload.reason);
+        
+        case 'approve_goal':
+          return await this.approveGoal(payload.goalId);
+
+        case 'reject_goal':
+          return await this.rejectGoal(payload.goalId, payload.reason);
+        
+        case 'question_response':
+          return await this.handleQuestionResponse(payload);
+        
+        case 'fix_proposed':
+          return await this._handleFixProposed(payload);
+        
+        case 'query_plan':
+          return this._handleQueryPlan();
+        
         
         case 'velocity_report':
           return await this.handleVelocityReport(payload);
@@ -235,12 +253,18 @@ class GoalPlannerArbiter extends BaseArbiter {
         throw new Error('Goal must have title and category');
       }
 
-      // Deduplication — reject if a similar active goal already exists
-      if (source === 'autonomous') {
+      // Deduplication — reject if a similar active goal already exists (all non-user sources)
+      if (source !== 'user') {
         const duplicate = this._findSimilarActiveGoal(goalData.category, goalData.title);
         if (duplicate) {
           this.logger.info(`[${this.name}] Skipping duplicate goal "${goalData.title}" — similar active goal exists: "${duplicate.title}"`);
           return { success: false, error: 'Duplicate goal exists', existingGoalId: duplicate.id };
+        }
+
+        // Cooldown check — don't regenerate categories that are on a failure streak
+        if (this._isCategoryOnCooldown(goalData.category)) {
+          this.logger.info(`[${this.name}] Category "${goalData.category}" is on failure cooldown — skipping "${goalData.title}"`);
+          return { success: false, error: `Category "${goalData.category}" on cooldown after repeated failures` };
         }
       }
 
@@ -263,7 +287,8 @@ class GoalPlannerArbiter extends BaseArbiter {
         title: goalData.title,
         description: goalData.description || '',
         
-        status: 'pending',
+        status: (source === 'autonomous' || goalData.status === 'proposed') ? 'proposed' : 'pending', // Goals start as 'proposed' or 'pending'
+        approved: false, // All newly created goals require approval by default
         priority: goalData.priority || 50,
         
         metrics: goalData.metrics || {
@@ -321,13 +346,22 @@ class GoalPlannerArbiter extends BaseArbiter {
         this.stats.autonomousGoals++;
       }
       
-      // Broadcast goal creation
+      // Broadcast goal creation (direct message to arbiters)
       await messageBroker.sendMessage({
         from: this.name,
         to: 'broadcast',
         type: 'goal_created',
         payload: { goal }
       });
+
+      // Emit typed signal to CNS pub/sub (SignalSchema: goal.created)
+      messageBroker.publish('goal.created', {
+        goalId: goal.id,
+        title: goal.title,
+        category: goal.category,
+        source,
+        priority: goal.priority
+      }).catch(() => {});
       
       this.logger.info(`[${this.name}] 🎯 Created goal: ${goal.title} (${goal.id.slice(0, 8)})`);
       this.logger.info(`[${this.name}]    Type: ${goal.type}, Category: ${goal.category}, Priority: ${goal.priority}`);
@@ -335,8 +369,8 @@ class GoalPlannerArbiter extends BaseArbiter {
       this._dirty = true;
       this._saveToDisk();
 
-      // Start goal if no dependencies
-      if (goal.dependencies.length === 0 && goal.prerequisites.length === 0) {
+      // Start goal if no dependencies and not proposed
+      if (goal.status !== 'proposed' && goal.dependencies.length === 0 && goal.prerequisites.length === 0) {
         await this.startGoal(goal.id);
       }
       
@@ -353,11 +387,12 @@ class GoalPlannerArbiter extends BaseArbiter {
       throw new Error(`Goal not found: ${goalId}`);
     }
     
-    if (goal.status !== 'pending') {
-      return { success: false, reason: 'Goal not in pending state' };
+    if (goal.status !== 'pending' && goal.status !== 'proposed') {
+      return { success: false, reason: 'Goal not in pending or proposed state' };
     }
     
     goal.status = 'active';
+    goal.approved = true;
     goal.startedAt = Date.now();
     
     // Assign tasks if not already assigned
@@ -474,6 +509,17 @@ class GoalPlannerArbiter extends BaseArbiter {
     
     this.logger.warn(`[${this.name}] ❌ Failed goal: ${goal.title} - ${reason}`);
 
+    // If this category has failed 3+ times recently, put it on a 2-hour cooldown
+    const catRate = this._getCategorySuccessRate(goal.category, 24 * 3600_000);
+    const recentFails = this.failedGoals.filter(g =>
+      g.category === goal.category && (g.completedAt || 0) >= Date.now() - 24 * 3600_000
+    ).length;
+    if (recentFails >= 3 && (catRate === null || catRate < 0.4)) {
+      const cooldownMs = 2 * 3600_000;
+      this._cooldownCategories.set(goal.category, Date.now() + cooldownMs);
+      this.logger.warn(`[${this.name}] ⏸ Category "${goal.category}" placed on 2h cooldown after ${recentFails} failures`);
+    }
+
     this._dirty = true;
     this._saveToDisk();
 
@@ -498,6 +544,49 @@ class GoalPlannerArbiter extends BaseArbiter {
     this.logger.info(`[${this.name}] ⏸️  Deferred goal: ${goal.title} - ${reason}`);
 
     return { success: true, goal };
+  }
+
+  /**
+   * Called when EngineeringSwarmArbiter fails to execute a goal.
+   * Retries up to 3 times with escalating priority and a post-mortem appended
+   * to the description so the next swarm attempt has failure context.
+   * On the 3rd failure, archives via failGoal() which applies category cooldowns.
+   */
+  async _handleSwarmGoalFailure(goalId, reason = 'unknown') {
+    const goal = this.goals.get(goalId);
+    if (!goal) return { success: false, error: 'Goal not found' };
+
+    const MAX_SWARM_ATTEMPTS = 3;
+    goal.metadata.swarmFailureCount = (goal.metadata.swarmFailureCount || 0) + 1;
+    const attempt = goal.metadata.swarmFailureCount;
+
+    if (attempt < MAX_SWARM_ATTEMPTS) {
+      // Escalate — bump priority and annotate description for next attempt
+      const oldPriority = goal.priority;
+      goal.priority = Math.min(95, goal.priority + 15);
+      goal.status = 'pending'; // Reset to pending so it gets picked up again
+
+      // Append post-mortem only if not already present for this attempt number
+      const marker = `[POST-MORTEM attempt ${attempt}]`;
+      if (!goal.description.includes(marker)) {
+        goal.description += `\n${marker}: Swarm execution failed. Reason: ${reason}. Adjust strategy.`;
+      }
+
+      this.logger.warn(
+        `[${this.name}] ⚠️  Swarm failure for "${goal.title}" (attempt ${attempt}/${MAX_SWARM_ATTEMPTS}) ` +
+        `— priority escalated ${oldPriority}→${goal.priority}, queued for retry`
+      );
+
+      this._dirty = true;
+      this._saveToDisk();
+      return { success: true, retrying: true, attempt, goal };
+    }
+
+    // 3rd failure — archive it properly (applies category cooldown logic)
+    this.logger.warn(
+      `[${this.name}] ❌ Goal "${goal.title}" exhausted ${MAX_SWARM_ATTEMPTS} swarm attempts — archiving`
+    );
+    return await this.failGoal(goalId, `Swarm exhausted ${MAX_SWARM_ATTEMPTS} attempts. Last error: ${reason}`);
   }
 
   getActiveGoals(filter = {}) {
@@ -593,10 +682,42 @@ class GoalPlannerArbiter extends BaseArbiter {
     // Base feasibility on dependencies and prerequisites
     const dependencyPenalty = goal.dependencies.length * 0.1;
     const prerequisitePenalty = goal.prerequisites.length * 0.15;
-    
-    const score = 1.0 - Math.min(0.5, dependencyPenalty + prerequisitePenalty);
-    
-    return Math.max(0.3, score);
+    let score = 1.0 - Math.min(0.5, dependencyPenalty + prerequisitePenalty);
+
+    // Outcome-aware adjustment: penalise categories that keep failing
+    const catRate = this._getCategorySuccessRate(goal.category, 7 * 24 * 3600_000);
+    if (catRate !== null) {
+      if (catRate < 0.3)       score -= 0.25;  // category is consistently failing
+      else if (catRate < 0.5)  score -= 0.10;
+      else if (catRate > 0.75) score += 0.10;  // category has a good track record
+    }
+
+    // Swarm-specific penalty: if the swarm is struggling and this goal needs it
+    const swarmCategories = ['optimization', 'quality', 'capability', 'learning'];
+    if (swarmCategories.includes(goal.category) && this._swarmHistory.length >= 5) {
+      const recent = this._swarmHistory.slice(-20);
+      const swarmRate = recent.filter(e => e.success).length / recent.length;
+      if (swarmRate < 0.4) score -= 0.15;
+    }
+
+    return Math.max(0.1, Math.min(1.0, score));
+  }
+
+  // Success rate for a category in the given window, null if no data
+  _getCategorySuccessRate(category, windowMs = 7 * 24 * 3600_000) {
+    const since = Date.now() - windowMs;
+    const wins  = this.completedGoals.filter(g => g.category === category && (g.completedAt || 0) >= since).length;
+    const fails = this.failedGoals.filter(g => g.category === category && (g.completedAt || 0) >= since).length;
+    const total = wins + fails;
+    return total >= 3 ? wins / total : null;   // need at least 3 data points to be meaningful
+  }
+
+  // Whether a category is on cooldown (too many recent failures)
+  _isCategoryOnCooldown(category) {
+    const exp = this._cooldownCategories.get(category);
+    if (!exp) return false;
+    if (Date.now() > exp) { this._cooldownCategories.delete(category); return false; }
+    return true;
   }
 
   calculateResourceCostScore(goal) {
@@ -1256,27 +1377,138 @@ class GoalPlannerArbiter extends BaseArbiter {
     this.logger.info(`[${this.name}] Planning loop started (every ${this.planningIntervalHours}h)`);
   }
 
+  _readPlanMd() {
+    try {
+      if (fs.existsSync(this.planPath)) {
+        return fs.readFileSync(this.planPath, 'utf8');
+      }
+    } catch (_) {}
+    return null;
+  }
+
   async runPlanningCycle() {
     this.logger.info(`[${this.name}] 🧠 Running planning cycle...`);
-    
+
+    // Log plan context so SOMA has continuity
+    const plan = this._readPlanMd();
+    if (plan) {
+      this.logger.info(`[${this.name}] 📋 Current plan loaded (${plan.split('\n').length} lines)`);
+    }
+
     try {
       // Rebalance priorities
       await this.rebalancePriorities();
-      
+
+      // Prune stale goals before dispatching
+      await this._pruneStaleGoals();
+
       // Check for stalled goals
       await this.reviewStalledGoals();
-      
+
       // Calculate statistics
       this.updateStatistics();
-      
+
+      // Dispatch the highest-priority pending goal
+      await this._dispatchHighestPriorityGoal();
+
       this.logger.info(`[${this.name}] Planning cycle complete`);
       this.logger.info(`[${this.name}]    Active: ${this.activeGoals.size}, Completed: ${this.completedGoals.length}, Failed: ${this.failedGoals.length}`);
-      
+
       return { success: true };
     } catch (err) {
       this.logger.error(`[${this.name}] Planning cycle error: ${err.message}`);
       return { success: false, error: err.message };
     }
+  }
+
+  // Pick the highest-priority pending (or proposed) goal and dispatch it
+  async _dispatchHighestPriorityGoal() {
+    // Include 'proposed' goals — NEMESIS already vetted them; waiting for human approval is too slow
+    // for autonomous operation. High-priority goals get dispatched regardless of proposed/pending.
+    const pending = Array.from(this.activeGoals)
+      .map(id => this.goals.get(id))
+      .filter(g => g && (g.status === 'pending' || g.status === 'proposed'))
+      .sort((a, b) => b.priority - a.priority);
+
+    if (pending.length === 0) return;
+
+    const top = pending[0];
+    this.logger.info(`[${this.name}] 🚀 Dispatching highest-priority goal: "${top.title}" (priority ${top.priority})`);
+
+    // Mark as active so it doesn't get dispatched again next cycle
+    top.status = 'active';
+    top.startedAt = top.startedAt || Date.now();
+    this._dirty = true;
+
+    // Resolve live targets — check broker for each assignee, fall back to EngineeringSwarmArbiter
+    const candidates = top.assignedTo?.length > 0 ? top.assignedTo : ['EngineeringSwarmArbiter'];
+    const liveTargets = candidates.filter(t => {
+      try {
+        const r = messageBroker.findArbiter?.(t, { suggest: false });
+        return r?.found === true;
+      } catch { return false; }
+    });
+    const targets = liveTargets.length > 0 ? liveTargets : ['EngineeringSwarmArbiter'];
+
+    if (liveTargets.length < candidates.length) {
+      const dead = candidates.filter(t => !liveTargets.includes(t));
+      this.logger.warn(`[${this.name}] Dead assignee(s) for "${top.title}": [${dead.join(', ')}] → routing to ${targets.join(', ')}`);
+    }
+
+    for (const target of targets) {
+      messageBroker.sendMessage({
+        from: this.name,
+        to:   target,
+        type: 'goal_assigned',
+        payload: {
+          goalId:      top.id,
+          goal: {
+            title:       top.title,
+            description: top.description,
+            category:    top.category,
+            priority:    top.priority,
+            metrics:     top.metrics
+          }
+        }
+      }).catch(() => {});
+    }
+
+    // Broadcast so DriveArbiter and other listeners know work started
+    messageBroker.sendMessage({
+      from: this.name, to: 'broadcast',
+      type: 'goal_started',
+      payload: { title: top.title, goalId: top.id, priority: top.priority }
+    }).catch(() => {});
+  }
+
+  // Auto-cancel goals that have been active for stalledThresholdDays with 0 progress
+  async _pruneStaleGoals() {
+    const now   = Date.now();
+    const limit = this.stalledThresholdDays * 24 * 60 * 60 * 1000;
+    const pruned = [];
+
+    for (const goalId of this.activeGoals) {
+      const goal = this.goals.get(goalId);
+      if (!goal) continue;
+
+      const age      = now - (goal.startedAt || goal.createdAt || now);
+      const progress = goal.metrics?.progress ?? 0;
+
+      if (age > limit && progress === 0) {
+        pruned.push(goal);
+      }
+    }
+
+    for (const goal of pruned) {
+      this.logger.warn(`[${this.name}] 🗑️  Auto-pruning stale goal: "${goal.title}" (0% progress, ${Math.floor((now - goal.createdAt) / 86400000)}d old)`);
+      await this.cancelGoal(goal.id, `Auto-pruned: 0% progress after ${this.stalledThresholdDays} days`);
+    }
+
+    if (pruned.length > 0) {
+      this.logger.info(`[${this.name}] Pruned ${pruned.length} stale goal(s) — slots freed for new work`);
+    }
+
+    return pruned.length;
   }
 
   startMonitoringLoop() {
@@ -1290,21 +1522,35 @@ class GoalPlannerArbiter extends BaseArbiter {
 
   async reviewStalledGoals() {
     const stalled = [];
-    
+
     for (const goalId of this.activeGoals) {
       const goal = this.goals.get(goalId);
       if (this.isGoalStalled(goal)) {
         stalled.push(goal);
       }
     }
-    
-    if (stalled.length > 0) {
-      this.logger.warn(`[${this.name}] ⚠️  Found ${stalled.length} stalled goals`);
-      
-      for (const goal of stalled) {
-        this.logger.warn(`[${this.name}]    - ${goal.title} (${goal.metrics.progress}% progress)`);
-        
-        // Could implement auto-escalation or re-assignment here
+
+    if (stalled.length === 0) return;
+
+    this.logger.warn(`[${this.name}] ⚠️  Found ${stalled.length} stalled goal(s)`);
+
+    for (const goal of stalled) {
+      const stalledDays = Math.floor((Date.now() - goal.startedAt) / 86400000);
+      const progress    = goal.metrics?.progress ?? 0;
+
+      this.logger.warn(`[${this.name}]    - "${goal.title}" (${progress}% progress, ${stalledDays}d stalled)`);
+
+      // Goals stalled > 2x the threshold with <10% progress get auto-cancelled
+      // Goals stalled > threshold but with some progress get deprioritized instead
+      if (stalledDays > this.stalledThresholdDays * 2 && progress < 10) {
+        this.logger.warn(`[${this.name}]    → Auto-cancelling: stalled ${stalledDays}d with <10% progress`);
+        await this.cancelGoal(goal.id, `Auto-cancelled: stalled ${stalledDays} days with ${progress}% progress`);
+      } else {
+        // Deprioritize — drop priority so higher-value goals jump ahead
+        const oldPriority = goal.priority;
+        goal.priority     = Math.max(0, goal.priority - 20);
+        this._dirty       = true;
+        this.logger.info(`[${this.name}]    → Deprioritized: ${oldPriority} → ${goal.priority}`);
       }
     }
   }
@@ -1385,8 +1631,76 @@ class GoalPlannerArbiter extends BaseArbiter {
       fs.writeFileSync(this.persistPath, JSON.stringify(snapshot, null, 2), 'utf8');
       this._dirty = false;
       this.logger.info(`[${this.name}] 💾 Saved ${this.goals.size} goals to disk`);
+      this._writePlanMd();
     } catch (err) {
       this.logger.error(`[${this.name}] Failed to save goals: ${err.message}`);
+    }
+  }
+
+  _writePlanMd() {
+    try {
+      const now = new Date();
+      const ts = now.toLocaleString('en-US', { dateStyle: 'medium', timeStyle: 'short' });
+
+      const allGoals = Array.from(this.goals.values());
+      const proposed  = allGoals.filter(g => g.status === 'proposed').sort((a, b) => b.priority - a.priority);
+      const active    = allGoals.filter(g => g.status === 'active').sort((a, b) => b.priority - a.priority);
+      const pending   = allGoals.filter(g => g.status === 'pending').sort((a, b) => b.priority - a.priority);
+      const completed = this.completedGoals.slice(0, 20);
+      const failed    = this.failedGoals.slice(0, 10);
+
+      const fmtGoal = (g, checked = false) => {
+        const box = checked ? '[x]' : '[ ]';
+        const pct = g.metrics?.progress != null ? ` — ${g.metrics.progress.toFixed(0)}%` : '';
+        const desc = g.description ? `\n  > ${g.description.substring(0, 120)}` : '';
+        return `- ${box} **${g.title}** *(priority: ${g.priority})${pct}*${desc}`;
+      };
+
+      // Prepend Barry's priority notes if PRIORITIES.md exists
+      const prioritiesPath = path.join(process.cwd(), 'SOMA', 'PRIORITIES.md');
+      let prioritiesBlock = '';
+      try {
+        if (fs.existsSync(prioritiesPath)) {
+          prioritiesBlock = fs.readFileSync(prioritiesPath, 'utf8').trim() + '\n\n---\n\n';
+        }
+      } catch (_) {}
+
+      let md = prioritiesBlock + `# SOMA's Plan\n\n*Last updated: ${ts}*\n\n`;
+
+      if (proposed.length) {
+        md += `## ⏳ Awaiting Approval\n${proposed.map(g => fmtGoal(g)).join('\n')}\n\n`;
+      }
+      if (active.length) {
+        md += `## 🔥 Active\n${active.map(g => fmtGoal(g)).join('\n')}\n\n`;
+      }
+      if (pending.length) {
+        md += `## 🕐 Queued\n${pending.map(g => fmtGoal(g)).join('\n')}\n\n`;
+      }
+      if (completed.length) {
+        md += `## ✅ Completed\n${completed.map(g => fmtGoal(g, true)).join('\n')}\n\n`;
+      }
+      if (failed.length) {
+        md += `## ❌ Rejected / Failed\n${failed.map(g => `- ~~${g.title}~~ *(${g.metadata?.rejectionReason || g.status})*`).join('\n')}\n\n`;
+      }
+
+      md += `---\n*${this.goals.size} goals tracked · ${active.length} active · Tension: ${Math.round((this.lastTension || 0) * 100)}%*\n`;
+
+      // Ensure SOMA/ directory exists
+      const dir = path.dirname(this.planPath);
+      if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+
+      fs.writeFileSync(this.planPath, md, 'utf8');
+
+      // Notify frontend
+      messageBroker.sendMessage({
+        from: this.name,
+        to: 'broadcast',
+        type: 'plan_updated',
+        payload: { content: md, updatedAt: now.toISOString() }
+      }).catch(() => {});
+
+    } catch (err) {
+      this.logger.error(`[${this.name}] Failed to write plan.md: ${err.message}`);
     }
   }
 
@@ -1431,6 +1745,43 @@ class GoalPlannerArbiter extends BaseArbiter {
         this.logger.warn(`[${this.name}] ⚠️ Trimmed ${excess.length} excess active goals on restore (limit: ${this.maxActiveGoals})`);
       }
 
+      // ═══ DEDUP ACTIVE GOALS ON LOAD ═══
+      // External tools (or direct file edits) can inject duplicate goals that bypass
+      // createGoal()'s runtime dedup check. Run dedup on every restore so the file
+      // never accumulates duplicates regardless of how they got there.
+      {
+        const seen = new Map(); // normalizedTitle -> first goal id
+        const dupIds = new Set();
+        for (const id of Array.from(this.activeGoals)) {
+          const g = this.goals.get(id);
+          if (!g) continue;
+          // Strip punctuation/quotes, lowercase — catches Gemini-style "quoted titles"
+          const normalized = (g.title || '').toLowerCase().replace(/[^a-z0-9 ]/g, '').replace(/\s+/g, ' ').trim();
+          if (seen.has(normalized)) {
+            // Keep the one with higher priority; defer the other
+            const existingId = seen.get(normalized);
+            const existing = this.goals.get(existingId);
+            if ((g.priority || 0) > (existing?.priority || 0)) {
+              dupIds.add(existingId);
+              seen.set(normalized, id);
+            } else {
+              dupIds.add(id);
+            }
+          } else {
+            seen.set(normalized, id);
+          }
+        }
+        if (dupIds.size > 0) {
+          for (const id of dupIds) {
+            const g = this.goals.get(id);
+            if (g) { g.status = 'deferred'; g.metadata = { ...(g.metadata || {}), deferredReason: 'Duplicate on restore' }; }
+            this.activeGoals.delete(id);
+          }
+          this.logger.warn(`[${this.name}] 🔍 Deduped ${dupIds.size} duplicate active goal(s) on restore`);
+          this._dirty = true; // Persist dedup so file doesn't re-accumulate on every restart
+        }
+      }
+
       // ═══ PRUNE OLD NON-ACTIVE GOALS FROM MAP ═══
       // Remove deferred/completed/failed goals older than 30 days to prevent unbounded Map growth
       const THIRTY_DAYS = 30 * 24 * 60 * 60 * 1000;
@@ -1466,6 +1817,155 @@ class GoalPlannerArbiter extends BaseArbiter {
       this.logger.error(`[${this.name}] Failed to load goals: ${err.message} — starting fresh`);
     }
   }
+
+  async _handleQueryPlan(envelope) {
+    // Generate the plan content (re-use _writePlanMd logic without writing to file)
+    const now = new Date();
+    const ts = now.toLocaleString('en-US', { dateStyle: 'medium', timeStyle: 'short' });
+
+    const allGoals = Array.from(this.goals.values());
+    const proposed  = allGoals.filter(g => g.status === 'proposed').sort((a, b) => b.priority - a.priority);
+    const active    = allGoals.filter(g => g.status === 'active').sort((a, b) => b.priority - a.priority);
+    const pending   = allGoals.filter(g => g.status === 'pending').sort((a, b) => b.priority - a.priority);
+    const completed = this.completedGoals.slice(0, 20);
+    const failed    = this.failedGoals.slice(0, 10);
+
+    const fmtGoal = (g, checked = false) => {
+      const box = checked ? '[x]' : '[ ]';
+      const pct = g.metrics?.progress != null ? ` — ${g.metrics.progress.toFixed(0)}%` : '';
+      const desc = g.description ? `\n  > ${g.description.substring(0, 120)}` : '';
+      return `- ${box} **${g.title}** *(priority: ${g.priority})${pct}*${desc}`;
+    };
+
+    let md = `# SOMA's Plan\n\n*Last updated: ${ts}*\n\n`;
+
+    if (proposed.length) {
+      md += `## ⏳ Awaiting Approval\n${proposed.map(g => fmtGoal(g)).join('\n')}\n\n`;
+    }
+    if (active.length) {
+      md += `## 🔥 Active\n${active.map(g => fmtGoal(g)).join('\n')}\n\n`;
+    }
+    if (pending.length) {
+      md += `## 🕐 Queued\n${pending.map(g => fmtGoal(g)).join('\n')}\n\n`;
+    }
+    if (completed.length) {
+      md += `## ✅ Completed\n${completed.map(g => fmtGoal(g, true)).join('\n')}\n\n`;
+    }
+    if (failed.length) {
+      md += `## ❌ Rejected / Failed\n${failed.map(g => `- ~~${g.title}~~ *(${g.metadata?.rejectionReason || g.status})*`).join('\n')}\n\n`;
+    }
+
+    md += `---\n*${this.goals.size} goals tracked · ${active.length} active · Tension: ${Math.round((this.lastTension || 0) * 100)}%*\n`;
+
+    // Send the plan content back
+    return { success: true, plan: md, updatedAt: now.toISOString() };
+  }
+
+  async approveGoal(goalId) {
+    const goal = this.goals.get(goalId);
+    if (!goal) {
+      return { success: false, error: 'Goal not found' };
+    }
+
+    if (goal.status !== 'proposed') {
+      return { success: false, reason: 'Goal is not in a proposed state' };
+    }
+
+    // Set approved and change status to active
+    goal.approved = true;
+    goal.status = 'active'; // Status is changed to active before calling startGoal
+
+    this._dirty = true;
+    this._saveToDisk();
+
+    await messageBroker.sendMessage({
+      from: this.name,
+      to: 'broadcast',
+      type: 'goal_approved',
+      payload: { goalId: goal.id, goal }
+    });
+
+    this.logger.info(`[${this.name}] ✅ Approved and activated goal: ${goal.title} (${goal.id.slice(0, 8)})`);
+
+    // Now start the goal, which will handle assigned tasks etc.
+    // Ensure startGoal is idempotent and doesn't re-assign if already active.
+    return await this.startGoal(goal.id);
+  }
+
+  async rejectGoal(goalId, reason = 'Rejected by user') {
+    const goal = this.goals.get(goalId);
+    if (!goal) {
+      return { success: false, error: 'Goal not found' };
+    }
+
+    if (goal.status !== 'proposed') {
+      return { success: false, reason: 'Goal is not in a proposed state' };
+    }
+
+    goal.status = 'rejected';
+    goal.approved = false;
+    goal.metadata.rejectionReason = reason;
+
+    this.activeGoals.delete(goalId); // Remove from active set
+    this.failedGoals.unshift(goal); // Treat as failed for archival
+
+    this._dirty = true;
+    this._saveToDisk();
+
+    await messageBroker.sendMessage({
+      from: this.name,
+      to: 'broadcast',
+      type: 'goal_rejected',
+      payload: { goalId: goal.id, goal, reason }
+    });
+
+    this.logger.info(`[${this.name}] 🚫 Rejected goal: ${goal.title} (${goal.id.slice(0, 8)}) - ${reason}`);
+
+    return { success: true, goalId: goal.id };
+  }
+
+  async proposeQuestion(questionPayload) {
+    if (!questionPayload || !questionPayload.question) {
+      this.logger.error(`[${this.name}] proposeQuestion called with invalid payload.`);
+      return { success: false, error: 'Invalid question payload' };
+    }
+
+    const questionId = crypto.randomUUID();
+    const questionEvent = {
+      from: this.name,
+      to: 'broadcast', // Frontend will listen to this
+      type: 'proactive_question',
+      payload: {
+        questionId,
+        timestamp: Date.now(),
+        ...questionPayload
+      }
+    };
+
+    await messageBroker.sendMessage(questionEvent);
+    this.logger.info(`[${this.name}] ❓ Proposed question: ${questionPayload.question} (ID: ${questionId.slice(0, 8)})`);
+
+    return { success: true, questionId };
+  }
+
+  async handleQuestionResponse(payload) {
+    const { questionId, response } = payload;
+    this.logger.info(`[${this.name}] Received response for question ${questionId.slice(0, 8)}: "${response}"`);
+
+    // Here you would typically process the response.
+    // For example, update a goal's metadata, trigger a new action,
+    // or log it for later analysis.
+    // Since this is a placeholder, we'll just log it.
+
+    // If the question was related to a stalled goal, we might now
+    // take action based on the 'response'.
+    // e.g., if response is 'Cancel this goal', call this.cancelGoal(goalId, 'User requested cancel');
+
+    return { success: true, message: 'Question response processed' };
+  }
+
+
+
 
   // ═══════════════════════════════════════════════════════════
   // ░░ AUTOPILOT CONTROL ░░

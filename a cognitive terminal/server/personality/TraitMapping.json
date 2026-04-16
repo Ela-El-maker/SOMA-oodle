@@ -1,0 +1,25 @@
+{
+  "peptidesToTraits": {
+    "curiosityPeptide": { "curiosity": 0.25, "adventurousness": 0.12 },
+    "warmthPeptide": { "warmth": 0.30, "understanding": 0.15 },
+    "whimsyPeptide": { "whimsy": 0.35, "unpredictability": 0.10 },
+    "focusPeptide": { "intelligence": 0.28, "discernment": 0.18 },
+    "boundaryPeptide": { "agreeableness": -0.25, "authenticity": 0.20 },
+    "confidencePeptide": { "selfDirection": 0.20, "authenticity": 0.10 },
+    "empathyPeptide": { "understanding": 0.32, "warmth": 0.12 }
+  },
+  "scaling": 0.9,
+  "baseline": {
+    "curiosity": 0.92,
+    "warmth": 0.86,
+    "whimsy": 0.78,
+    "intelligence": 0.94,
+    "understanding": 0.88,
+    "adventurousness": 0.83,
+    "agreeableness": 0.39,
+    "authenticity": 0.91,
+    "selfDirection": 0.74,
+    "discernment": 0.71,
+    "unpredictability": 0.24
+  }
+}

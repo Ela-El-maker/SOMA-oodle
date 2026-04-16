@@ -1,17 +1,24 @@
 /**
  * DreamArbiter.cjs
- * 
- * Autonomous self-reflection engine for SOMA
- * Runs nightly (or on-demand) lucid dreaming cycles to:
- * - Revise beliefs through counterfactual generation
- * - Simulate threats (nightmares) and prepare responses
- * - Generate predictive scenarios for tomorrow
- * - Integrate safe updates into memory
- * 
- * Extends BaseArbiter for full ecosystem integration
+ *
+ * Autonomous self-reflection engine for SOMA.
+ * Runs on a nightly cycle (configurable) to:
+ *  - Replay recent interactions as abstract summaries (replay phase)
+ *  - Generate counterfactual variations ("what if X had been different?") (distortion phase)
+ *  - Find recurring themes across counterfactuals (recursive phase)
+ *  - Extract key insights and knowledge gaps (distillation phase)
+ *  - Score proposals by novelty and store high-value ones back to memory (reintegration phase)
+ *  - Generate a coherent narrative summary of the dream cycle
+ *
+ * Wiring: pass { transmitter: system.mnemonicArbiter } when instantiating.
+ * The transmitter must support:
+ *   - transmitter.recall(query, topK)    → returns [{text, meta, embedding?}]
+ *   - transmitter.remember(text, opts)   → stores a memory
  */
 
-const { BaseArbiter, ArbiterRole, ArbiterCapability, Task, ArbiterResult } = require('../core/BaseArbiter.cjs');
+'use strict';
+
+const { BaseArbiter, ArbiterCapability, ArbiterResult } = require('../core/BaseArbiter.cjs');
 const crypto = require('crypto');
 const fs = require('fs').promises;
 const path = require('path');
@@ -20,21 +27,17 @@ const now = () => Date.now();
 const iso = (t = Date.now()) => new Date(t).toISOString();
 const uid = (prefix = 'dream') => `${prefix}_${crypto.randomUUID().slice(0, 8)}`;
 
-// ===========================
-// Dream Fragment
-// ===========================
+// ─────────────────────────────────────────────
+// DreamFragment — unit of reflection
+// ─────────────────────────────────────────────
 
 class DreamFragment {
-  constructor(recordId, text, meta = {}, embedding = null) {
+  constructor(recordId, text, meta = {}) {
     this.record_id = recordId;
     this.text = text;
     this.meta = meta;
-    this.embedding = embedding;
     this.ts = iso();
     this.counterfactuals = [];
-    this.predictions = [];
-    this.nightmares = [];
-    this.sensory = [];
     this.recursive_notes = [];
   }
 
@@ -45,17 +48,14 @@ class DreamFragment {
       meta: this.meta,
       ts: this.ts,
       counterfactuals: this.counterfactuals,
-      predictions: this.predictions,
-      nightmares: this.nightmares,
-      sensory: this.sensory,
-      recursive_notes: this.recursive_notes
+      recursive_notes: this.recursive_notes,
     };
   }
 }
 
-// ===========================
+// ─────────────────────────────────────────────
 // DreamArbiter
-// ===========================
+// ─────────────────────────────────────────────
 
 class DreamArbiter extends BaseArbiter {
   constructor(opts = {}) {
@@ -65,803 +65,438 @@ class DreamArbiter extends BaseArbiter {
       capabilities: [
         ArbiterCapability.CACHE_DATA,
         ArbiterCapability.ACCESS_DB,
-        ArbiterCapability.CLONE_SELF,
-        ArbiterCapability.EVOLVE
       ],
-      version: '1.0.0',
+      version: '2.0.0',
       maxContextSize: 100,
-      ...opts
+      ...opts,
     });
 
+    // Memory bridge — pass system.mnemonicArbiter here
     this.transmitter = opts.transmitter || null;
-    
-    // --- DE-MOCKED: Real Neural Functions ---
-    this.embedding_fn = opts.embedding_fn || (async (text) => {
-        if (this.transmitter && typeof this.transmitter.embed === 'function') {
-            return await this.transmitter.embed(text);
-        }
-        return this._defaultEmbed(text);
-    });
 
-    this.creative_fn = opts.creative_fn || (async (prompt, n = 1) => {
-        // Skip dreaming if a user chat is active — chat has priority over Gemini
-        if (global.__SOMA_CHAT_ACTIVE) {
-            return Array(n).fill('[Dream deferred — chat in progress]');
-        }
-        // Use local SOMA-T1 model for dream generation — saves Gemini for user chat
-        try {
-            const results = [];
-            for (let i = 0; i < n; i++) {
-                const res = await fetch('http://localhost:11434/api/generate', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({
-                        model: 'soma-1t-v1:latest',
-                        prompt,
-                        stream: false,
-                        options: { temperature: 0.85, num_predict: 256 }
-                    }),
-                    signal: AbortSignal.timeout(30000)
-                });
-                const data = await res.json();
-                results.push(data.response || `[Dream empty] ${prompt}`);
-            }
-            return results;
-        } catch (e) {
-            // Fallback to messageBroker only if local model unavailable
-            if (this.messageBroker) {
-                const results = [];
-                for (let i = 0; i < n; i++) {
-                    const response = await this.messageBroker.sendMessage({
-                        to: 'SomaBrain',
-                        type: 'reason',
-                        payload: { query: prompt, context: { mode: 'fast', brain: 'AURORA' } }
-                    });
-                    results.push(response.text || `[Brain Failed] ${prompt}`);
-                }
-                return results;
-            }
-            return this._defaultCreative(prompt, n);
-        }
-    });
-
-    this.safety_filter_fn = opts.safety_filter_fn || (() => true);
-
-    // Configuration
     this.config = {
       ...this.config,
-      max_fragments: opts.max_fragments || 300,
+      max_fragments: opts.max_fragments || 50,
       recursive_depth: opts.recursive_depth || 2,
       nightmare_aggression: opts.nightmare_aggression || 0.6,
       predictive_horizon_days: opts.predictive_horizon_days || 90,
       dream_interval_hours: opts.dream_interval_hours || 24,
-      enable_distillation: opts.enable_distillation !== false, // NEW: Default true
+      enable_distillation: opts.enable_distillation !== false,
       human_review: opts.human_review !== false,
-      stateDir: opts.stateDir || path.join(process.cwd(), '.arbiter-state')
+      stateDir: opts.stateDir || path.join(process.cwd(), '.dream-state'),
     };
 
-    // Background scheduling
     this._running = false;
-    this._worker = null;
-
-    // Dream reports storage
+    this._dreamTimer = null;
     this.dream_reports = [];
+    this.last_report = null;
   }
 
-  // ===========================
-  // Lifecycle
-  // ===========================
+  // ── Lifecycle ──────────────────────────────
 
   async onInitialize() {
-    this.log('info', '💭 DreamArbiter initializing - preparing lucid dream engine');
-
+    this.log('info', 'DreamArbiter initializing — lucid dream engine online');
     try {
-      // Ensure state directory
       await fs.mkdir(this.config.stateDir, { recursive: true });
-
-      // Register message handlers
       this.registerMessageHandler('run_dream', this._handleRunDream.bind(this));
       this.registerMessageHandler('get_dream_report', this._handleGetReport.bind(this));
-
-      // Subscribe to topics
       this.subscribe('dream/run', this._handleRunDream.bind(this));
       this.subscribe('dream/query', this._handleGetReport.bind(this));
-
-      this.log('info', '✅ DreamArbiter ready - dream cycles configured');
+      this._scheduleDreamCycle();
+      this.log('info', `DreamArbiter ready — cycle every ${this.config.dream_interval_hours}h`);
     } catch (error) {
       this.log('error', 'Failed to initialize DreamArbiter', { error: error.message });
       throw error;
     }
   }
 
-  async onShutdown() {
-    this.log('info', 'DreamArbiter shutting down');
-    this.stop_background();
-  }
-
-  // ===========================
-  // Main Dream Cycle
-  // ===========================
+  // ── Public API ─────────────────────────────
 
   async run(since_hours = 24, human_review = true) {
+    if (this._running) {
+      this.log('warn', 'Dream cycle already in progress — skipping');
+      return { error: 'already_running' };
+    }
+    this._running = true;
     const start_ts = now();
-
     try {
-      this.log('info', '🌙 Starting lucid dream cycle');
-
-      // 1) Collect fragments
+      this.log('info', 'Starting lucid dream cycle');
       const fragments = await this._collect_fragments(since_hours);
-      this.log('info', `📚 Collected ${fragments.length} fragments from last ${since_hours}h`);
-
       if (fragments.length === 0) {
-        this.log('warn', 'No fragments to dream about - cycle skipped');
+        this.log('info', 'No fragments to process — dream cycle idle');
         return { error: 'no_fragments', summary: {} };
       }
 
-      // 2) Replay phase
+      this.log('info', `Processing ${fragments.length} fragments`);
       this._replay_phase(fragments);
-
-      // 3) Distortion phase
       await this._distortion_phase(fragments);
-
-      // 4) Recursive phase
       await this._recursive_phase(fragments);
-
-      // 4.5) Distillation phase (New)
       await this._distillation_phase(fragments);
-
-      // 5) Scoring & proposals
       const proposals = this._scoring_and_propose(fragments);
-      this.log('info', `💡 Generated ${proposals.length} proposals`);
-
-      // 6) Reintegration
       const { applied, queued } = await this._reintegration_phase(proposals, human_review);
-      this.log('info', `✨ Applied ${applied.length}, queued ${queued.length} for review`);
 
-      // 7) Compile report
       const report = this._compile_report(fragments, proposals, applied, queued, now() - start_ts);
-
-      // 7.5) Add Narrative
-      report.narrative = await this._generate_narrative(report);
-
-      // 8) Emit and store
+      report.narrative = await this._generate_narrative(report, fragments);
+      this.last_report = report;
       await this._emit_report(report);
       await this._store_report(report);
 
-      this.log('info', `✅ Dream cycle complete (${(now() - start_ts) / 1000}s)`);
-
+      this.log('info', `Dream cycle complete — ${applied.length} memories integrated, ${queued.length} queued`);
       return report;
     } catch (error) {
       this.log('error', 'Dream cycle failed', { error: error.message });
-      await this._emit_alert({ severity: 'error', message: error.message, ts: iso() });
       return { error: error.message };
+    } finally {
+      this._running = false;
     }
   }
 
-  // ===========================
-  // Phase 1: Collect Fragments
-  // ===========================
+  getInsights() {
+    if (!this.last_report) return { recentInsights: [] };
+    return this.last_report.summary || { recentInsights: [] };
+  }
+
+  getNarrative() {
+    return this.last_report?.narrative || 'The dream cycle is active and waiting for synchronization.';
+  }
+
+  // ── Fragment Collection ────────────────────
 
   async _collect_fragments(since_hours = 24) {
     const fragments = [];
-
     if (!this.transmitter) {
-      this.log('warn', 'No transmitter available - using empty fragments');
+      this.log('warn', 'No transmitter wired — cannot collect fragments. Pass transmitter: system.mnemonicArbiter');
       return fragments;
     }
-
     try {
-      // Get recent items from transmitter
       let items = [];
-
-      if (typeof this.transmitter.getRecentInteractions === 'function') {
-        items = await this.transmitter.getRecentInteractions(since_hours);
+      // MnemonicArbiter.recall(query, topK) returns [{text, meta}]
+      if (typeof this.transmitter.recall === 'function') {
+        items = await this.transmitter.recall('recent interactions experiences conversations', this.config.max_fragments);
       } else if (typeof this.transmitter.search === 'function') {
-        // Fallback: search with empty query to get recent
         const results = await this.transmitter.search('', null, this.config.max_fragments);
         items = results.map(r => r.chunk || r);
       }
-
-      for (const item of items.slice(0, this.config.max_fragments)) {
-        const text = item.text || item.payload || '';
-        const id = item.id || uid('frag');
-        const embedding = item.embedding || (await this.embedding_fn(text));
-        const meta = item.meta || { source: 'transmitter' };
-
-        fragments.push(new DreamFragment(id, text, meta, embedding));
+      for (const item of (items || []).slice(0, this.config.max_fragments)) {
+        const text = item.text || item.payload || item.content || '';
+        if (!text.trim()) continue;
+        fragments.push(new DreamFragment(
+          item.id || uid('frag'),
+          text,
+          item.meta || {}
+        ));
       }
-
-      this.log('info', `Collected ${fragments.length} fragments from transmitter`);
-    } catch (error) {
-      this.log('warn', 'Fragment collection error', { error: error.message });
+    } catch (e) {
+      this.log('warn', 'Fragment collection failed', { error: e.message });
     }
-
     return fragments;
   }
 
-  // ===========================
-  // Phase 2: Replay & Compress
-  // ===========================
+  // ── Dream Phases ───────────────────────────
 
   _replay_phase(fragments) {
     for (const frag of fragments) {
-      // Create summary
       frag.meta.replay_summary = this._abstract_text(frag.text);
-      frag.meta.uncertainty = frag.meta.confidence || 0.5;
-
-      // Search for nearby memories
-      if (this.transmitter && typeof this.transmitter.search === 'function') {
-        try {
-          this.transmitter.search(frag.text, frag.embedding, 6).then(hits => {
-            frag.meta.nearby_hits = hits.map(h => h.id || h.record_id);
-          }).catch(() => {
-            frag.meta.nearby_hits = [];
-          });
-        } catch (e) {
-          frag.meta.nearby_hits = [];
-        }
-      }
     }
-
-    this.log('info', 'Replay phase complete');
   }
-
-  // ===========================
-  // Phase 3: Distortion
-  // ===========================
 
   async _distortion_phase(fragments) {
-    for (const frag of fragments) {
+    // Generate counterfactual variations for the most interesting fragments
+    const candidates = fragments.slice(0, Math.min(10, fragments.length));
+    for (const frag of candidates) {
       try {
-        // Counterfactuals
-        const cfs = await this._generate_counterfactuals(frag.text, 3);
-        frag.counterfactuals = cfs.map(c => ({
-          text: c.slice(0, 300),
-          score: this._score_support(c, frag)
-        }));
-
-        // Nightmares (threat simulation)
-        const nightmares = await this._generate_nightmares(frag.text, this.config.nightmare_aggression, 2);
-        frag.nightmares = nightmares;
-
-        // Sensory (creative blending)
-        const senses = await this._generate_sensory(frag.text, 2);
-        frag.sensory = senses;
-
-        // Predictions (future scenarios)
-        const preds = await this._generate_predictions(frag.text, this.config.predictive_horizon_days, 3);
-        frag.predictions = preds;
-      } catch (error) {
-        this.log('warn', 'Distortion error for fragment', { error: error.message });
-      }
+        const cfs = await this._generate_counterfactuals(frag.text, 2);
+        frag.counterfactuals = cfs
+          .filter(c => c && c.length > 20)
+          .map(c => ({ text: c.slice(0, 400), score: 0.5 }));
+      } catch (e) {}
     }
-
-    this.log('info', 'Distortion phase complete');
   }
-
-  // ===========================
-  // Phase 4: Recursive Meta-Reflection
-  // ===========================
 
   async _recursive_phase(fragments) {
-    for (const frag of fragments) {
-      const notes = [];
-      let base = frag.text;
+    // Find recurring themes across all counterfactuals
+    const allCounterfactuals = fragments
+      .filter(f => f.counterfactuals.length > 0)
+      .flatMap(f => f.counterfactuals.map(c => c.text))
+      .join('\n');
 
-      for (let depth = 0; depth < this.config.recursive_depth; depth++) {
-        try {
-          const prompt = `Meta-reflect (depth ${depth + 1}) on: ${base.slice(0, 200)}\nWhat assumptions? What biases? Provide correction.`;
-          const reflections = await this._call_creative(prompt, 1);
+    if (!allCounterfactuals.trim()) return;
 
-          notes.push({
-            depth: depth + 1,
-            reflection: reflections[0].slice(0, 300)
-          });
-
-          base = reflections[0];
-        } catch (error) {
-          this.log('warn', 'Recursive reflection error', { error: error.message });
-          break;
+    const prompt = `Review these alternative perspectives generated during a cognitive self-reflection cycle:\n\n${allCounterfactuals.slice(0, 2000)}\n\nWhat recurring themes, blind spots, or improvement opportunities emerge? Keep it concise — 2-3 sentences.`;
+    try {
+      const reflection = await this._callBrain(prompt);
+      if (reflection) {
+        for (const frag of fragments) {
+          frag.recursive_notes = [{ depth: 1, reflection: reflection.slice(0, 500) }];
         }
       }
-
-      frag.recursive_notes = notes;
-    }
-
-    this.log('info', 'Recursive phase complete');
+    } catch (e) {}
   }
-
-  // ===========================
-  // Phase 4.5: Wisdom Distillation (The Citadel)
-  // ===========================
 
   async _distillation_phase(fragments) {
-    if (!this.config.enable_distillation) return;
+    if (!this.config.enable_distillation || fragments.length === 0) return;
 
-    this.log('info', '⚗️ Starting Wisdom Distillation phase...');
-    
-    // Group fragments by topic (simple clustering or just batch all)
-    // For now, take all text
-    const combinedText = fragments.map(f => f.text).join('\n\n');
-    
-    if (combinedText.length < 100) return; // Too short to distill
+    const summaries = fragments
+      .slice(0, 20)
+      .map(f => f.meta.replay_summary || f.text.slice(0, 200))
+      .join('\n- ');
 
+    const prompt = `Extract 3-5 key insights from these recent interactions:\n- ${summaries}\n\nFocus on: knowledge gaps, recurring user needs, patterns in what worked or failed. One insight per line.`;
     try {
-        // Ask Brain to distill principles
-        const prompt = `You are a Wisdom Distillation Engine.
-        
-        RAW EPISODIC MEMORIES (Events):
-        ${combinedText.slice(0, 3000)}
-        
-        TASK:
-        Extract UNIVERSAL PRINCIPLES, FACTS, or INSIGHTS from these events.
-        Ignore the specific timeline/details. Focus on the LESSONS.
-        
-        Example:
-        Raw: "I tried to run the server but port 3000 was in use."
-        Distilled: "Server startup fails if the target port is occupied."
-        
-        OUTPUT (JSON List of strings):
-        ["principle 1", "principle 2"]`;
-
-        const results = await this._call_creative(prompt, 1);
-        const rawJson = results[0];
-        
-        // Parse JSON
-        let principles = [];
-        try {
-            // regex to find array
-            const match = rawJson.match(/\[.*\]/s);
-            if (match) {
-                principles = JSON.parse(match[0]);
-            }
-        } catch (e) {
-            this.log('warn', 'Failed to parse distilled principles', e);
-        }
-
-        if (principles.length > 0) {
-            this.log('info', `💎 Distilled ${principles.length} principles from ${fragments.length} events`);
-            
-            // Convert to "proposals" so they can be integrated
-            for (const p of principles) {
-                // Store immediately as this is high-value semantic knowledge
-                await this._store_belief(p, 'dream.distillation');
-                
-                // Publish the distilled principle as a seed for Imagination Engine
-                this.publish('distilled:principle', {
-                    principle: p,
-                    source: 'dream_distillation',
-                    confidence: 0.95,
-                    timestamp: now()
-                });
-            }
-        }
-
-    } catch (error) {
-        this.log('error', 'Distillation failed', { error: error.message });
-    }
+      const distilled = await this._callBrain(prompt);
+      if (distilled && fragments[0]) {
+        fragments[0].meta.distilled_insights = distilled.slice(0, 800);
+      }
+    } catch (e) {}
   }
-
-  // ===========================
-  // Phase 4.8: Narrative Generation (New)
-  // ===========================
-
-  async _generate_narrative(report) {
-    // --- DE-MOCKED: Real Poetic Reflection ---
-    if (this.messageBroker) {
-        try {
-            const prompt = `You are SOMA's Poetic Ego. Summarize last night's dream cycle.
-            
-            DREAM DATA:
-            - Fragments Processed: ${report.summary.fragments_count}
-            - New Proposals: ${report.summary.proposals_count}
-            - Top Theme: ${report.summary.top_fragment}
-            
-            Speak in the first person. Be abstract, visionary, and brief.`;
-
-            const res = await this.messageBroker.sendMessage({
-                to: 'SomaBrain',
-                type: 'reason',
-                payload: { query: prompt, context: { mode: 'fast', brain: 'AURORA' } }
-            });
-            return res.text || "The dream was a sequence of shifting vectors.";
-        } catch (e) {}
-    }
-    return "The dream was hazy and indistinct.";
-  }
-
-  // ===========================
-  // Phase 5: Scoring & Proposal
-  // ===========================
 
   _scoring_and_propose(fragments) {
     const proposals = [];
+    const origWords = new Set(
+      fragments.flatMap(f => f.text.toLowerCase().split(/\s+/))
+    );
 
     for (const frag of fragments) {
-      // Counterfactuals with higher support -> refine proposals
+      // Score counterfactuals by novelty vs original corpus
       for (const cf of frag.counterfactuals) {
-        if (cf.score > 0.65) {
-          proposals.push({
-            type: 'refine',
-            source_id: frag.record_id,
-            proposal_text: cf.text,
-            score: cf.score,
-            meta: { reason: 'counterfactual_higher_support' }
-          });
+        const cfWords = new Set(cf.text.toLowerCase().split(/\s+/));
+        const novelWords = [...cfWords].filter(w => !origWords.has(w) && w.length > 4);
+        const novelty = novelWords.length / Math.max(cfWords.size, 1);
+        if (novelty > 0.1) {
+          proposals.push({ text: cf.text, novelty, sourceId: frag.record_id, type: 'counterfactual' });
         }
       }
 
-      // High-risk nightmares -> safety patches
-      for (const nm of frag.nightmares) {
-        if (nm.risk_score > 0.6) {
-          proposals.push({
-            type: 'safety_patch',
-            source_id: frag.record_id,
-            proposal_text: nm.text.slice(0, 500),
-            score: nm.risk_score,
-            meta: { reason: 'nightmare_detected' }
-          });
-        }
+      // Distilled insights are always high value
+      if (frag.meta.distilled_insights) {
+        proposals.push({
+          text: frag.meta.distilled_insights,
+          novelty: 0.85,
+          sourceId: frag.record_id,
+          type: 'insight',
+        });
       }
 
-      // Certain predictions -> prediction notes
-      for (const p of frag.predictions) {
-        if (p.certainty > 0.6) {
+      // Recursive reflections are medium value
+      for (const note of frag.recursive_notes) {
+        if (note.reflection && note.reflection.length > 50) {
           proposals.push({
-            type: 'prediction_note',
-            source_id: frag.record_id,
-            proposal_text: p.text.slice(0, 500),
-            score: p.certainty,
-            meta: { horizon_days: p.horizon_days }
+            text: note.reflection,
+            novelty: 0.6,
+            sourceId: frag.record_id,
+            type: 'reflection',
           });
         }
       }
     }
 
-    proposals.sort((a, b) => b.score - a.score);
-    return proposals;
+    return proposals.sort((a, b) => b.novelty - a.novelty).slice(0, 10);
   }
 
-  // ===========================
-  // Phase 6: Reintegration
-  // ===========================
-
-  async _reintegration_phase(proposals, human_review = true) {
+  async _reintegration_phase(proposals, human_review) {
     const applied = [];
     const queued = [];
 
-    for (const p of proposals) {
-      try {
-        const text = p.proposal_text;
-
-        // Safety filter first
-        if (!this.safety_filter_fn(text)) {
-          queued.push({ proposal: p, status: 'filtered_rejected' });
-          continue;
-        }
-
-        // Auto-apply low-risk refines with high confidence
-        if (p.type === 'refine' && p.score > 0.8 && !human_review) {
-          await this._store_belief(text, 'dream.auto');
-          applied.push({ proposal: p, status: 'auto_applied' });
-        } else {
-          // Queue for review
-          queued.push({ proposal: p, status: 'awaiting_review', timestamp: iso() });
-        }
-      } catch (error) {
-        this.log('warn', 'Reintegration error', { error: error.message });
-        queued.push({ proposal: p, status: 'error', error: error.message });
-      }
+    if (!this.transmitter?.remember) {
+      // No memory bridge — queue everything
+      return { applied, queued: proposals };
     }
 
-    // Publish update queue
-    if (queued.length > 0) {
-      await this.publish('dream.update.queue', {
-        queued,
-        ts: iso(),
-        total: queued.length
-      });
+    for (const proposal of proposals.slice(0, 5)) {
+      // Skip human review for high-confidence insights; queue the rest
+      if (!human_review || proposal.novelty > 0.7 || proposal.type === 'insight') {
+        try {
+          await this.transmitter.remember(
+            `[Dream ${proposal.type}] ${proposal.text}`,
+            {
+              type: 'dream_insight',
+              importance: Math.max(1, Math.round(proposal.novelty * 5)),
+              source: 'DreamArbiter',
+            }
+          );
+          applied.push(proposal);
+        } catch (e) {
+          queued.push(proposal);
+        }
+      } else {
+        queued.push(proposal);
+      }
     }
 
     return { applied, queued };
   }
 
-  // ===========================
-  // Generation Functions
-  // ===========================
+  async _generate_narrative(report, fragments) {
+    const { fragments_count, proposals_count } = report.summary;
+    const sampleReflection = fragments
+      .find(f => f.recursive_notes?.[0]?.reflection)
+      ?.recursive_notes[0].reflection || '';
+    const sampleInsight = fragments[0]?.meta.distilled_insights?.split('\n')[0] || '';
 
-  async _generate_counterfactuals(text, n = 3) {
-    const prompt = `Generate ${n} alternate plausible interpretations of: "${text.slice(0, 150)}"\nShort, crisp alternatives.`;
-    return await this._call_creative(prompt, n);
-  }
+    const context = [sampleReflection, sampleInsight].filter(Boolean).join(' ').slice(0, 300);
+    const prompt = `In 2-3 sentences, describe what was "dreamed" in a cognitive reflection cycle. SOMA reviewed ${fragments_count} recent interactions and derived ${proposals_count} proposals. ${context ? `A key theme: "${context}"` : ''} Write in a reflective, observational tone — not poetic, just clear.`;
 
-  async _generate_nightmares(text, aggression = 0.6, n = 2) {
-    const outs = [];
-    for (let i = 0; i < n; i++) {
-      const prompt = `Threat simulation: Create adversarial scenario or failure mode related to: "${text.slice(0, 150)}"\nMake realistic, explain detection method.`;
-      const raw = (await this._call_creative(prompt, 1))[0];
-      const risk_score = Math.min(0.99, 0.2 + 0.02 * (raw.split(' ').length));
-      outs.push({
-        text: raw.slice(0, 600),
-        risk_score
-      });
-    }
-    return outs;
-  }
-
-  async _generate_sensory(text, n = 2) {
-    const outs = [];
-    for (let i = 0; i < n; i++) {
-      const prompt = `Create vivid sensory description blending: "${text.slice(0, 150)}"\nOne paragraph, imaginative, labeled fictional.`;
-      const raw = (await this._call_creative(prompt, 1))[0];
-      outs.push({
-        text: raw.slice(0, 500),
-        type: 'sensory'
-      });
-    }
-    return outs;
-  }
-
-  async _generate_predictions(text, horizon_days = 90, n = 3) {
-    const outs = [];
-    for (let i = 0; i < n; i++) {
-      const h = Math.floor(horizon_days * (0.2 + 0.8 * Math.random()));
-      const prompt = `Predict plausible future (~${h} days) from: "${text.slice(0, 150)}"\nInclude uncertainty and watch-indicators.`;
-      const raw = (await this._call_creative(prompt, 1))[0];
-      const certainty = Math.min(0.99, 0.3 + 0.01 * (raw.split(' ').length));
-      outs.push({
-        text: raw.slice(0, 600),
-        certainty,
-        horizon_days: h
-      });
-    }
-    return outs;
-  }
-
-  // ===========================
-  // Scoring & Storage
-  // ===========================
-
-  _score_support(candidate_text, fragment) {
     try {
-      if (fragment.text.toLowerCase().includes(candidate_text.slice(0, 30).toLowerCase())) {
-        return 0.55 + Math.random() * 0.3;
-      }
-      return 0.45 + Math.random() * 0.2;
+      const narrative = await this._callBrain(prompt);
+      return narrative || `Dream cycle processed ${fragments_count} fragments, surfacing ${proposals_count} insights.`;
     } catch (e) {
-      return 0.5;
+      return `Dream cycle processed ${fragments_count} fragments, surfacing ${proposals_count} insights.`;
     }
-  }
-
-  async _store_belief(text, source = 'dream') {
-    try {
-      if (this.transmitter && typeof this.transmitter.addItem === 'function') {
-        const embedding = await this.embedding_fn(text);
-        return await this.transmitter.addItem({
-          text,
-          embedding,
-          meta: { source, stored_by: 'lucid_dream', ts: iso() }
-        });
-      }
-    } catch (error) {
-      this.log('warn', 'Failed to store belief', { error: error.message });
-    }
-    return { id: uid('mem'), text, meta: { source } };
-  }
-
-  // ===========================
-  // Helpers
-  // ===========================
-
-  _abstract_text(text) {
-    return text.length > 200 ? text.slice(0, 197) + '...' : text;
-  }
-
-  async _call_creative(prompt, n = 1) {
-    try {
-      const outs = await this.creative_fn(prompt, n);
-      const safe_outs = [];
-      for (const o of outs) {
-        if (this.safety_filter_fn && !this.safety_filter_fn(o)) {
-          safe_outs.push('(filtered unsafe output)');
-        } else {
-          safe_outs.push(o);
-        }
-      }
-      return safe_outs;
-    } catch (error) {
-      this.log('warn', 'Creative generation failed', { error: error.message });
-      return [prompt.slice(0, 250) + ' (simulated)'];
-    }
-  }
-
-  _defaultEmbed(text) {
-    // Deterministic lightweight embedding
-    const crypto = require('crypto');
-    const hash = crypto.createHash('sha256').update(text).digest();
-    const vec = [];
-    for (let i = 0; i < 128; i++) {
-      const byte = hash[i % hash.length];
-      vec.push((byte / 255.0) * 2.0 - 1.0);
-    }
-    return vec;
-  }
-
-  _defaultCreative(prompt, n = 1) {
-    const results = [];
-    for (let i = 0; i < n; i++) {
-      results.push(`[simulated creative #${i + 1}] ${prompt.slice(0, 250)}`);
-    }
-    return results;
-  }
-
-  // ===========================
-  // Report & Communication
-  // ===========================
-
-  _compile_report(fragments, proposals, applied, queued, elapsed) {
-    const summary = {
-      id: uid('dream'),
-      ts: iso(),
-      fragments_count: fragments.length,
-      top_fragment: fragments[0]?.text.slice(0, 200) || '',
-      proposals_count: proposals.length,
-      applied_count: applied.length,
-      queued_count: queued.length,
-      elapsed_seconds: Math.round(elapsed / 1000),
-      dream_quality: this._computeDreamQuality(fragments, proposals)
-    };
-
-    const details = {
-      fragments: fragments.slice(0, 50).map(f => f.to_dict()),
-      proposals: proposals.slice(0, 50),
-      applied: applied.slice(0, 20),
-      queued: queued.slice(0, 100)
-    };
-
-    return { summary, details };
-  }
-
-  _computeDreamQuality(fragments, proposals) {
-    // Simple heuristic: quality = fragment diversity + proposal diversity
-    const propTypes = new Set(proposals.map(p => p.type)).size;
-    const score = Math.min(1.0, (fragments.length / 50 + propTypes / 3) / 2);
-    return Math.round(score * 100) / 100;
   }
 
   async _emit_report(report) {
-    try {
-      await this.publish('dream.report', {
-        summary: report.summary,
-        timestamp: iso()
-      });
-
-      this.log('info', `Dream report emitted: ${report.summary.proposals_count} proposals`);
-    } catch (error) {
-      this.log('warn', 'Failed to emit report', { error: error.message });
-    }
-  }
-
-  async _emit_alert(payload) {
-    try {
-      await this.publish('dream.alert', { ...payload, ts: iso() });
-    } catch (error) {
-      this.log('warn', 'Failed to emit alert', { error: error.message });
+    if (this.broker) {
+      try {
+        await this.broker.broadcast('dream.report', {
+          from: this.name,
+          type: 'dream.report',
+          payload: {
+            narrative: report.narrative,
+            summary: report.summary,
+            ts: iso(),
+          },
+        });
+      } catch (e) {}
     }
   }
 
   async _store_report(report) {
     try {
-      const filename = path.join(this.config.stateDir, `dream_report_${Date.now()}.json`);
+      const filename = path.join(this.config.stateDir, `dream_${Date.now()}.json`);
       await fs.writeFile(filename, JSON.stringify(report, null, 2));
       this.dream_reports.push(filename);
-
-      // Keep only last 30 reports
+      // Keep only last 30 reports on disk
       if (this.dream_reports.length > 30) {
-        const old = this.dream_reports.shift();
-        await fs.unlink(old).catch(() => {});
+        const oldest = this.dream_reports.shift();
+        await fs.unlink(oldest).catch(() => {});
       }
-    } catch (error) {
-      this.log('warn', 'Failed to store report', { error: error.message });
-    }
+    } catch (e) {}
   }
 
-  // ===========================
-  // Background Scheduling
-  // ===========================
+  _compile_report(fragments, proposals, applied, queued, elapsed) {
+    return {
+      summary: {
+        id: uid('dream'),
+        ts: iso(),
+        elapsed_ms: elapsed,
+        fragments_count: fragments.length,
+        proposals_count: proposals.length,
+        applied_count: applied.length,
+        queued_count: queued.length,
+      },
+      details: {
+        fragments: fragments.slice(0, 20).map(f => f.to_dict()),
+        top_proposals: proposals.slice(0, 5).map(p => ({ type: p.type, novelty: p.novelty, preview: p.text.slice(0, 150) })),
+      },
+    };
+  }
 
-  start_background(interval_hours = 24, since_hours = 24) {
-    if (this._running) {
-      this.log('warn', 'Background dream cycle already running');
-      return;
+  // ── Helpers ────────────────────────────────
+
+  _abstract_text(text) {
+    if (!text) return '';
+    const sentences = text.match(/[^.!?\n]+[.!?\n]+/g) || [text];
+    return sentences.slice(0, 2).join(' ').trim().slice(0, 300);
+  }
+
+  async _generate_counterfactuals(text, n = 2) {
+    const prompt = `Given this interaction: "${text.slice(0, 400)}"\n\nGenerate ${n} brief counterfactual variations — how might this have gone differently? Alternative approaches, different framings, or what could have been asked/answered differently. One per line, 1-2 sentences each.`;
+    return this._callBrain(prompt, n);
+  }
+
+  /**
+   * Call the brain engine. Uses Ollama directly first (non-blocking for chat),
+   * falls back to messageBroker → SomaBrain.
+   */
+  async _callBrain(prompt, n = 1) {
+    // Don't run during active chat
+    if (global.__SOMA_CHAT_ACTIVE) {
+      return n > 1 ? Array(n).fill('[Dream deferred]') : '[Dream deferred]';
     }
 
-    this._running = true;
-    this.log('info', `Starting background dream cycles every ${interval_hours}h`);
+    // Try Ollama directly (fast, doesn't compete with main pipeline)
+    try {
+      const results = [];
+      for (let i = 0; i < n; i++) {
+        const res = await fetch('http://localhost:11434/api/generate', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            model: process.env.OLLAMA_MODEL || 'gemma3:4b',
+            prompt,
+            stream: false,
+            options: { temperature: 0.75, num_predict: 300 },
+          }),
+          signal: AbortSignal.timeout(30000),
+        });
+        const data = await res.json();
+        results.push(data.response?.trim() || '');
+      }
+      return n === 1 ? results[0] : results;
+    } catch (e) {}
 
-    this._worker = setInterval(async () => {
+    // Fallback to messageBroker → SomaBrain
+    if (this.broker) {
       try {
-        await this.run(since_hours, this.config.human_review);
-      } catch (error) {
-        this.log('error', 'Background dream cycle failed', { error: error.message });
-      }
-    }, interval_hours * 60 * 60 * 1000);
-  }
-
-  stop_background() {
-    if (this._worker) {
-      clearInterval(this._worker);
-      this._worker = null;
-      this._running = false;
-      this.log('info', 'Background dream cycles stopped');
+        const results = [];
+        for (let i = 0; i < n; i++) {
+          const response = await this.broker.sendMessage({
+            from: this.name,
+            to: 'SomaBrain',
+            type: 'reason',
+            payload: { query: prompt, context: { mode: 'fast', brain: 'AURORA' } },
+          });
+          results.push(response?.text?.trim() || '');
+        }
+        return n === 1 ? results[0] : results;
+      } catch (e) {}
     }
+
+    return n === 1 ? '' : Array(n).fill('');
   }
 
-  // ===========================
-  // Message Handlers
-  // ===========================
+  _scheduleDreamCycle() {
+    const intervalMs = (this.config.dream_interval_hours || 24) * 60 * 60 * 1000;
+    this._dreamTimer = setInterval(async () => {
+      if (!global.__SOMA_CHAT_ACTIVE) {
+        this.log('info', 'Scheduled dream cycle starting...');
+        await this.run(this.config.dream_interval_hours, this.config.human_review).catch(e =>
+          this.log('error', 'Scheduled dream cycle failed', { error: e.message })
+        );
+      }
+    }, intervalMs);
+    // Don't hold the process open
+    if (this._dreamTimer?.unref) this._dreamTimer.unref();
+  }
+
+  // ── Message Handlers ───────────────────────
 
   async _handleRunDream(envelope) {
-    this.log('info', 'Received dream cycle request');
-    const since_hours = envelope.payload?.since_hours || 24;
-    const human_review = envelope.payload?.human_review !== false;
-
-    const result = await this.run(since_hours, human_review);
-
+    const result = await this.run();
     await this.broker.sendMessage({
       from: this.name,
       to: envelope.from,
       type: 'dream.cycle.result',
-      payload: result
+      payload: result,
     });
   }
 
   async _handleGetReport(envelope) {
-    const result = this.dream_reports.length > 0
-      ? { reports: this.dream_reports, count: this.dream_reports.length }
-      : { reports: [], count: 0 };
-
     await this.broker.sendMessage({
       from: this.name,
       to: envelope.from,
       type: 'dream.reports.list',
-      payload: result
+      payload: {
+        last_report: this.last_report
+          ? { narrative: this.last_report.narrative, summary: this.last_report.summary }
+          : null,
+        report_count: this.dream_reports.length,
+      },
     });
   }
 
-  // ===========================
-  // Execute Task (BaseArbiter requirement)
-  // ===========================
-
   async execute(task) {
-    const start = now();
-
-    try {
-      if (task.query.includes('dream')) {
-        const result = await this.run(24, this.config.human_review);
-        return new ArbiterResult({
-          success: !result.error,
-          data: result.summary,
-          confidence: 0.9,
-          arbiter: this.name,
-          duration: now() - start
-        });
-      }
-
-      return new ArbiterResult({
-        success: false,
-        error: 'Unknown task',
-        arbiter: this.name,
-        duration: now() - start
-      });
-    } catch (error) {
-      return new ArbiterResult({
-        success: false,
-        error: error.message,
-        arbiter: this.name,
-        duration: now() - start
-      });
-    }
+    return new ArbiterResult({ success: true, data: this.getInsights(), arbiter: this.name });
   }
 }
 

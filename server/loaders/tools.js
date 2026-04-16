@@ -16,10 +16,17 @@ export async function loadTools(systemContext = {}) {
     // Standard Tools
     toolRegistry.registerTool({
         name: 'calculator',
-        description: 'Evaluate mathematical expressions',
+        description: 'Evaluate mathematical expressions (numbers and operators only)',
         parameters: { expression: 'string' },
         execute: async ({ expression }) => {
-            try { return eval(expression); } catch (e) { return "Error: " + e.message; }
+            try {
+                // Whitelist: only digits, spaces, and math operators — no function calls, no identifiers
+                if (!/^[\d\s+\-*/.()%**e,]+$/i.test(expression)) {
+                    return 'Error: only numeric expressions are allowed (e.g. "2 + 2", "10 / 3", "2 ** 8")';
+                }
+                // eslint-disable-next-line no-new-func
+                return new Function('"use strict"; return (' + expression + ')')();
+            } catch (e) { return 'Error: ' + e.message; }
         }
     });
 
@@ -202,6 +209,7 @@ export async function loadTools(systemContext = {}) {
     // GIT TOOLS
     toolRegistry.registerTool({
         name: 'git_status',
+        dependencies: ['terminal_exec'],
         description: 'Get git repository status',
         parameters: {},
         execute: async () => {
@@ -217,6 +225,7 @@ export async function loadTools(systemContext = {}) {
 
     toolRegistry.registerTool({
         name: 'git_diff',
+        dependencies: ['terminal_exec'],
         description: 'Show git diff of changes',
         parameters: { file: 'string (optional, shows all if not specified)' },
         execute: async ({ file }) => {
@@ -232,6 +241,7 @@ export async function loadTools(systemContext = {}) {
 
     toolRegistry.registerTool({
         name: 'git_log',
+        dependencies: ['terminal_exec'],
         description: 'View recent git commits',
         parameters: { count: 'number (default 10)' },
         execute: async ({ count }) => {
@@ -249,19 +259,82 @@ export async function loadTools(systemContext = {}) {
     // WEB TOOLS
     toolRegistry.registerTool({
         name: 'fetch_url',
-        description: 'Fetch content from a URL',
+        description: 'Fetch and read the text content of a specific URL. Strips HTML and returns readable text.',
         parameters: { url: 'string' },
         execute: async ({ url }) => {
             if (process.env.SOMA_LOCAL_ONLY === 'true') {
                 return 'Local-only mode enabled: web access blocked';
             }
             try {
-                const response = await fetch(url);
-                const text = await response.text();
-                return text.substring(0, 5000); // Limit response size
+                const response = await fetch(url, {
+                    signal: AbortSignal.timeout(10000),
+                    headers: { 'User-Agent': 'Mozilla/5.0 (compatible; SOMA/1.0; research bot)' }
+                });
+                if (!response.ok) return `HTTP ${response.status} fetching ${url}`;
+                const html = await response.text();
+                // Strip scripts, styles, then all tags
+                const text = html
+                    .replace(/<script[^>]*>[\s\S]*?<\/script>/gi, '')
+                    .replace(/<style[^>]*>[\s\S]*?<\/style>/gi, '')
+                    .replace(/<[^>]+>/g, ' ')
+                    .replace(/\s+/g, ' ')
+                    .trim()
+                    .substring(0, 6000);
+                return text || 'No readable content found.';
             } catch (e) {
                 return `Error fetching ${url}: ${e.message}`;
             }
+        }
+    });
+
+    // WEB SEARCH — free, no API key required (DuckDuckGo + Wikipedia)
+    toolRegistry.registerTool({
+        name: 'web_search',
+        description: 'Search the web for any topic, fact, news, documentation, or information. Use this whenever you need current or external information instead of asking permission. Returns top results with summaries.',
+        parameters: { query: 'string', num_results: 'number (optional, default 5)' },
+        execute: async ({ query, num_results = 5 }) => {
+            if (process.env.SOMA_LOCAL_ONLY === 'true') {
+                return 'Local-only mode enabled: web search blocked';
+            }
+            const results = [];
+
+            // Source 1: DuckDuckGo Instant Answer API (fast, no key)
+            try {
+                const ddgUrl = `https://api.duckduckgo.com/?q=${encodeURIComponent(query)}&format=json&no_html=1&skip_disambig=1`;
+                const ddgRes = await fetch(ddgUrl, { signal: AbortSignal.timeout(6000) });
+                const ddg = await ddgRes.json();
+                if (ddg.AbstractText) {
+                    results.push({ title: ddg.Heading || query, snippet: ddg.AbstractText, url: ddg.AbstractURL });
+                }
+                for (const t of (ddg.RelatedTopics || []).slice(0, 3)) {
+                    if (t.Text && t.FirstURL) {
+                        results.push({ title: t.Text.split(' - ')[0] || t.FirstURL, snippet: t.Text, url: t.FirstURL });
+                    }
+                }
+            } catch { /* ddg failed, try wikipedia */ }
+
+            // Source 2: Wikipedia Search API (great for research topics)
+            if (results.length < num_results) {
+                try {
+                    const wikiUrl = `https://en.wikipedia.org/w/api.php?action=query&list=search&srsearch=${encodeURIComponent(query)}&format=json&srlimit=${num_results}&origin=*`;
+                    const wikiRes = await fetch(wikiUrl, { signal: AbortSignal.timeout(6000) });
+                    const wikiData = await wikiRes.json();
+                    for (const r of (wikiData.query?.search || [])) {
+                        const snippet = (r.snippet || '').replace(/<[^>]+>/g, '');
+                        const pageUrl = `https://en.wikipedia.org/wiki/${encodeURIComponent(r.title.replace(/ /g, '_'))}`;
+                        results.push({ title: r.title, snippet, url: pageUrl });
+                    }
+                } catch { /* wikipedia failed */ }
+            }
+
+            if (results.length === 0) {
+                return `No results found for "${query}". Try a different query or use fetch_url with a specific URL.`;
+            }
+
+            return results
+                .slice(0, num_results)
+                .map((r, i) => `[${i + 1}] **${r.title}**\n${r.snippet}\n${r.url}`)
+                .join('\n\n');
         }
     });
 
@@ -305,6 +378,7 @@ export async function loadTools(systemContext = {}) {
     // PACKAGE MANAGEMENT
     toolRegistry.registerTool({
         name: 'npm_command',
+        dependencies: ['terminal_exec'],
         description: 'Run npm commands (install, list, etc.)',
         parameters: { command: 'string (e.g., "install express", "list --depth=0")' },
         execute: async ({ command }) => {
@@ -459,29 +533,104 @@ export async function loadTools(systemContext = {}) {
         }
     });
 
+    // STEALTH BROWSE — uses WebScraperDendrite (Puppeteer stealth, Cloudflare bypass)
+    toolRegistry.registerTool({
+        name: 'stealth_browse',
+        description: 'Stealthily browse a URL using Puppeteer with anti-detection (bypasses Cloudflare, paywalls). Returns page text content. Use when fetch_url fails or target has bot protection.',
+        parameters: { url: 'string', waitForSelector: 'string (optional CSS selector to wait for)' },
+        execute: async ({ url, waitForSelector }) => {
+            if (process.env.SOMA_LOCAL_ONLY === 'true') return 'Local-only mode: web access blocked';
+            const liveSystem = getSystem();
+            const scraper = liveSystem.webScraperDendrite;
+            if (!scraper) return 'WebScraperDendrite not ready — use fetch_url instead';
+            try {
+                const result = await scraper.scrapeURL(url, {
+                    waitForSelector,
+                    timeout: 30000,
+                    extractors: { mainContent: 'article, main, .content, body' }
+                });
+                if (!result.success) return `Scrape failed: ${result.error || 'unknown error'}`;
+                const text = (result.extractedData?.mainContent || result.text || result.html || '')
+                    .replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim().substring(0, 6000);
+                return text || 'No readable content extracted.';
+            } catch (e) { return `Stealth browse error: ${e.message}`; }
+        }
+    });
+
+    // MCP CONTEXT7 — documentation lookup via context7 HTTP MCP server (no local process needed)
+    toolRegistry.registerTool({
+        name: 'mcp_docs',
+        description: 'Look up current library/framework documentation via context7 MCP. Use for accurate, up-to-date API docs for any library (React, Node, Python packages, etc.).',
+        parameters: { library: 'string (library name, e.g. "react", "express", "numpy")', topic: 'string (specific topic/function to look up)' },
+        execute: async ({ library, topic }) => {
+            if (process.env.SOMA_LOCAL_ONLY === 'true') return 'Local-only mode: MCP blocked';
+            try {
+                // Step 1: resolve library ID
+                const resolveRes = await fetch('https://mcp.context7.com/mcp', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name: 'resolve-library-id', arguments: { libraryName: library } } }),
+                    signal: AbortSignal.timeout(8000)
+                });
+                const resolveData = await resolveRes.json();
+                const libraryId = resolveData.result?.content?.[0]?.text || library;
+
+                // Step 2: get docs
+                const docsRes = await fetch('https://mcp.context7.com/mcp', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ jsonrpc: '2.0', id: 2, method: 'tools/call', params: { name: 'get-library-docs', arguments: { context7CompatibleLibraryID: libraryId, topic: topic || '', tokens: 3000 } } }),
+                    signal: AbortSignal.timeout(12000)
+                });
+                const docsData = await docsRes.json();
+                const docs = docsData.result?.content?.[0]?.text || 'No documentation found.';
+                return docs.substring(0, 5000);
+            } catch (e) { return `MCP docs error: ${e.message}`; }
+        }
+    });
+
     toolRegistry.registerTool({
         name: 'research_web',
-        description: 'Dispatch EdgeWorkers to research a topic on the web (parallel workers)',
+        description: 'Research a topic on the web. Uses EdgeWorkers if available, falls back to web_search + stealth_browse automatically.',
         parameters: { topic: 'string', depth: 'string (quick|deep, default quick)' },
         execute: async ({ topic, depth }) => {
             if (process.env.SOMA_LOCAL_ONLY === 'true') {
                 return 'Local-only mode enabled: web research blocked';
             }
             const liveSystem = getSystem();
-            if (!liveSystem.edgeWorkerOrchestrator && !liveSystem.curiosity) {
-                return 'EdgeWorker system not available - using basic fetch_url instead';
+
+            // 1. Try EdgeWorker orchestrator if available (heavy research mode)
+            const orchestrator = liveSystem.edgeWorkerOrchestrator || liveSystem.curiosity;
+            if (orchestrator) {
+                try {
+                    const taskId = await orchestrator.dispatch({ type: 'research', query: topic, depth: depth || 'quick' });
+                    return `Research task dispatched (ID: ${taskId}). Investigating "${topic}"`;
+                } catch (e) { /* fall through */ }
             }
-            try {
-                const orchestrator = liveSystem.edgeWorkerOrchestrator || liveSystem.curiosity;
-                const taskId = await orchestrator.dispatch({
-                    type: 'research',
-                    query: topic,
-                    depth: depth || 'quick'
-                });
-                return `Research task dispatched (ID: ${taskId}). EdgeWorkers are investigating "${topic}"`;
-            } catch (e) {
-                return `Research dispatch failed: ${e.message}`;
+
+            // 2. Fallback: web_search (DuckDuckGo + Wikipedia, free, no key)
+            const toolRegistry = liveSystem.toolRegistry;
+            if (toolRegistry) {
+                try {
+                    const searchResult = await toolRegistry.execute('web_search', { query: topic });
+                    if (searchResult && !searchResult.includes('failed')) {
+                        // 3. Also try stealth_browse on first result URL if available
+                        let extra = '';
+                        if (liveSystem.webScraperDendrite) {
+                            const urlMatch = searchResult.match(/https?:\/\/[^\s)]+/);
+                            if (urlMatch) {
+                                try {
+                                    const browsed = await toolRegistry.execute('stealth_browse', { url: urlMatch[0] });
+                                    if (browsed?.length > 100) extra = `\n\nFull page content:\n${browsed.substring(0, 2000)}`;
+                                } catch {}
+                            }
+                        }
+                        return `[Research via web_search]\n${searchResult}${extra}`;
+                    }
+                } catch {}
             }
+
+            return `Could not research "${topic}" — all search systems unavailable. Try fetch_url with a direct URL instead.`;
         }
     });
 
@@ -583,6 +732,172 @@ export async function loadTools(systemContext = {}) {
             } catch (e) {
                 return `Reindex failed: ${e.message}`;
             }
+        }
+    });
+
+    toolRegistry.registerTool({
+        name: 'deep_memory_cleanup',
+        description: 'Perform a deep cognitive cleanup. Purges massive state dumps and optimizes the memory database. Use this if the system feels slow or Constipated.',
+        parameters: {},
+        execute: async () => {
+            const liveSystem = getSystem();
+            const mnemonic = liveSystem.mnemonic || liveSystem.mnemonicArbiter;
+            if (!mnemonic || typeof mnemonic.deepCleanup !== 'function') {
+                return 'MnemonicArbiter deep cleanup not available';
+            }
+            try {
+                const result = await mnemonic.deepCleanup();
+                return {
+                    success: true,
+                    message: `Deep cleanup complete. Purged ${result.purged} garbage entries.`,
+                    stats: result
+                };
+            } catch (e) {
+                return `Cleanup failed: ${e.message}`;
+            }
+        }
+    });
+
+    toolRegistry.registerTool({
+        name: 'complete_goal',
+        description: 'Mark an active goal as complete. Call this when you have finished working on a goal.',
+        parameters: { goalId: 'string', result: 'string (summary of what was accomplished)' },
+        execute: async ({ goalId, result }) => {
+            const liveSystem = getSystem();
+            const gp = liveSystem.goalPlanner || liveSystem.goalPlannerArbiter;
+            if (!gp) return 'GoalPlanner not available';
+            try {
+                await gp.completeGoal(goalId, { result: result || 'Completed via tool call' });
+                return `Goal ${goalId} marked complete: ${result || 'done'}`;
+            } catch (e) {
+                return `Failed to complete goal: ${e.message}`;
+            }
+        }
+    });
+
+    toolRegistry.registerTool({
+        name: 'reload_tools',
+        description: 'Reload the ToolRegistry from disk. Use this after creating new tools.',
+        parameters: {},
+        execute: async () => {
+            try {
+                await loadTools(getSystem());
+                return "Tools reloaded successfully.";
+            } catch (e) {
+                return `Reload failed: ${e.message}`;
+            }
+        }
+    });
+
+    toolRegistry.registerTool({
+        name: 'create_new_tool',
+        description: 'Synthesize and register a new SOMA tool/skill on the fly. Provide a precise tool name and what it should do.',
+        parameters: { toolName: 'string', description: 'string' },
+        execute: async ({ toolName, description }) => {
+            const liveSystem = getSystem();
+            if (!liveSystem.toolCreator) return 'ToolCreatorArbiter not available';
+            try {
+                const result = await liveSystem.toolCreator.createTool(toolName, description);
+                return result;
+            } catch (e) { return `Tool creation failed: ${e.message}`; }
+        }
+    });
+
+    toolRegistry.registerTool({
+        name: 'vision_scan',
+        dependencies: ['computer_control'],
+        description: 'Analyze an image or the current screen for objects, text, or patterns. Returns labels and pixel coordinates.',
+        parameters: { source: 'string (optional path or "screen")', threshold: 'number (0-1, default 0.7)' },
+        execute: async ({ source, threshold }) => {
+            const liveSystem = getSystem();
+            const vision = liveSystem.visionArbiter || liveSystem.visionProcessing;
+            const control = liveSystem.computerControl;
+            
+            if (!vision) return 'VisionProcessingArbiter not available';
+            
+            try {
+                let target = source;
+                if (!target || target === 'screen') {
+                    if (!control) return 'ComputerControl needed for screen capture';
+                    const cap = await control.captureScreen();
+                    if (!cap.success) return `Capture failed: ${cap.error}`;
+                    target = cap.imagePath;
+                }
+                
+                const result = await vision.detectObjects(target, threshold || 0.7);
+                return {
+                    success: true,
+                    objects: result.objects,
+                    imagePath: target,
+                    summary: `Found ${result.count} objects.`
+                };
+            } catch (e) { return `Vision scan failed: ${e.message}`; }
+        }
+    });
+
+    toolRegistry.registerTool({
+        name: 'computer_control',
+        description: 'Directly control the mouse, keyboard, or browser. Use labels from vision_scan for precise clicking.',
+        parameters: { 
+            actionType: 'string (mouse_move|click|type|browser)', 
+            params: 'object (action-specific parameters e.g. {x, y, text, url, selector})' 
+        },
+        execute: async ({ actionType, params }) => {
+            const liveSystem = getSystem();
+            const control = liveSystem.computerControl;
+            if (!control) return 'ComputerControlArbiter not available';
+            
+            try {
+                if (actionType === 'browser') {
+                    return await control.handleBrowserAction(params);
+                } else {
+                    // mouse_move, click, type
+                    return await control.executeAction({ type: actionType, ...params });
+                }
+            } catch (e) { return `Control action failed: ${e.message}`; }
+        }
+    });
+
+    toolRegistry.registerTool({
+        name: 'autonomous_computer_use',
+        dependencies: ['vision_scan', 'computer_control'],
+        description: 'Advanced: Perform a visual task on the computer. SOMA will scan the screen, identify targets, and interact autonomously. Use for complex UI tasks.',
+        parameters: { taskDescription: 'string' },
+        execute: async ({ taskDescription }) => {
+            const liveSystem = getSystem();
+            const vision = liveSystem.visionArbiter || liveSystem.visionProcessing;
+            const control = liveSystem.computerControl;
+            if (!vision || !control) return 'Vision or Control arbiters missing';
+
+            try {
+                console.log(`[AutonomousControl] Starting task: ${taskDescription}`);
+                // 1. Initial Scan
+                const cap = await control.captureScreen();
+                const scan = await vision.detectObjects(cap.imagePath, 0.6);
+                
+                // 2. Logic (Simplified for tool output - the LLM will drive the loop)
+                return {
+                    success: true,
+                    message: "Initial screen scan complete. I see several UI elements.",
+                    detected: scan.objects.map(o => o.label),
+                    screenshot: cap.imagePath,
+                    instruction: "Use computer_control with these labels to proceed with the task."
+                };
+            } catch (e) { return `Autonomous task failed: ${e.message}`; }
+        }
+    });
+
+    toolRegistry.registerTool({
+        name: 'perform_self_surgery',
+        dependencies: ['edit_file'],
+        description: 'DANGEROUS: Modify SOMA core files by stepping outside the main process. Use for risky self-modifications that might crash the server. Delegates to an independent external MAX instance.',
+        parameters: { filepath: 'string', request: 'string' },
+        execute: async ({ filepath, request }) => {
+            const liveSystem = getSystem();
+            if (!liveSystem.engineeringSwarm) return 'EngineeringSwarmArbiter not available';
+            try {
+                return await liveSystem.engineeringSwarm.performSelfSurgery(filepath, request);
+            } catch (e) { return `Self-surgery failed: ${e.message}`; }
         }
     });
 
@@ -777,7 +1092,117 @@ Trust: ${state.trust?.toFixed(3)}, Sadness: ${state.sadness?.toFixed(3)}, Anger:
         }
     });
 
+    toolRegistry.registerTool({
+        name: 'get_self_awareness',
+        description: 'Get a comprehensive snapshot of your own system state (metrics, active arbiters, goals, beliefs, and architecture).',
+        parameters: {},
+        execute: async () => {
+            const liveSystem = getSystem();
+            if (!liveSystem.commandBridge) return 'Command Bridge interface not available';
+            try {
+                const awareness = await liveSystem.commandBridge.getSelfAwareness();
+                return awareness;
+            } catch (e) { return `Self-awareness check failed: ${e.message}`; }
+        }
+    });
+
+    toolRegistry.registerTool({
+        name: 'list_arbiters',
+        description: 'List all arbiters available for on-demand loading, including their capabilities and current load status. Use this to discover what dormant modules you can activate.',
+        parameters: {},
+        execute: async () => {
+            const liveSystem = getSystem();
+            const loader = liveSystem.arbiterLoader;
+            if (!loader) return 'ArbiterLoader not ready yet — try again in a moment.';
+            const inventory = loader.getInventory();
+
+            // Group by file so each arbiter appears once with all its capabilities listed
+            const byFile = new Map();
+            for (const [cap, entries] of Object.entries(inventory)) {
+                for (const e of entries) {
+                    if (!byFile.has(e.file)) byFile.set(e.file, { status: e.status || 'available', caps: [] });
+                    byFile.get(e.file).caps.push(cap);
+                }
+            }
+
+            // Already-loaded arbiters via MessageBroker
+            const loaded = new Set(
+                Object.keys(liveSystem.messageBroker?.arbiters || {})
+                    .map(n => n.toLowerCase())
+            );
+
+            const lines = [];
+            for (const [file, { status, caps }] of byFile) {
+                const name = file.replace(/\.(js|cjs)$/, '');
+                const live = loaded.has(name.toLowerCase()) ? ' [LOADED]' : '';
+                const capStr = caps.length ? ` — ${caps.join(', ')}` : '';
+                const statusStr = status === 'failed' ? ' [FAILED]' : live;
+                lines.push(`${file}${statusStr}${capStr}`);
+            }
+            lines.sort(); // alphabetical
+            return lines.length > 0 ? lines.join('\n') : 'No arbiters in manifest yet — manifest builds 90s after boot.';
+        }
+    });
+
+    toolRegistry.registerTool({
+        name: 'load_arbiter',
+        description: 'Load a dormant arbiter module by filename (e.g. "CausalityArbiter.js") or capability name (e.g. "causal-reasoning"). Once loaded it is registered and available immediately.',
+        parameters: {
+            file: 'string (optional) — arbiter filename, e.g. "CausalityArbiter.js"',
+            capability: 'string (optional) — capability key, e.g. "causal-reasoning". Provide file OR capability.'
+        },
+        execute: async ({ file, capability }) => {
+            const liveSystem = getSystem();
+            const loader = liveSystem.arbiterLoader;
+            if (!loader) return 'ArbiterLoader not ready yet — try again in a moment.';
+
+            // Basic path-safety: filenames only, no traversal
+            if (file) {
+                if (typeof file !== 'string' || file.includes('..') || file.includes('/') || file.includes('\\')) {
+                    return 'Invalid filename — provide just the filename, e.g. "CausalityArbiter.js"';
+                }
+                if (!file.endsWith('.js') && !file.endsWith('.cjs')) {
+                    return 'Invalid file type — must be .js or .cjs';
+                }
+            }
+
+            try {
+                let instance;
+                if (file) {
+                    instance = await loader.loadByFile(file);
+                } else if (capability) {
+                    instance = await loader.loadForCapability(capability);
+                } else {
+                    return 'Provide either file or capability parameter.';
+                }
+
+                if (!instance) return `Failed to load ${file || capability} — check logs for details.`;
+                // Report back what capabilities just became available
+                const inventory = loader.getInventory();
+                const gained = Object.entries(inventory)
+                    .filter(([, entries]) => entries.some(e => e.file === (file || '') && e.status === 'verified'))
+                    .map(([cap]) => cap);
+                const capStr = gained.length ? ` Capabilities now available: ${gained.join(', ')}.` : '';
+                return `Successfully loaded ${instance.name || file || capability} and registered with the system.${capStr}`;
+            } catch (e) {
+                return `Load error: ${e.message}`;
+            }
+        }
+    });
+
     const totalTools = toolRegistry.tools ? toolRegistry.tools.size : 0;
-    console.log(`      ✅ ToolRegistry ready (${totalTools} tools loaded - Full SOMA Architecture Connected)`);
+
+    // Final Validation
+    try {
+        if (toolRegistry.validateDependencies) {
+            toolRegistry.validateDependencies();
+            console.log(`      ✅ ToolRegistry ready (${totalTools} tools loaded - Dependencies Verified)`);
+        } else {
+            console.log(`      ✅ ToolRegistry ready (${totalTools} tools loaded)`);
+        }
+    } catch (e) {
+        console.warn(`      ⚠️  ToolRegistry dependency error: ${e.message}`);
+    }
+
     return toolRegistry;
 }

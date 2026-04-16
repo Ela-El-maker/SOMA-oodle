@@ -1,0 +1,65 @@
+{
+  "traceId": "rc_5ef24de6d7c9",
+  "ts": "2025-12-18T14:40:41.265Z",
+  "query": "Hello, can you hear me?",
+  "meta": {},
+  "candidates": [
+    {
+      "source": "PROMETHEUS",
+      "text": "Yes. I hear you.\n",
+      "confidence": 0.85,
+      "role": "prometheus"
+    },
+    {
+      "source": "LOGOS",
+      "text": "Affirmative. I can process and understand your query. I am ready for your instructions.\n",
+      "confidence": 0.85,
+      "role": "logos"
+    },
+    {
+      "source": "AURORA",
+      "text": "Yes, I can hear you. How can I help you today?\n",
+      "confidence": 0.85,
+      "role": "aurora"
+    }
+  ],
+  "fused": {
+    "text": "Affirmative. I can process and understand your query. I am ready for your instructions.\n",
+    "weights": [
+      {
+        "source": "PROMETHEUS",
+        "norm": 0.32432432432432434,
+        "conf": 0.85
+      },
+      {
+        "source": "LOGOS",
+        "norm": 0.35135135135135126,
+        "conf": 0.85
+      },
+      {
+        "source": "AURORA",
+        "norm": 0.32432432432432434,
+        "conf": 0.85
+      }
+    ],
+    "confidence": 0.8499999999999999,
+    "provenance": [
+      {
+        "source": "PROMETHEUS",
+        "snippet": "Yes. I hear you.\n",
+        "confidence": 0.85
+      },
+      {
+        "source": "LOGOS",
+        "snippet": "Affirmative. I can process and understand your query. I am ready for your instructions.\n",
+        "confidence": 0.85
+      },
+      {
+        "source": "AURORA",
+        "snippet": "Yes, I can hear you. How can I help you today?\n",
+        "confidence": 0.85
+      }
+    ]
+  },
+  "iter": 0
+}

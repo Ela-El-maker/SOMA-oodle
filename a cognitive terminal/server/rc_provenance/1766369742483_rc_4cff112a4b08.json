@@ -1,0 +1,100 @@
+{
+  "traceId": "rc_4cff112a4b08",
+  "ts": "2025-12-22T02:15:42.483Z",
+  "query": "what is you name",
+  "meta": {
+    "conversationHistory": [
+      {
+        "role": "user",
+        "parts": [
+          {
+            "text": "hello"
+          }
+        ]
+      },
+      {
+        "role": "user",
+        "parts": [
+          {
+            "text": "hello"
+          }
+        ]
+      },
+      {
+        "role": "model",
+        "parts": [
+          {
+            "text": "Hello. What's on your mind?"
+          }
+        ]
+      },
+      {
+        "role": "user",
+        "parts": [
+          {
+            "text": "what is you name"
+          }
+        ]
+      }
+    ]
+  },
+  "candidates": [
+    {
+      "source": "PROMETHEUS",
+      "text": "My designation is PROMETHEUS. I am a cognitive module.\n",
+      "confidence": 0.85,
+      "role": "prometheus"
+    },
+    {
+      "source": "LOGOS",
+      "text": "My designation is LOGOS.\n",
+      "confidence": 0.85,
+      "role": "logos"
+    },
+    {
+      "source": "AURORA",
+      "text": "My designation is AURORA.\n",
+      "confidence": 0.85,
+      "role": "aurora"
+    }
+  ],
+  "fused": {
+    "text": "My designation is LOGOS.\n",
+    "weights": [
+      {
+        "source": "PROMETHEUS",
+        "norm": 0.32432432432432434,
+        "conf": 0.85
+      },
+      {
+        "source": "LOGOS",
+        "norm": 0.35135135135135126,
+        "conf": 0.85
+      },
+      {
+        "source": "AURORA",
+        "norm": 0.32432432432432434,
+        "conf": 0.85
+      }
+    ],
+    "confidence": 0.8499999999999999,
+    "provenance": [
+      {
+        "source": "PROMETHEUS",
+        "snippet": "My designation is PROMETHEUS. I am a cognitive module.\n",
+        "confidence": 0.85
+      },
+      {
+        "source": "LOGOS",
+        "snippet": "My designation is LOGOS.\n",
+        "confidence": 0.85
+      },
+      {
+        "source": "AURORA",
+        "snippet": "My designation is AURORA.\n",
+        "confidence": 0.85
+      }
+    ]
+  },
+  "iter": 0
+}

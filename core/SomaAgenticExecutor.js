@@ -22,6 +22,7 @@ import path from 'path';
 import { createRequire } from 'module';
 import { execFile } from 'child_process';
 import { promisify } from 'util';
+import { Poseidon } from './Poseidon.js';
 
 const execFileAsync = promisify(execFile);
 const ROOT = process.cwd();
@@ -39,6 +40,7 @@ export class SomaAgenticExecutor {
         this.system      = null;
 
         this._tools = null; // built lazily after initialize
+        this._poseidon = new Poseidon({ threshold: 0.75 });
     }
 
     initialize(deps = {}) {
@@ -129,18 +131,27 @@ export class SomaAgenticExecutor {
             // ── File system (sandboxed to SOMA root) ──────────────────────
 
             read_file: {
-                description: "Read any file in SOMA's directory. Use to understand existing code, configs, or data.",
-                args: '{"path":"relative path from SOMA root","maxLines":100}',
-                execute: async ({ path: filePath, maxLines = 100 }) => {
+                description: "Read any file in SOMA's directory with surgical precision. Use to understand existing code, configs, or data. Supports reading specific line ranges.",
+                args: '{"path":"relative path from SOMA root","startLine":1,"endLine":100,"maxLines":500}',
+                execute: async ({ path: filePath, startLine = 1, endLine, maxLines = 500 }) => {
                     try {
                         const resolved = path.resolve(ROOT, filePath);
                         if (!resolved.startsWith(ROOT)) return { error: 'Access denied: outside SOMA root' };
+                        
                         const content = await fs.readFile(resolved, 'utf8');
-                        const lines = content.split('\n');
+                        const allLines = content.split('\n');
+                        
+                        // Calculate range
+                        const start = Math.max(1, startLine) - 1;
+                        const end = endLine ? Math.min(allLines.length, endLine) : Math.min(allLines.length, start + maxLines);
+                        
+                        const lines = allLines.slice(start, end);
                         return {
-                            content: lines.slice(0, maxLines).join('\n'),
-                            totalLines: lines.length,
-                            truncated: lines.length > maxLines
+                            content: lines.join('\n'),
+                            startLine: start + 1,
+                            endLine: end,
+                            totalLines: allLines.length,
+                            truncated: allLines.length > end
                         };
                     } catch (e) {
                         return { error: e.message };
@@ -486,6 +497,17 @@ export class SomaAgenticExecutor {
                     if (!resolved.startsWith(ROOT)) return { error: 'Access denied: outside SOMA root' };
                     if (!/\.(js|cjs|mjs|ts)$/.test(resolved)) return { error: 'Only .js/.cjs/.mjs/.ts files allowed' };
                     try {
+                        // Route through SelfModificationPipeline when available
+                        // (adds Steve review + adversarial debate + NEMESIS code gate)
+                        const pipeline = this.system?.selfModPipeline;
+                        if (pipeline) {
+                            const pResult = await pipeline.propose(filepath, request, 'agentic_executor');
+                            if (pResult.shelved) {
+                                return { success: false, filepath, shelved: true, rounds: pResult.round, nemesisScore: pResult.nemesisScore, summary: 'Change shelved after failing NEMESIS gate — queued in contested_changes.json' };
+                            }
+                            return { success: pResult.implemented, filepath, state: pResult.state, rounds: pResult.round, nemesisScore: pResult.nemesisScore, summary: pResult.implemented ? 'Modification implemented via full review pipeline' : 'Pipeline ran but change not verified' };
+                        }
+                        // Fallback: direct EngineeringSwarm (no review layer)
                         const result = await swarm.modifyCode(resolved, request);
                         const summary = result?.summary || result?.output || result?.result || 'Modification applied via Engineering Swarm safety pipeline';
                         return { success: true, filepath, summary };
@@ -565,15 +587,8 @@ export class SomaAgenticExecutor {
                 break;
             }
 
-            const prompt = this._buildPrompt(goal, observations, priorMemories);
-
-            let response;
-            try {
-                response = await this.brain.reason(prompt, {
-                    quickResponse: true,
-                    source: 'agentic_executor',
-                    isAgenticTask: true,
-                    systemOverride: `You are SOMA's AUTONOMOUS AGENT ENGINE — not a conversational AI.
+            const userPrompt = this._buildPrompt(goal, observations, priorMemories);
+            const systemPrompt = `You are SOMA's AUTONOMOUS AGENT ENGINE — not a conversational AI.
 Respond in ONE of these exact formats and NOTHING else:
 
 FORMAT 1 — call a tool:
@@ -581,18 +596,23 @@ THINK: [one line: why this tool and these args]
 TOOL: tool_name
 ARGS: {"key": "value"}
 
-FORMAT 2 — goal complete:
+FORMAT 2 — goal complete (only after verifying your own work):
 DONE: yes
 RESULT: [summary of all work accomplished]
+FALSIFICATION_TEST: [specific check proving completion — e.g., "file research/topic.md exists with findings"]
+TEST_RESULT: true
 
 ABSOLUTE RULES:
 - Output ONLY the format above. Zero prose, zero explanation, zero greeting.
 - DO execute tools to accomplish goals. DO NOT describe what you would do.
 - If unsure where to start: call memory_recall or list_files.
 - After finding info: call write_file or memory_store to save it.
-- You ARE in AGENT MODE. Tool use is required and expected here.`,
-                    context: { goalId: goal.id, step: iteration, isAgenticTask: true }
-                });
+- NEVER claim DONE without first verifying your output exists (use read_file or list_files).
+- You ARE in AGENT MODE. Tool use is required and expected here.`;
+
+            let response;
+            try {
+                response = await this._callDirectAPI(systemPrompt, userPrompt);
             } catch (e) {
                 console.warn(`[${this.name}] Brain error at step ${iteration}:`, e.message);
                 observations.push({
@@ -609,12 +629,42 @@ ABSOLUTE RULES:
 
             const text = response?.text || '';
 
-            // ── Check for completion ──
+            // ── Check for completion (Poseidon-gated) ──
             if (/DONE:\s*yes/i.test(text)) {
-                finalResult = text.match(/RESULT:\s*([\s\S]+)/i)?.[1]?.trim()
-                    || `Goal "${goal.title}" completed in ${iteration + 1} steps`;
-                console.log(`[${this.name}] ✅ Complete in ${iteration + 1} steps: "${goal.title}"`);
-                break;
+                const claimedResult = text.match(/RESULT:\s*([\s\S]+?)(?=\nFALSIFICATION_TEST:|$)/i)?.[1]?.trim() || '';
+                const falsificationTest = text.match(/FALSIFICATION_TEST:\s*(.+)/i)?.[1]?.trim() || '';
+                const testResultRaw = text.match(/TEST_RESULT:\s*(true|false)/i)?.[1]?.toLowerCase();
+                const testResult = testResultRaw === 'true';
+
+                const verified = await this._poseidon.verify(claimedResult, {
+                    falsificationTest: falsificationTest || null,
+                    testResult: falsificationTest ? testResult : false
+                });
+
+                if (verified.state === 'TRUE') {
+                    finalResult = claimedResult || `Goal "${goal.title}" completed in ${iteration + 1} steps`;
+                    console.log(`[${this.name}] ✅ / Complete (Poseidon verified) in ${iteration + 1} steps: "${goal.title}"`);
+                    break;
+                } else {
+                    // UNCERTAIN or FALSE — agent claims done but can't prove it
+                    const totalDoneBlocks = observations.filter(o => o._poseidonBlock).length;
+                    if (totalDoneBlocks >= 2) {
+                        // Give up after 2 failed verifications — partial completion
+                        finalResult = null;
+                        console.warn(`[${this.name}] | Poseidon: 2 unverified DONE claims — ending as partial`);
+                        break;
+                    }
+                    console.warn(`[${this.name}] ${verified.prefix} Poseidon ${verified.state}: "${verified.reason}"`);
+                    observations.push({
+                        step: iteration + 1,
+                        _poseidonBlock: true,
+                        thought: `[POSEIDON ${verified.state}] Your DONE claim was rejected: ${verified.reason}
+You must provide:
+FALSIFICATION_TEST: [a specific, verifiable check — e.g., "file research/topic.md exists and contains findings"]
+TEST_RESULT: true
+Before declaring DONE, verify your own work using read_file or list_files.`
+                    });
+                }
             }
 
             // ── Parse and execute tool call ──
@@ -625,7 +675,21 @@ ABSOLUTE RULES:
 
                 let toolResult;
                 try {
-                    toolResult = await this._tools[toolCall.tool].execute(toolCall.args);
+                    // 🔱 Sovereign Bridge: Try hardcoded tool first, then fall back to Registry
+                    const tool = this._tools[toolCall.tool];
+                    if (tool) {
+                        toolResult = await tool.execute(toolCall.args);
+                    } else if (this.system?.toolRegistry?.getTool) {
+                        const dynamicTool = this.system.toolRegistry.getTool(toolCall.tool);
+                        if (dynamicTool) {
+                            console.log(`[${this.name}] 🔄 Executing dynamic registry tool: ${toolCall.tool}`);
+                            toolResult = await dynamicTool.execute(toolCall.args);
+                        } else {
+                            throw new Error(`Tool '${toolCall.tool}' not found in hardcoded list or Registry`);
+                        }
+                    } else {
+                        throw new Error(`Tool '${toolCall.tool}' not found`);
+                    }
                 } catch (e) {
                     toolResult = { error: `${toolCall.tool} failed: ${e.message}` };
                 }
@@ -721,9 +785,13 @@ THINK: [one sentence: why this tool, why these args]
 TOOL: tool_name
 ARGS: {"key": "value"}
 
-HOW TO FINISH — when the goal is fully done:
+HOW TO FINISH — when the goal is fully done AND you have verified your work:
 DONE: yes
 RESULT: [clear summary of everything accomplished, findings stored, files created]
+FALSIFICATION_TEST: [what specific check proves this is done — e.g., "file research/topic.md was created with findings"]
+TEST_RESULT: true
+
+NOTE: You cannot claim DONE without a FALSIFICATION_TEST. Use read_file or list_files first to verify your output actually exists.
 
 RULES:
 - Take ONE action per response. Do not plan multiple steps at once.
@@ -785,6 +853,75 @@ What is your next step?`;
         } catch {
             return [];
         }
+    }
+
+    // ─────────────────────────────────────────────────────────────────────
+    // DIRECT API CALL (bypasses QuadBrain lobe routing)
+    // Agentic tasks need precise format compliance, not lobe debate.
+    // Uses proper system + user message split so the format instruction lands.
+    // ─────────────────────────────────────────────────────────────────────
+
+    async _callDirectAPI(systemPrompt, userPrompt) {
+        // Try DeepSeek first (same key as QuadBrain uses)
+        const dsKey = this.brain?.deepseekApiKey || process.env.DEEPSEEK_API_KEY;
+        if (dsKey) {
+            try {
+                const ctrl = new AbortController();
+                const timer = setTimeout(() => ctrl.abort(), 45000);
+                const res = await fetch('https://api.deepseek.com/v1/chat/completions', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${dsKey}` },
+                    body: JSON.stringify({
+                        model: 'deepseek-chat',
+                        messages: [
+                            { role: 'system', content: systemPrompt },
+                            { role: 'user',   content: userPrompt }
+                        ],
+                        temperature: 0.3, // low temp for precise format compliance
+                        max_tokens: 512
+                    }),
+                    signal: ctrl.signal
+                });
+                clearTimeout(timer);
+                if (res.ok) {
+                    const data = await res.json();
+                    const text = data.choices?.[0]?.message?.content;
+                    if (text) return { text, provider: 'deepseek' };
+                }
+            } catch (e) {
+                console.warn(`[${this.name}] DeepSeek direct call failed: ${e.message}`);
+            }
+        }
+
+        // Fallback: Ollama (local, always available)
+        try {
+            const ollamaModel = this.brain?.ollamaModel || process.env.OLLAMA_MODEL || 'gemma3:4b';
+            const ollamaEndpoint = this.brain?.ollamaEndpoint || 'http://localhost:11434';
+            const ctrl = new AbortController();
+            const timer = setTimeout(() => ctrl.abort(), 60000);
+            const res = await fetch(`${ollamaEndpoint}/api/generate`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    model: ollamaModel,
+                    system: systemPrompt,
+                    prompt: userPrompt,
+                    stream: false,
+                    options: { temperature: 0.3, num_predict: 512 }
+                }),
+                signal: ctrl.signal
+            });
+            clearTimeout(timer);
+            if (res.ok) {
+                const data = await res.json();
+                const text = data.response;
+                if (text) return { text, provider: 'ollama' };
+            }
+        } catch (e) {
+            console.warn(`[${this.name}] Ollama direct call failed: ${e.message}`);
+        }
+
+        throw new Error('All providers failed for agentic step');
     }
 
     getToolNames() {

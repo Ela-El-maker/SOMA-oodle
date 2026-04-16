@@ -6,10 +6,11 @@ class SomaBackend {
     this.ws = null;
     this.listeners = {};
     this.reconnectAttempts = 0;
-    this.maxReconnectAttempts = 5;
-    this.reconnectDelay = 3000;
+    this.maxReconnectAttempts = Infinity; // keep trying forever — server will come back
+    this.reconnectDelay = 1000;
     this.isConnecting = false;
     this.connectionState = 'disconnected'; // disconnected, health_check, connecting, connected, error
+    this.pendingRequests = {}; // To store promises for sendMessage responses
     const httpProtocol = window.location.protocol === 'https:' ? 'https:' : 'http:';
     const httpHost = import.meta.env?.VITE_HTTP_HOST || window.location.hostname || 'localhost';
     const httpPort = import.meta.env?.VITE_HTTP_PORT || '3001';
@@ -78,10 +79,15 @@ class SomaBackend {
     console.log('[SomaBackend] WebSocket URL:', this.wsUrl);
 
     try {
-      // Try REST API first
-      console.log('[SomaBackend] 🏥 Testing health endpoint:', `${this.baseUrl}/health`);
-      const response = await fetch(`${this.baseUrl}/health`);
-      console.log('[SomaBackend] 📡 Health response status:', response.status, response.statusText);
+      // Try REST API first — 3s timeout so a slow/starting server doesn't hang the retry loop
+      const healthCtrl = new AbortController();
+      const healthTimer = setTimeout(() => healthCtrl.abort(), 3000);
+      let response;
+      try {
+        response = await fetch(`${this.baseUrl}/health`, { signal: healthCtrl.signal });
+      } finally {
+        clearTimeout(healthTimer);
+      }
 
       if (!response.ok) {
         this._setConnectionState('error', `Health check failed: ${response.status}`);
@@ -104,14 +110,13 @@ class SomaBackend {
         this._setConnectionState('connected');
         this.isConnecting = false;
         this.reconnectAttempts = 0;
+        this.stopPolling(); // kill any fallback polling now that WS is live
         this.emit('connect', { timestamp: Date.now() });
-        this.startPolling();
       };
 
       this.ws.onmessage = (event) => {
         try {
           const data = JSON.parse(event.data);
-          console.log('[SomaBackend] 📩 Received message:', data.type, data);
           this.handleMessage(data);
         } catch (error) {
           console.error('[SomaBackend] Failed to parse message:', error);
@@ -128,9 +133,14 @@ class SomaBackend {
         console.log('[SomaBackend] Disconnected from SOMA backend, code:', event.code);
         this._setConnectionState('disconnected', `Code: ${event.code}`);
         this.isConnecting = false;
-        this.emit('disconnect', { timestamp: Date.now() });
         this.stopPolling();
-        this.attemptReconnect();
+        // Only emit + reconnect if this wasn't a deliberate disconnect() call
+        if (!this._intentionalDisconnect) {
+          this.emit('disconnect', { timestamp: Date.now() });
+          this.startPolling(); // fallback while reconnecting
+          this.attemptReconnect();
+        }
+        this._intentionalDisconnect = false;
       };
 
     } catch (error) {
@@ -144,8 +154,22 @@ class SomaBackend {
 
   // Handle incoming WebSocket messages
   handleMessage(data) {
-    const { type, payload } = data;
+    const { type, payload, messageId, responseToId } = data;
 
+    // If this is a response to a pending request
+    if (responseToId && this.pendingRequests[responseToId]) {
+      const { resolve, reject } = this.pendingRequests[responseToId];
+      delete this.pendingRequests[responseToId]; // Clean up
+      
+      if (data.success === false) {
+        reject(new Error(data.error || 'Backend request failed'));
+      } else {
+        resolve(data);
+      }
+      return; // Handled as a response, do not process as a broadcast event
+    }
+
+    // Otherwise, process as a general broadcast message
     switch (type) {
       case 'init':
         // Initial connection message with agents, brainStats, memory
@@ -174,6 +198,9 @@ class SomaBackend {
         break;
       case 'pulse':
         this.emit('pulse', payload);
+        // Synthesis greeting arrives as { type:'pulse', payload: { type:'soma_proactive', message:... } }
+        // Unwrap so soma_proactive listeners fire correctly
+        if (payload?.type) this.emit(payload.type, payload);
         break;
       case 'agents':
         this.emit('agents', payload);
@@ -219,9 +246,81 @@ class SomaBackend {
       case 'trace':
         this.emit('trace', payload);
         break;
+      case 'plan_updated': // backend broadcasts with underscore
+      case 'plan:updated': // legacy colon variant — keep both
+        this.emit('plan_updated', payload);
+        break;
+      case 'gmn_peer_changed':
+        this.emit('gmn_peer_changed', payload);
+        break;
+      // KnowledgeApp real-time events — forwarded from server via MessageBroker
+      case 'cognitive:debate':
+        this.emit('cognitive:debate', payload);
+        break;
+      case 'learning:brain_activity':
+        this.emit('learning:brain_activity', payload);
+        break;
+      case 'learning:node_created':
+        this.emit('learning:node_created', payload);
+        break;
+      case 'price_tick':
+        this.emit('price_tick', payload);
+        break;
+      case 'alert_triggered':
+        this.emit('alert_triggered', payload);
+        break;
+      case 'repo_activity':
+        this.emit('repo_activity', payload);
+        break;
+      case 'soma_proactive':
+        this.emit('soma_proactive', payload);
+        break;
+      case 'soma_activity':
+        this.emit('soma_activity', payload);
+        break;
       default:
-        console.log('[SomaBackend] Unknown message type:', type);
+        // suppress noisy unknown-type logs in production
+        break;
     }
+  }
+
+  // Send message to backend and wait for a specific response
+  async sendMessage(message, timeout = 10000) { // Default timeout of 10 seconds
+    if (!this.ws || this.ws.readyState !== WebSocket.OPEN) {
+      throw new Error('WebSocket is not connected.');
+    }
+
+    const messageId = `msg-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+    const fullMessage = { ...message, messageId };
+
+    return new Promise((resolve, reject) => {
+      // Store the resolve/reject functions for this messageId
+      this.pendingRequests[messageId] = { resolve, reject };
+
+      // Set a timeout for the request
+      const timer = setTimeout(() => {
+        delete this.pendingRequests[messageId];
+        reject(new Error(`Message with ID ${messageId} timed out after ${timeout}ms`));
+      }, timeout);
+
+      // Override the reject function to clear the timer
+      this.pendingRequests[messageId].reject = (reason) => {
+        clearTimeout(timer);
+        reject(reason);
+      };
+      this.pendingRequests[messageId].resolve = (value) => {
+        clearTimeout(timer);
+        resolve(value);
+      };
+
+      try {
+        this.ws.send(JSON.stringify(fullMessage));
+      } catch (error) {
+        clearTimeout(timer);
+        delete this.pendingRequests[messageId];
+        reject(new Error(`Failed to send message: ${error.message}`));
+      }
+    });
   }
 
   async fetchAgents() {
@@ -237,58 +336,36 @@ class SomaBackend {
 
   // Attempt to reconnect
   attemptReconnect() {
-    if (this.reconnectAttempts >= this.maxReconnectAttempts) {
-      console.error('[SomaBackend] Max reconnect attempts reached');
-      this.emit('error', { message: 'Max reconnect attempts reached' });
-      return;
-    }
-
     this.reconnectAttempts++;
-    console.log(`[SomaBackend] Reconnecting in ${this.reconnectDelay}ms (attempt ${this.reconnectAttempts}/${this.maxReconnectAttempts})...`);
+    // Exponential backoff: 3s → 6s → 12s → ... capped at 30s
+    const delay = Math.min(this.reconnectDelay * Math.pow(1.5, Math.min(this.reconnectAttempts - 1, 6)), 30000);
+    console.log(`[SomaBackend] Reconnecting in ${Math.round(delay / 1000)}s (attempt ${this.reconnectAttempts})...`);
 
     setTimeout(() => {
       this.connect();
-    }, this.reconnectDelay);
+    }, delay);
   }
 
-  // Start polling REST API for updates (Fallback only)
+  // Start polling REST API for updates (Fallback only — called from onclose, not onopen)
   startPolling() {
     if (this.pollingInterval) return;
-
-    // We only poll if the WebSocket is NOT open
-    console.log('[SomaBackend] Initializing health polling fallback...');
+    // Don't start polling if WS is already open
+    if (this.ws && this.ws.readyState === WebSocket.OPEN) return;
 
     this.pollingInterval = setInterval(async () => {
-      // If WebSocket is open, we don't need to poll
+      // Stop as soon as WS reconnects
       if (this.ws && this.ws.readyState === WebSocket.OPEN) {
-        return;
-      }
-
-      // Safety check: if WebSocket is closed for > 30 seconds, stop polling to save resources
-      const timeSinceDisconnect = Date.now() - (this.lastDisconnectTime || 0);
-      if (this.lastDisconnectTime && timeSinceDisconnect > 30000) {
-        console.log('[SomaBackend] 🛑 Stopping polling due to persistent disconnection');
         this.stopPolling();
         return;
       }
-
       try {
-        // Fallback status check
         const statusRes = await fetch(`${this.baseUrl}/api/status`);
         if (statusRes.ok) {
           const status = await statusRes.json();
-          // Only emit if still disconnected (to prevent race conditions)
-          if (!this.ws || this.ws.readyState !== WebSocket.OPEN) {
-            this.emit('metrics', {
-              uptime: status.uptime || 0,
-              arbiters: status.arbiters || []
-            });
-          }
+          this.emit('metrics', { uptime: status.uptime || 0, arbiters: status.arbiters || [] });
         }
-      } catch (error) {
-        // Silently fail
-      }
-    }, 5000); // Slower polling for fallback
+      } catch { /* silently fail */ }
+    }, 5000);
   }
 
   // Stop polling
@@ -305,15 +382,14 @@ class SomaBackend {
     console.log('[SomaBackend] Disconnecting...');
     this.stopPolling();
     this.lastDisconnectTime = Date.now();
+    this.isConnecting = false;
 
     if (this.ws) {
+      this._intentionalDisconnect = true; // prevent onclose from re-emitting + reconnecting
       this.ws.close();
       this.ws = null;
     }
 
-    // DON'T prevent auto-reconnect in dev mode (for React Strict Mode)
-    // this.reconnectAttempts = this.maxReconnectAttempts;
-    this.isConnecting = false; // Reset connecting flag
     this.emit('disconnect', { timestamp: Date.now() });
   }
 
@@ -335,10 +411,12 @@ class SomaBackend {
 
   // REST API methods
   async fetch(endpoint, options = {}) {
-    // Circuit breaker: fail fast if we know we are offline to save browser resources
-    if (this.ws && this.ws.readyState === WebSocket.CLOSED) {
-      // Allow /health and /api/status checks to pass through for reconnection attempts
-      if (!endpoint.includes('/health') && !endpoint.includes('/status')) {
+    // Circuit breaker: only block when we know we're fully offline AND not mid-reconnect
+    // This avoids freezing the dashboard during brief WS reconnect windows
+    const wsOffline = !this.ws || this.ws.readyState === WebSocket.CLOSED;
+    const notReconnecting = !this.isConnecting && this.reconnectAttempts > 2;
+    if (wsOffline && notReconnecting) {
+      if (!endpoint.includes('/health') && !endpoint.includes('/status') && !endpoint.includes('/api/soma')) {
         throw new Error('Circuit Breaker: Backend is offline');
       }
     }

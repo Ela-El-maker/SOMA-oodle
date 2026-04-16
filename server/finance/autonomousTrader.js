@@ -14,6 +14,10 @@ import alpacaService from './AlpacaService.js';
 import marketDataService from './marketDataService.js';
 import tradeLogger from './TradeLogger.js';
 import notificationService from '../services/NotificationService.js';
+import { signalLibrary } from './SignalLibrary.js';
+import { vwapExecutor } from './VWAPExecutor.js';
+import { altDataService } from './AltDataService.js';
+import { flushPerformanceSummaryCache } from './performanceRoutes.js';
 
 class AutonomousTrader {
     constructor() {
@@ -48,6 +52,7 @@ class AutonomousTrader {
         this._lastSignal = null;         // Latest signal with agent confidences
         this._lastStreamPrice = 0;       // Real-time price from WebSocket
         this._analysisTimeoutMs = 15_000; // 15s timeout for AI analysis
+        this._signalScoresAtEntry = new Map(); // symbol → signal scores at open (for adaptive learning)
 
         // Paper trading mode (active when Alpaca not connected)
         this.paperMode = false;
@@ -222,6 +227,9 @@ class AutonomousTrader {
     async _runCycle() {
         if (!this.isRunning || !this.symbol) return;
 
+        // Yield immediately so pending HTTP requests can be processed before we start
+        await new Promise(resolve => setImmediate(resolve));
+
         const cycleStart = Date.now();
         let signal = null;
         let analysis = null;
@@ -293,8 +301,8 @@ class AutonomousTrader {
                 if (managed) return; // Position was closed, skip new analysis
             }
 
-            // 5. Run AI analysis (rate-limited)
-            analysis = await this._getAnalysis(this.symbol);
+            // 5. Run AI analysis — fast path first, heavy path as fallback
+            analysis = await this._getFastAnalysis(this.symbol, bars, currentPrice);
 
             if (!analysis) {
                 this._logDecision('ANALYSIS', 'SKIP', 'AI analysis unavailable or rate-limited');
@@ -386,6 +394,9 @@ class AutonomousTrader {
                 }
             }
 
+            // Yield before the heavy execute path so HTTP handlers can respond
+            await new Promise(resolve => setImmediate(resolve));
+
             // 14. EXECUTE THE TRADE
             await this._executeTrade(signal, sizing, currentPrice, analysis);
 
@@ -401,30 +412,87 @@ class AutonomousTrader {
     }
 
     /**
-     * Run AI swarm analysis (with rate limiting + timeout)
+     * Fast analysis — SignalLibrary ensemble + AltData blend.
+     * Deterministic, ~100ms. No external LLM calls needed.
+     * Falls back to the heavy 8-step FinanceAgentArbiter if something breaks.
      */
-    async _getAnalysis(symbol) {
+    async _getFastAnalysis(symbol, bars, currentPrice) {
         try {
-            // Use the existing FinanceAgentArbiter via the internal route
-            const arbiter = global.SOMA?.financeArbiter;
-            if (arbiter && typeof arbiter.analyzeStock === 'function') {
-                const result = await Promise.race([
-                    arbiter.analyzeStock(symbol),
-                    new Promise((_, reject) =>
-                        setTimeout(() => reject(new Error('Analysis timed out')), this._analysisTimeoutMs)
-                    )
-                ]);
-                return result;
+            // 1. Run all 8 technical signals in parallel (pure computation, instant)
+            const techResult = signalLibrary.analyze(bars, currentPrice);
+
+            // 2. Fetch alt data in parallel (cached, usually instant after first call)
+            const altResult = await Promise.race([
+                altDataService.getScore(symbol),
+                new Promise(r => setTimeout(() => r(null), 4000)) // 4s timeout
+            ]);
+
+            // 3. Blend: 75% technical signals, 25% alt data (when available)
+            let composite    = techResult.composite;
+            let confidence   = techResult.confidence;
+            let sentimentScore = 0.5;
+
+            if (altResult && typeof altResult.score === 'number' && altResult.confidence > 0) {
+                const altWeight  = Math.min(0.25, altResult.confidence * 0.35);
+                const techWeight = 1 - altWeight;
+                composite        = techResult.composite * techWeight + altResult.score * altWeight;
+                confidence       = Math.min(0.97, techResult.confidence * 0.8 + altResult.confidence * 0.2);
+                sentimentScore   = (altResult.score + 1) / 2; // -1..+1 → 0..1
+
+                console.log(`[AutonomousTrader] ⚡ Signal: tech=${techResult.composite.toFixed(3)} alt=${altResult.score.toFixed(3)} blend=${composite.toFixed(3)} | ${techResult.inAgreement}/8 signals agree`);
+            } else {
+                console.log(`[AutonomousTrader] ⚡ Signal: tech=${techResult.composite.toFixed(3)} (no alt data) | ${techResult.inAgreement}/8 signals agree`);
             }
 
-            // Fallback: call the HTTP endpoint internally (with AbortController timeout)
+            const recommendation = composite >= 0.18 ? 'BUY' : composite <= -0.18 ? 'SELL' : 'HOLD';
+
+            // Compute RSI for risk score (reuse from signal library internals)
+            const closes = bars.map(b => b.close);
+            const changes = closes.slice(-15).map((v, i, a) => i === 0 ? 0 : v - a[i - 1]);
+            const avgGain = changes.filter(c => c > 0).reduce((s, v) => s + v, 0) / 14;
+            const avgLoss = changes.filter(c => c < 0).map(Math.abs).reduce((s, v) => s + v, 0) / 14;
+            const rsi     = avgLoss === 0 ? 100 : 100 - (100 / (1 + avgGain / avgLoss));
+
+            return {
+                strategy:  {
+                    recommendation,
+                    confidence:   Math.abs(composite) * 1.5,  // scale to 0-1 for _generateSignal
+                    thesis:       techResult.reason,
+                    signals:      techResult.signals,
+                    inAgreement:  techResult.inAgreement,
+                },
+                risk:      { score: rsi > 70 ? 30 : rsi < 30 ? 75 : 55, assessment: recommendation.toLowerCase() },
+                sentiment: { score: sentimentScore, altData: altResult },
+                quant:     { strategy: 'SignalLibrary+AltData', composite, signals: techResult.signals },
+            };
+        } catch (e) {
+            console.warn('[AutonomousTrader] Fast analysis error:', e.message);
+        }
+
+        // Heavy fallback — the full 8-step FinanceAgentArbiter
+        return this._getHeavyAnalysis(symbol);
+    }
+
+    /**
+     * Heavy analysis — full 8-step FinanceAgentArbiter. Used as fallback only.
+     */
+    async _getHeavyAnalysis(symbol) {
+        try {
+            const arbiter = global.SOMA?.financeArbiter;
+            if (arbiter && typeof arbiter.analyzeStock === 'function') {
+                return await Promise.race([
+                    arbiter.analyzeStock(symbol),
+                    new Promise((_, reject) => setTimeout(() => reject(new Error('Heavy analysis timed out')), 45000))
+                ]);
+            }
+
             const controller = new AbortController();
-            const timeout = setTimeout(() => controller.abort(), this._analysisTimeoutMs);
-            const response = await fetch(`http://localhost:${process.env.PORT || 3001}/api/finance/analyze`, {
-                method: 'POST',
+            const timeout    = setTimeout(() => controller.abort(), 45000);
+            const response   = await fetch(`http://localhost:${process.env.PORT || 3001}/api/finance/analyze`, {
+                method:  'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ symbol }),
-                signal: controller.signal
+                body:    JSON.stringify({ symbol }),
+                signal:  controller.signal
             });
             clearTimeout(timeout);
 
@@ -432,11 +500,9 @@ class AutonomousTrader {
                 const data = await response.json();
                 if (data.success && data.analysis) return data.analysis;
             }
-
             return null;
         } catch (error) {
-            const isTimeout = error.message.includes('timed out') || error.name === 'AbortError';
-            console.warn(`[AutonomousTrader] Analysis ${isTimeout ? 'timed out' : 'failed'} (${this._analysisTimeoutMs / 1000}s limit):`, error.message);
+            console.warn('[AutonomousTrader] Heavy analysis failed:', error.message);
             return null;
         }
     }
@@ -630,6 +696,11 @@ class AutonomousTrader {
      * Execute the trade via Alpaca
      */
     async _executeTrade(signal, sizing, currentPrice, analysis) {
+        // Store signal scores now — used for adaptive weight update when position closes
+        if (analysis?.quant?.signals) {
+            this._signalScoresAtEntry.set(this.symbol, analysis.quant.signals);
+        }
+
         // Route to paper execution if Alpaca not connected
         if (this.paperMode) {
             return this._executePaperOrder(signal, sizing, currentPrice);
@@ -638,7 +709,7 @@ class AutonomousTrader {
         const side = signal.action.toLowerCase(); // 'buy' or 'sell'
 
         try {
-            // Calculate SL/TP prices
+            // Calculate SL/TP prices (used for logging; _managePosition handles exits)
             const stopLossPrice = side === 'buy'
                 ? currentPrice * (1 - this.config.stopLossPct)
                 : currentPrice * (1 + this.config.stopLossPct);
@@ -650,40 +721,23 @@ class AutonomousTrader {
             console.log(`[AutonomousTrader] 📊 Executing ${side.toUpperCase()} ${sizing.qty} ${this.symbol} @ ~$${currentPrice.toFixed(2)}`);
             console.log(`[AutonomousTrader] SL: $${stopLossPrice.toFixed(2)}, TP: $${takeProfitPrice.toFixed(2)}`);
 
-            // Use Marketable Limit Order for better execution safety (slippage protection)
-            // Buy: Limit = Current + 0.2%
-            // Sell: Limit = Current - 0.2%
-            // This ensures we don't buy at +5% in a flash spike
-            const slippageTolerance = 0.002;
-            const limitPrice = side === 'buy'
-                 ? currentPrice * (1 + slippageTolerance)
-                 : currentPrice * (1 - slippageTolerance);
+            // TWAP/VWAP institutional execution — slices large orders to minimize market impact
+            // Small orders (<$500 notional) fall through as single shots automatically
+            const execResult = await vwapExecutor.execute(this.symbol, side, sizing.qty, currentPrice, { paperMode: false });
 
-            // Try bracket order first (marketable limit + SL + TP)
-            let order;
-            try {
-                order = await alpacaService.client.createOrder({
-                    symbol: this.symbol.replace('-', '/'), // BTC-USD -> BTC/USD for crypto
-                    qty: sizing.qty,
-                    side: side,
-                    type: 'limit',
-                    limit_price: limitPrice.toFixed(2),
-                    time_in_force: 'gtc',
-                    order_class: 'bracket',
-                    stop_loss: { stop_price: stopLossPrice.toFixed(2) },
-                    take_profit: { limit_price: takeProfitPrice.toFixed(2) }
-                });
-            } catch (bracketErr) {
-                // Bracket orders not supported for all assets — fallback to simple marketable limit order
-                console.warn(`[AutonomousTrader] Bracket order failed (${bracketErr.message}), using simple marketable limit order`);
-                order = await alpacaService.client.createOrder({
-                    symbol: this.symbol.replace('-', '/'),
-                    qty: sizing.qty,
-                    side: side,
-                    type: 'limit',
-                    limit_price: limitPrice.toFixed(2),
-                    time_in_force: side === 'buy' ? 'gtc' : 'day'
-                });
+            if (!execResult || execResult.status === 'failed') {
+                throw new Error('VWAP execution failed — no fills returned');
+            }
+
+            const fillPrice = execResult.avgPrice;
+            const order = {
+                id:               execResult.fills[0]?.orderId || `vwap_${Date.now()}`,
+                status:           execResult.status,
+                filled_avg_price: fillPrice?.toFixed(4),
+            };
+
+            if (execResult.mode === 'twap') {
+                console.log(`[AutonomousTrader] 🏛️ TWAP: ${execResult.slicesExecuted} slices @ avg $${fillPrice.toFixed(4)} | Est. market impact saved: $${execResult.savings.toFixed(2)}`);
             }
 
             // Record trade
@@ -915,6 +969,15 @@ class AutonomousTrader {
                 const pnl = pos.side === 'long'
                     ? (fillPrice - pos.entryPrice) * pos.qty
                     : (pos.entryPrice - fillPrice) * pos.qty;
+                const pnlPct = pnl / (pos.entryPrice * pos.qty);
+
+                // Adaptive signal weight update — teach the library what worked/didn't
+                const signalScores = this._signalScoresAtEntry.get(position.symbol);
+                if (signalScores) {
+                    signalLibrary.recordOutcome(signalScores, pnlPct);
+                    this._signalScoresAtEntry.delete(position.symbol);
+                }
+
                 this._paperPortfolio.balance += fillPrice * pos.qty;
                 this._stats.sessionPnL += pnl;
                 delete this._paperPortfolio.positions[position.symbol];
@@ -926,6 +989,7 @@ class AutonomousTrader {
                         confidence: 1.0, status: 'filled'
                     });
                 console.log(`[AutonomousTrader] 📄 PAPER Closed ${position.symbol}: ${reason} (P&L: $${pnl.toFixed(2)}, Balance: $${this._paperPortfolio.balance.toFixed(2)})`);
+                flushPerformanceSummaryCache(); // dashboard reflects new P&L immediately
             }
             return;
         }
@@ -940,6 +1004,13 @@ class AutonomousTrader {
                 type: 'market',
                 time_in_force: 'day'
             });
+
+            // Adaptive signal weight update
+            const signalScores = this._signalScoresAtEntry.get(position.symbol);
+            if (signalScores && position.unrealizedPnlPct != null) {
+                signalLibrary.recordOutcome(signalScores, position.unrealizedPnlPct / 100);
+                this._signalScoresAtEntry.delete(position.symbol);
+            }
 
             this._stats.sessionPnL += position.unrealizedPnl;
 
@@ -967,6 +1038,7 @@ class AutonomousTrader {
             } catch (e) { /* non-critical */ }
 
             console.log(`[AutonomousTrader] 📤 Closed ${position.symbol}: ${reason} (P&L: $${position.unrealizedPnl.toFixed(2)})`);
+            flushPerformanceSummaryCache(); // dashboard reflects new P&L immediately;
 
             // Send notification
             notificationService.sendTradeNotification({
@@ -1113,7 +1185,8 @@ class AutonomousTrader {
                 confidence: this._lastSignal.confidence,
                 recommendation: this._lastSignal.recommendation,
                 timestamp: this._lastSignal.timestamp
-            } : null
+            } : null,
+            guardrailsState: this.guardrails?.getStatus() || null
         };
     }
 

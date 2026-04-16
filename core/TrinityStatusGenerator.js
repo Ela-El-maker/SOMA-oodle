@@ -46,9 +46,9 @@ ${this._getLobeStatus('EXTERNAL')}
 
 ## 🔱 Trinity Pillars
 
-### Pillar 1: Instinct (SOMA-1T)
+### Pillar 1: Instinct (GEMMA-3)
 ${this._getPillarStatus('instinct', {
-    localModelManager: 'Local Model Manager (soma-1t-v1)',
+    localModelManager: 'Local Model Manager (gemma3:4b)',
     autoTrainingCoordinator: 'Auto Training Coordinator',
     ollamaAutoTrainer: 'Ollama Auto-Trainer'
 })}
@@ -159,7 +159,7 @@ ${this._getHealthStatus()}
         }
 
         if (this.system.localModelManager) {
-            stats.push(`- **Current Model:** soma-1t-v1`);
+            stats.push(`- **Current Model:** ${process.env.OLLAMA_MODEL || 'gemma3:4b'}`);
         }
 
         if (this.system.messageBroker?.arbiters) {

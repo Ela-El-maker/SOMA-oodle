@@ -1,0 +1,10 @@
+{
+  "event": "system_initialized",
+  "ts": 1773164754365,
+  "data": {
+    "quorum": 0.75,
+    "requiredAdminSigs": 1,
+    "autonomousMode": false,
+    "adminKeysCount": 0
+  }
+}

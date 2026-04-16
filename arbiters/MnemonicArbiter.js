@@ -1,4 +1,4 @@
-/**
+﻿/**
  * MnemonicArbiterV2.js
  * 
  * PRODUCTION HYBRID MEMORY SYSTEM - 3 Tier Architecture
@@ -7,20 +7,22 @@
  * - Cold Tier: SQLite with optimized queries (~50ms)
  * 
  * REAL Implementation (not simulation):
- * ✓ Actual Redis cluster management with failover
- * ✓ Real semantic vector search with cosine similarity
- * ✓ Intelligent tier promotion/demotion
- * ✓ Memory pressure management
- * ✓ Access pattern tracking for optimization
+ * âœ“ Actual Redis cluster management with failover
+ * âœ“ Real semantic vector search with cosine similarity
+ * âœ“ Intelligent tier promotion/demotion
+ * âœ“ Memory pressure management
+ * âœ“ Access pattern tracking for optimization
  */
 
 import BaseArbiterModule from '../core/BaseArbiter.cjs';
 const { BaseArbiter, ArbiterCapability } = BaseArbiterModule;
+import messageBroker from '../core/MessageBroker.cjs';
 import { createClient } from 'redis';
 import Database from 'better-sqlite3';
 import fs from 'fs/promises';
 import path from 'path';
 import crypto from 'crypto';
+import os from 'os';
 
 // ===========================
 // Vector Utilities
@@ -209,6 +211,14 @@ class MnemonicArbiter extends BaseArbiter {
 
       // Optimization
       batchOptimizations: opts.batchOptimizations !== false,
+      // Decision Substrate Config (Substrate Upgrade)
+      importanceWeight: opts.importanceWeight || 0.3,
+      confidenceWeight: opts.confidenceWeight || 0.2,
+      utilityWeight:    opts.utilityWeight || 0.3,
+      contextWeight:    opts.contextWeight || 0.2,
+      decayRate:        opts.decayRate || 0.001,
+      learningRate:     opts.learningRate || 0.05,
+      tensionSensitivity: opts.tensionSensitivity || 1.5,
       compressionEnabled: opts.compressionEnabled !== false,
       vacuumInterval: opts.vacuumInterval || 86400000 // 24 hours
     };
@@ -247,7 +257,7 @@ class MnemonicArbiter extends BaseArbiter {
   // ===========================
 
   async onInitialize() {
-    this.log('info', '🧠 MnemonicArbiterV2 (Enhanced Persistence) initializing...');
+    this.log('info', 'ðŸ§  MnemonicArbiterV2 (Enhanced Persistence) initializing...');
 
     try {
       // Initialize tiers
@@ -271,8 +281,23 @@ class MnemonicArbiter extends BaseArbiter {
       this.registerMessageHandler('save', this._handleSave.bind(this)); // NEW
       this.registerMessageHandler('stats', this._handleStats.bind(this));
       this.registerMessageHandler('optimize', this._handleOptimize.bind(this));
+      this.registerMessageHandler('deep_cleanup', this._handleDeepCleanup.bind(this)); // NEW: Digital Constipation Fix
 
-      this.log('info', '✅ MnemonicArbiterV2 ready - all 3 tiers operational');
+      // Subscribe to RSS pressure signal — reactively flush warm tier when memory is critical
+      try {
+        messageBroker.subscribe('system.resource.critical', (signal) => {
+          const { rssPercent, issue } = signal?.payload || {};
+          if (issue !== 'HIGH_RSS') return; // only react to RAM, not other criticals
+          const aggressive = (rssPercent || 0) > 90;
+          this.log('warn', `[MemoryPressure] RSS at ${rssPercent?.toFixed(1)}% — flushing warm tier (aggressive=${aggressive})`);
+          const evicted = this.flushToCold(aggressive);
+          this.log('info', `[MemoryPressure] Evicted ${evicted} warm-tier entries`);
+        });
+      } catch (e) {
+        this.log('warn', 'Could not subscribe to system.resource.critical', { error: e.message });
+      }
+
+      this.log('info', 'âœ… MnemonicArbiterV2 ready - all 3 tiers operational');
       this._logTierStatus();
     } catch (error) {
       this.log('error', 'Failed to initialize MnemonicArbiterV2', { error: error.message });
@@ -322,7 +347,7 @@ class MnemonicArbiter extends BaseArbiter {
     // 1. Use injected cache (Mock or Real)
     if (this.cache) {
       this.redis = this.cache;
-      this.log('info', `🔥 Hot tier (Injected: ${this.cache.name}) ready`);
+      this.log('info', `ðŸ”¥ Hot tier (Injected: ${this.cache.name}) ready`);
       return;
     }
 
@@ -377,7 +402,7 @@ class MnemonicArbiter extends BaseArbiter {
           // Test connection
           const ping = await this.redis.ping();
           if (ping === 'PONG') {
-              this.log('info', '🔥 Hot tier (Redis) ready');
+              this.log('info', 'ðŸ”¥ Hot tier (Redis) ready');
           }
       }).catch(err => {
           this.log('warn', 'Redis connection failed - hot tier disabled', { error: err.message });
@@ -389,57 +414,95 @@ class MnemonicArbiter extends BaseArbiter {
     }
   }
 
-  async _initSQLite() {
-    try {
-      this.log('info', 'Initializing SQLite (cold tier)...');
-
-      this.db = new Database(this.config.dbPath);
-
-      // Enable optimizations
-      this.db.pragma('journal_mode = WAL'); // Write-ahead logging for better concurrency
-      this.db.pragma('synchronous = NORMAL'); // Balance between safety and speed
-      this.db.pragma('cache_size = -8000'); // 8MB cache (was 64MB — reduced to save heap when multiple instances exist)
-      this.db.pragma('temp_store = MEMORY');
-      this.db.pragma('query_only = OFF');
-
-      // Create tables
-      this.db.exec(`
-        CREATE TABLE IF NOT EXISTS memories (
-          id TEXT PRIMARY KEY,
-          content TEXT NOT NULL,
-          metadata TEXT,
-          embedding_id TEXT,
-          created_at INTEGER NOT NULL,
-          accessed_at INTEGER NOT NULL,
-          access_count INTEGER DEFAULT 0,
-          importance REAL DEFAULT 0.5,
-          tier TEXT DEFAULT 'cold'
-        );
-
-        CREATE INDEX IF NOT EXISTS idx_accessed_at ON memories(accessed_at DESC);
-        CREATE INDEX IF NOT EXISTS idx_importance ON memories(importance DESC);
-        CREATE INDEX IF NOT EXISTS idx_tier ON memories(tier);
-        CREATE INDEX IF NOT EXISTS idx_access_count ON memories(access_count DESC);
-        
-        CREATE TABLE IF NOT EXISTS vector_index (
-          embedding_id TEXT PRIMARY KEY,
-          memory_id TEXT NOT NULL,
-          vector_hash TEXT NOT NULL,
-          created_at INTEGER NOT NULL,
-          FOREIGN KEY(memory_id) REFERENCES memories(id)
-        );
-
-        CREATE INDEX IF NOT EXISTS idx_vector_memory ON vector_index(memory_id);
-      `);
-
-      // Optimize on startup
-      this.db.exec('ANALYZE;');
-
-      this.log('info', '❄️  Cold tier (SQLite) ready');
-    } catch (error) {
-      this.log('error', 'SQLite initialization failed', { error: error.message });
-      throw error;
+  // Helper â€” apply schema to an open Database instance
+  _setupDb(db, inMemory = false) {
+    if (!inMemory) {
+      db.pragma('journal_mode = WAL');
+      db.pragma('synchronous = NORMAL');
     }
+    db.pragma('cache_size = -8000');
+    db.pragma('temp_store = MEMORY');
+    db.pragma('query_only = OFF');
+
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS memories (
+        id TEXT PRIMARY KEY,
+        content TEXT NOT NULL,
+        metadata TEXT,
+        embedding_id TEXT,
+        sector TEXT DEFAULT 'GEN', -- Sovereign Archipelago (Spatial Geography)
+        created_at INTEGER NOT NULL,
+        accessed_at INTEGER NOT NULL,
+        access_count INTEGER DEFAULT 0,
+        importance REAL DEFAULT 0.5,
+        tier TEXT DEFAULT 'cold'
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_sector ON memories(sector);
+
+      CREATE INDEX IF NOT EXISTS idx_accessed_at ON memories(accessed_at DESC);
+      CREATE INDEX IF NOT EXISTS idx_importance ON memories(importance DESC);
+      CREATE INDEX IF NOT EXISTS idx_tier ON memories(tier);
+      CREATE INDEX IF NOT EXISTS idx_access_count ON memories(access_count DESC);
+
+      CREATE TABLE IF NOT EXISTS vector_index (
+        embedding_id TEXT PRIMARY KEY,
+        memory_id TEXT NOT NULL,
+        vector_hash TEXT NOT NULL,
+        created_at INTEGER NOT NULL,
+        FOREIGN KEY(memory_id) REFERENCES memories(id)
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_vector_memory ON vector_index(memory_id);
+      CREATE TABLE IF NOT EXISTS episodic_buffer (
+        id TEXT PRIMARY KEY,
+        memory_id TEXT NOT NULL,
+        outcome TEXT,
+        context_snapshot TEXT,
+        action_taken TEXT,
+        importance REAL DEFAULT 0.8,
+        timestamp INTEGER NOT NULL,
+        FOREIGN KEY(memory_id) REFERENCES memories(id)
+      );
+      CREATE INDEX IF NOT EXISTS idx_episodic_timestamp ON episodic_buffer(timestamp DESC);
+    `);
+
+    db.exec('ANALYZE;');
+  }
+
+  async _initSQLite() {
+    // Try three paths in order. Never throw â€” a degraded cold tier is better than
+    // falling all the way back to the in-memory stub in cognitive.js.
+    const candidates = [
+      { path: this.config.dbPath,                                   label: 'configured path',   inMemory: false },
+      { path: path.join(os.tmpdir(), 'soma-memory.db'),             label: 'temp-dir fallback', inMemory: false },
+      { path: ':memory:',                                           label: 'in-memory SQLite',  inMemory: true  },
+    ];
+
+    for (const candidate of candidates) {
+      try {
+        this.log('info', `Initializing SQLite (cold tier) â€” ${candidate.label}â€¦`);
+        const db = new Database(candidate.path);
+        this._setupDb(db, candidate.inMemory);
+        this.db = db;
+
+        if (candidate.inMemory) {
+          this.log('warn', 'âš ï¸  Cold tier using in-memory SQLite â€” memories will NOT survive a restart. Fix the db path to make them permanent.');
+        } else if (candidate.path !== this.config.dbPath) {
+          this.log('warn', `âš ï¸  Cold tier using temp fallback (${candidate.path}) â€” set dbPath to a writable location to make memories permanent.`);
+        } else {
+          this.log('info', 'â„ï¸  Cold tier (SQLite) ready');
+        }
+        return; // success â€” stop trying
+      } catch (err) {
+        this.log('warn', `SQLite failed on ${candidate.label}: ${err.message}`);
+        this.db = null;
+      }
+    }
+
+    // All three failed â€” cold tier disabled but we do NOT throw.
+    // MnemonicArbiter stays alive with warm-tier-only operation.
+    this.log('error', 'Cold tier disabled â€” all SQLite paths failed. Warm tier only.');
   }
 
   async _initVectorStore() {
@@ -459,20 +522,20 @@ class MnemonicArbiter extends BaseArbiter {
         try {
           const data = await fs.readFile(vectorPath, 'utf8');
           if (!data || data.trim() === '') {
-            this.log('warn', '⚠️ Vector file exists but is empty. Starting fresh.');
+            this.log('warn', 'âš ï¸ Vector file exists but is empty. Starting fresh.');
           } else {
             const vectors = JSON.parse(data);
             for (const [id, vec] of Object.entries(vectors)) {
               this.vectorStore.set(id, vec);
               this.tierManager.recordAccess(id);
             }
-            this.log('info', `🌡️  Warm tier loaded ${this.vectorStore.size} vectors from disk`);
+            this.log('info', `ðŸŒ¡ï¸  Warm tier loaded ${this.vectorStore.size} vectors from disk`);
           }
         } catch (e) {
-          this.log('error', '❌ Failed to parse vector file (corrupt?). Starting fresh.', { error: e.message });
+          this.log('error', 'âŒ Failed to parse vector file (corrupt?). Starting fresh.', { error: e.message });
         }
       } else {
-        this.log('info', '🆕 No existing vector file found. Starting fresh warm tier.');
+        this.log('info', 'ðŸ†• No existing vector file found. Starting fresh warm tier.');
       }
 
       this.tierMetrics.warm.size = this.vectorStore.size;
@@ -499,16 +562,85 @@ class MnemonicArbiter extends BaseArbiter {
 
       // Load bi-encoder for embedding generation
       this.embedder = await pipeline('feature-extraction', this.config.embeddingModel);
-      this.log('info', '✅ Embedding model loaded');
+      this.log('info', 'âœ… Embedding model loaded');
 
       // Load cross-encoder for reranking
       this.reranker = await pipeline('text-classification', this.config.rerankerModel);
-      this.log('info', '✅ Reranker model loaded - semantic search + reranking enabled');
+      this.log('info', 'âœ… Reranker model loaded - semantic search + reranking enabled');
     } catch (error) {
-      this.log('warn', '⚠️  AI models not available - semantic search disabled', { error: error.message });
+      this.log('warn', 'âš ï¸  AI models not available - semantic search disabled', { error: error.message });
       this.embedder = null;
       this.reranker = null;
     }
+  }
+
+  // ===========================
+  // Memory Pressure Management
+  // ===========================
+
+  /**
+   * Evict low-utility entries from the warm tier (vectorStore) back to SQLite cold storage.
+   * Called reactively when system.resource.critical fires (RSS > 85%).
+   * Utility score = 0.6 × recency_norm + 0.4 × frequency_norm
+   * Goal-alignment axis skipped — GoalPlannerArbiter may not be ready and we
+   * must not evict everything just because goals aren't loaded yet.
+   *
+   * @param {boolean} aggressive - true when RSS > 90% (lower threshold, more evictions)
+   * @returns {number} entries evicted
+   */
+  flushToCold(aggressive = false) {
+    if (!this.vectorStore.size) return 0;
+
+    const threshold = aggressive ? 0.4 : 0.2;
+    const now = Date.now();
+    const maxAge   = 30 * 24 * 60 * 60 * 1000; // 30 days — recency normalizer
+    const maxCount = 100;                         // frequency cap
+
+    // Phase 1: score every warm-tier entry
+    // vectorStore key = embeddingId (e.g. "emb_abc123")
+    // entry.memoryId = actual SQLite primary key used in accessPatterns
+    const toEvict = []; // [{ vectorId, memId }]
+
+    for (const [vectorId, entry] of this.vectorStore.entries()) {
+      const memId = entry?.memoryId;
+      if (!memId) continue; // malformed / legacy entry — skip to be safe
+
+      const pattern = this.tierManager.accessPatterns.get(memId); // keyed by memoryId
+      if (!pattern) {
+        // Never recalled — candidate for eviction
+        toEvict.push({ vectorId, memId });
+        continue;
+      }
+      const recencyNorm   = Math.max(0, 1 - (now - pattern.last_access) / maxAge);
+      const frequencyNorm = Math.min(1, pattern.access_count / maxCount);
+      const utilityScore  = 0.6 * recencyNorm + 0.4 * frequencyNorm;
+      if (utilityScore < threshold) toEvict.push({ vectorId, memId });
+    }
+
+    // Phase 2: evict only entries confirmed in cold SQLite tier
+    // If the memory doesn't exist in SQLite it would be permanently lost — skip it
+    let evicted = 0;
+    const sqlCheck = this.db
+      ? this.db.prepare('SELECT id FROM memories WHERE id = ?')
+      : null;
+
+    for (const { vectorId, memId } of toEvict) {
+      if (sqlCheck) {
+        try {
+          const row = sqlCheck.get(memId);
+          if (!row) continue; // Not in cold tier — do not evict (data loss prevention)
+        } catch (e) {
+          continue; // DB error — skip this entry
+        }
+      }
+      this.vectorStore.delete(vectorId);
+      this.tierManager.accessPatterns.delete(memId);
+      this.tierMetrics.warm.evictions++;
+      evicted++;
+    }
+
+    this.tierMetrics.warm.size = this.vectorStore.size;
+    return evicted;
   }
 
   // ===========================
@@ -520,8 +652,21 @@ class MnemonicArbiter extends BaseArbiter {
       this.log('error', 'Cold tier (SQLite) not initialized - memory lost');
       return { success: false, error: 'Database not ready' };
     }
+
+    // SAFETY GUARD: Prevent massive blobs from bloating the DB and hanging reasoning
+    if (content && content.length > 100000) {
+      this.log('warn', `âš ï¸ Skipping memory storage: Content too large (${Math.round(content.length/1024)}KB). Probable state dump.`);
+      return { success: false, error: 'Content exceeds memory size limit' };
+    }
+
+    if (content && (content.includes('"experiences":') || content.includes('"state":'))) {
+      this.log('warn', 'âš ï¸ Skipping memory storage: State dump detected.');
+      return { success: false, error: 'State dumps should not be stored in semantic memory' };
+    }
+
     const id = this._generateId(content);
     const now = Date.now();
+    const sector = metadata.sector || 'GEN'; // Anchor to Sovereign Archipelago
 
     this.tierMetrics.total.stores++;
 
@@ -549,7 +694,7 @@ class MnemonicArbiter extends BaseArbiter {
           // Track changes and auto-save if threshold reached
           this.unsavedChanges++;
           if (this.unsavedChanges >= this.config.saveThreshold) {
-            this.log('info', `💾 Save threshold reached (${this.unsavedChanges} changes). Saving...`);
+            this.log('info', `ðŸ’¾ Save threshold reached (${this.unsavedChanges} changes). Saving...`);
             this._saveVectorStore(); // Fire and forget (don't await to block)
           }
 
@@ -558,10 +703,27 @@ class MnemonicArbiter extends BaseArbiter {
         }
       }
 
+            // EPISODIC ROUTING: If this is an experience/outcome, frame it
+      if (metadata.outcome || metadata.type === 'experience' || metadata.action) {
+        const epiStmt = this.db.prepare(`
+          INSERT INTO episodic_buffer (id, memory_id, outcome, context_snapshot, action_taken, importance, timestamp)
+          VALUES (?, ?, ?, ?, ?, ?, ?)
+        `);
+        epiStmt.run(
+          `epi_${id}`,
+          id,
+          JSON.stringify(metadata.outcome || 'unknown'),
+          JSON.stringify(metadata.context || {}),
+          metadata.action || 'chat',
+          metadata.importance || 0.8,
+          now
+        );
+        this.log('info', `🎭 Episodic memory framed: ${id.substring(0,8)}`);
+      }
       // Store in cold tier (persistent)
       const stmt = this.db.prepare(`
-        INSERT OR REPLACE INTO memories (id, content, metadata, embedding_id, created_at, accessed_at, importance, tier)
-        VALUES (?, ?, ?, ?, ?, ?, ?, 'cold')
+        INSERT OR REPLACE INTO memories (id, content, metadata, embedding_id, sector, created_at, accessed_at, importance, tier)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'cold')
       `);
 
       const params = [
@@ -569,6 +731,7 @@ class MnemonicArbiter extends BaseArbiter {
         content,
         JSON.stringify(metadata),
         embeddingId,
+        sector,
         now,
         now,
         (metadata && typeof metadata.importance === 'number') ? metadata.importance : 0.5
@@ -599,7 +762,7 @@ class MnemonicArbiter extends BaseArbiter {
         }
       }
 
-      this.log('info', `💾 Memory stored: ${id.substring(0, 8)}... (all tiers)`);
+      this.log('info', `ðŸ’¾ Memory stored: ${id.substring(0, 8)}... (all tiers)`);
 
       return {
         id,
@@ -617,7 +780,10 @@ class MnemonicArbiter extends BaseArbiter {
     }
   }
 
-  async recall(query, topK = 5) {
+  async recall(query, options = {}) {
+    const topK = typeof options === 'number' ? options : (options.topK || 5);
+    const sector = options.sector || null; // Target specific Archipelago
+
     if (!this.db) {
       this.log('warn', 'Cold tier (SQLite) not initialized - empty recall');
       return { results: [], tier: 'none' };
@@ -627,7 +793,7 @@ class MnemonicArbiter extends BaseArbiter {
     let searchTerms = query;
 
     try {
-      // 🔗 COGNITIVE LINK 1: CAUSAL EXPANSION
+      // ðŸ”— COGNITIVE LINK 1: CAUSAL EXPANSION
       // Expand query using causal relationships for better recall
       if (this.causalityArbiter && typeof this.causalityArbiter.queryCausalChains === 'function') {
         try {
@@ -635,7 +801,7 @@ class MnemonicArbiter extends BaseArbiter {
           if (chains && chains.length > 0) {
             const expansion = chains.map(c => c.effect).join(' ');
             searchTerms = `${query} ${expansion}`;
-            this.log('info', `🔗 Causal expansion: "${expansion.substring(0, 50)}..."`);
+            this.log('info', `ðŸ”— Causal expansion: "${expansion.substring(0, 50)}..."`);
           }
         } catch (e) {
           this.log('warn', 'Causal expansion failed', { error: e.message });
@@ -643,7 +809,8 @@ class MnemonicArbiter extends BaseArbiter {
       }
 
       // 1. Try hot tier (Redis cache) - <1ms
-      if (this.redis) {
+      // CNS: Strict Health Gate to prevent connection timeout crashes
+      if (this.redis && this.redis.isOpen && this.redis.isReady) {
         try {
           const cached = await this.redis.get(`query:${searchTerms}`);
           if (cached) {
@@ -656,12 +823,12 @@ class MnemonicArbiter extends BaseArbiter {
             };
           }
         } catch (error) {
-          this.log('warn', 'Redis read failed', { error: error.message });
+          this.log('warn', 'Redis read failed - falling back to cold tiers', { error: error.message });
         }
         this.tierMetrics.hot.misses++;
       }
 
-      // 👁️ COGNITIVE LINK 2: VISUAL CONTEXT
+      // ðŸ‘ï¸ COGNITIVE LINK 2: VISUAL CONTEXT
       // Detect visual queries and inject visual context if available
       let visualContext = null;
       const isVisual = /look|see|image|picture|screenshot|photo/i.test(query);
@@ -670,7 +837,7 @@ class MnemonicArbiter extends BaseArbiter {
           const sim = await this.visionArbiter.findSimilarImages(query, 1);
           if (sim && sim.length > 0) {
             visualContext = `[Visual Context: I recall seeing something similar at ${sim[0].path}]`;
-            this.log('info', '👁️  Visual link active');
+            this.log('info', 'ðŸ‘ï¸  Visual link active');
           }
         } catch (e) {
           this.log('warn', 'Visual lookup failed', { error: e.message });
@@ -690,14 +857,14 @@ class MnemonicArbiter extends BaseArbiter {
           if (this.reranker && candidates.length > 0) {
             this.log('info', `Reranking ${candidates.length} candidates...`);
 
-            // 🧩 COGNITIVE LINK 3: DOMAIN BIAS (Fragment Registry)
+            // ðŸ§© COGNITIVE LINK 3: DOMAIN BIAS (Fragment Registry)
             let domainBias = null;
             if (this.fragmentRegistry && typeof this.fragmentRegistry.routeToFragment === 'function') {
               try {
                 const route = await this.fragmentRegistry.routeToFragment(query, 'LOGOS');
                 if (route && route.fragment) {
                   domainBias = route.fragment.domain;
-                  this.log('info', `🧩 Domain bias detected: ${domainBias}`);
+                  this.log('info', `ðŸ§© Domain bias detected: ${domainBias}`);
                 }
               } catch (e) {
                 // Continue without domain bias
@@ -717,7 +884,7 @@ class MnemonicArbiter extends BaseArbiter {
 
           if (finalResults.length > 0) {
             this.tierMetrics.warm.hits++;
-            this.log('info', `🌡️  Warm tier hit (${finalResults.length} vectors, reranked: ${!!this.reranker})`);
+            this.log('info', `ðŸŒ¡ï¸  Warm tier hit (${finalResults.length} vectors, reranked: ${!!this.reranker})`);
 
             // Promote to hot tier
             if (this.redis) {
@@ -749,7 +916,7 @@ class MnemonicArbiter extends BaseArbiter {
 
       if (results.length > 0) {
         this.tierMetrics.cold.hits++;
-        this.log('info', `❄️  Cold tier search (${results.length} results)`);
+        this.log('info', `â„ï¸  Cold tier search (${results.length} results)`);
 
         // Promote to warm tier if available
         if (this.embedder && results.length > 0) {
@@ -805,13 +972,20 @@ class MnemonicArbiter extends BaseArbiter {
   // Vector Search (REAL)
   // ===========================
 
-  async _vectorSearch(queryVector, topK) {
-    return VectorUtils.approximateNearestNeighbors(
+  async _vectorSearch(queryVector, topK, sector = null) {
+    const candidates = VectorUtils.approximateNearestNeighbors(
       queryVector,
       this.vectorStore,
-      topK,
+      this.vectorStore.size, // Get all similarities first
       this.config.vectorSimilarityThreshold
-    ).map(result => ({
+    );
+
+    // Filter by sector if provided
+    const filtered = sector 
+      ? candidates.filter(c => c.sector === sector)
+      : candidates;
+
+    return filtered.slice(0, topK).map(result => ({
       id: result.memoryId,
       content: result.content,
       similarity: result.similarity,
@@ -823,20 +997,27 @@ class MnemonicArbiter extends BaseArbiter {
   // SQLite Search (REAL)
   // ===========================
 
-  _sqliteSearch(query, limit = 5) {
+  _sqliteSearch(query, limit = 5, sector = null) {
     // Ensure limit is a valid number
     const safeLimit = (typeof limit === 'number' && limit > 0) ? limit : 5;
 
-    // Use FTS5 (full-text search) if available, fallback to LIKE
-    const stmt = this.db.prepare(`
-      SELECT id, content, metadata, accessed_at, access_count, importance, tier
+    let sql = `
+      SELECT id, content, metadata, accessed_at, access_count, importance, tier, sector
       FROM memories
-      WHERE content LIKE ? OR metadata LIKE ?
-      ORDER BY importance DESC, access_count DESC, accessed_at DESC
-      LIMIT ?
-    `);
+      WHERE (content LIKE ? OR metadata LIKE ?)
+    `;
+    const params = [`%${query}%`, `%${query}%` ];
 
-    const results = stmt.all(`%${query}%`, `%${query}%`, safeLimit);
+    if (sector) {
+      sql += " AND sector = ?";
+      params.push(sector);
+    }
+
+    sql += " ORDER BY importance DESC, access_count DESC, accessed_at DESC LIMIT ?";
+    params.push(safeLimit);
+
+    const stmt = this.db.prepare(sql);
+    const results = stmt.all(...params);
 
     // Update access stats in batch
     if (results.length > 0) {
@@ -940,7 +1121,7 @@ class MnemonicArbiter extends BaseArbiter {
       stmt.run(toTier, id);
       this.tierManager.accessPatterns.get(id).tier = toTier;
       this.tierMetrics.total.promotions++;
-      this.log('info', `⬆️  Promoted ${id.substring(0, 8)}... from ${fromTier} to ${toTier}`);
+      this.log('info', `â¬†ï¸  Promoted ${id.substring(0, 8)}... from ${fromTier} to ${toTier}`);
     } catch (error) {
       this.log('warn', 'Promotion failed', { error: error.message });
     }
@@ -952,7 +1133,7 @@ class MnemonicArbiter extends BaseArbiter {
       stmt.run(toTier, id);
       this.tierManager.accessPatterns.get(id).tier = toTier;
       this.tierMetrics.total.demotions++;
-      this.log('info', `⬇️  Demoted ${id.substring(0, 8)}... from ${fromTier} to ${toTier}`);
+      this.log('info', `â¬‡ï¸  Demoted ${id.substring(0, 8)}... from ${fromTier} to ${toTier}`);
     } catch (error) {
       this.log('warn', 'Demotion failed', { error: error.message });
     }
@@ -964,7 +1145,7 @@ class MnemonicArbiter extends BaseArbiter {
     const heapUsedPercent = memUsage.heapUsed / memUsage.heapTotal;
 
     if (heapUsedPercent > this.config.memoryPressureThreshold) {
-      this.log('warn', `🔴 Memory pressure high: ${(heapUsedPercent * 100).toFixed(1)}%`);
+      this.log('warn', `ðŸ”´ Memory pressure high: ${(heapUsedPercent * 100).toFixed(1)}%`);
 
       // Trigger aggressive cleanup
       this._evictOldVectors();
@@ -990,7 +1171,7 @@ class MnemonicArbiter extends BaseArbiter {
     });
 
     if (toDelete.length > 0) {
-      this.log('info', `🗑️  Evicted ${toDelete.length} old vectors`);
+      this.log('info', `ðŸ—‘ï¸  Evicted ${toDelete.length} old vectors`);
     }
   }
 
@@ -1018,7 +1199,7 @@ class MnemonicArbiter extends BaseArbiter {
     }
 
     if (compressed > 0) {
-      this.log('info', `📦 Compressed warm tier: removed ${compressed} duplicate vectors`);
+      this.log('info', `ðŸ“¦ Compressed warm tier: removed ${compressed} duplicate vectors`);
     }
   }
 
@@ -1029,7 +1210,7 @@ class MnemonicArbiter extends BaseArbiter {
   _startAutoSave() {
     this.saveTimer = setInterval(async () => {
       if (this.unsavedChanges > 0) {
-        this.log('info', `⏰ Auto-save triggered (${this.unsavedChanges} unsaved changes)...`);
+        this.log('info', `â° Auto-save triggered (${this.unsavedChanges} unsaved changes)...`);
         await this._saveVectorStore();
       }
     }, this.config.saveInterval);
@@ -1045,7 +1226,7 @@ class MnemonicArbiter extends BaseArbiter {
         `).run(cutoff);
 
         if (deleted.changes > 0) {
-          this.log('info', `🧹 Auto-cleanup: deleted ${deleted.changes} old memories`);
+          this.log('info', `ðŸ§¹ Auto-cleanup: deleted ${deleted.changes} old memories`);
         }
 
         await this._saveVectorStore();
@@ -1077,7 +1258,7 @@ class MnemonicArbiter extends BaseArbiter {
         }
 
         if (promotions > 0 || demotions > 0) {
-          this.log('info', `🔄 Tier optimization: +${promotions} promotions, -${demotions} demotions`);
+          this.log('info', `ðŸ”„ Tier optimization: +${promotions} promotions, -${demotions} demotions`);
         }
 
         // Check memory pressure
@@ -1124,19 +1305,163 @@ class MnemonicArbiter extends BaseArbiter {
       await fs.rename(tempPath, this.config.vectorDbPath);
 
       this.unsavedChanges = 0; // Reset counter
-      this.log('info', `💾 Saved ${this.vectorStore.size} vectors to disk`);
+      this.log('info', `ðŸ’¾ Saved ${this.vectorStore.size} vectors to disk`);
     } catch (error) {
       this.log('warn', 'Vector save failed', { error: error.message });
     }
   }
 
   _logTierStatus() {
-    this.log('info', '📊 Tier Status:', {
+    this.log('info', 'ðŸ“Š Tier Status:', {
       hot: `${this.tierMetrics.hot.size} items`,
       warm: `${this.vectorStore.size} vectors`,
       cold: `${this.tierMetrics.cold.size} memories`
     });
   }
+
+    // ─────────────────────────────────────────────────────────────
+  // SUBSTRATE: Decision Arbitration
+  // ─────────────────────────────────────────────────────────────
+    // ─────────────────────────────────────────────────────────────
+  // EPISODIC: Temporal Experience Retrieval
+  // ─────────────────────────────────────────────────────────────
+  /**
+   * Retrieve specific experiences (episodes) rather than just facts.
+   * Allows SOMA to ask: "What happened last time I tried X?"
+   */
+  async recall_episodes({ action = null, outcome = null, query = null, topK = 5 }) {
+    if (!this.db) return { results: [], error: 'Cold storage offline' };
+
+    let sql = `
+      SELECT e.*, m.content, m.metadata as mem_meta
+      FROM episodic_buffer e
+      JOIN memories m ON e.memory_id = m.id
+      WHERE 1=1
+    `;
+    const params = [];
+
+    if (action) {
+      sql += " AND e.action_taken LIKE ?";
+      params.push(`%${action}%`);
+    }
+    if (outcome) {
+      sql += " AND e.outcome LIKE ?";
+      params.push(`%${outcome}%`);
+    }
+    if (query) {
+      sql += " AND (m.content LIKE ? OR e.context_snapshot LIKE ?)";
+      params.push(`%${query}%`, `%${query}%`);
+    }
+
+    sql += " ORDER BY e.importance DESC, e.timestamp DESC LIMIT ?";
+    params.push(topK);
+
+    try {
+      const rows = this.db.prepare(sql).all(...params);
+      const results = rows.map(r => ({
+        id: r.id,
+        action: r.action_taken,
+        outcome: JSON.parse(r.outcome),
+        context: JSON.parse(r.context_snapshot),
+        content: r.content,
+        timestamp: new Date(r.timestamp).toISOString(),
+        importance: r.importance
+      }));
+
+      this.log('info', `🎭 Episodic recall: found ${results.length} relevant experiences for SOMA.`);
+      return { success: true, results };
+    } catch (err) {
+      this.log('error', `Episodic recall failed: ${err.message}`);
+      return { success: false, error: err.message };
+    }
+  }
+
+  async arbitrate({ query, context = {}, topK = 8 }) {
+    const recall = await this.recall(query, topK);
+    const candidates = recall.results;
+
+    if (!candidates.length) {
+      return { winner: null, contenders: [], tension: 0, reason: 'no_memory' };
+    }
+
+    const enriched = candidates.map(m => {
+      const meta = this._normalizeMeta(m);
+      const score =
+        (meta.importance * this.config.importanceWeight) +
+        (meta.confidence * this.config.confidenceWeight) +
+        (meta.utility * this.config.utilityWeight) +
+        (this._contextMatch(meta, context) * this.config.contextWeight);
+
+      return { ...m, ...meta, score };
+    });
+
+    enriched.sort((a, b) => b.score - a.score);
+    const winner = enriched[0];
+    const contenders = enriched.slice(1, 3);
+    const tension = this._computeTension(enriched);
+
+    // Apply passive decay (memory drift)
+    for (const m of enriched) { this._decay(m); }
+
+    return { winner, contenders, tension, tier: recall.tier };
+  }
+
+  async reinforce(memoryId, outcome = { success: true }) {
+    const stmt = this.db.prepare('SELECT * FROM memories WHERE id = ?');
+    const mem = stmt.get(memoryId);
+    if (!mem) return false;
+
+    const meta = this._normalizeMeta(mem);
+    if (outcome.success) {
+      meta.utility += this.config.learningRate;
+      meta.confidence += this.config.learningRate * 0.5;
+    } else {
+      meta.utility -= this.config.learningRate;
+      meta.confidence -= this.config.learningRate * 0.5;
+    }
+
+    meta.utility = this._clamp(meta.utility);
+    meta.confidence = this._clamp(meta.confidence);
+
+    await this.remember(mem.content, { ...JSON.parse(mem.metadata || '{}'), ...meta });
+    return true;
+  }
+
+  _normalizeMeta(m) {
+    const meta = typeof m.metadata === 'string' ? JSON.parse(m.metadata) : (m.metadata || {});
+    return {
+      importance: meta.importance ?? m.importance ?? 0.5,
+      confidence: meta.confidence ?? 0.5,
+      utility: meta.utility ?? 0.5,
+      lastUsed: meta.lastUsed ?? Date.now()
+    };
+  }
+
+  _contextMatch(memory, context) {
+    if (!context || Object.keys(context).length === 0) return 0.5;
+    let score = 0, total = 0;
+    for (const key in context) {
+      if (memory[key] !== undefined) {
+        total++;
+        if (memory[key] === context[key]) score++;
+      }
+    }
+    return total === 0 ? 0.5 : score / total;
+  }
+
+  _computeTension(memories) {
+    if (memories.length < 2) return 0;
+    const diff = Math.abs(memories[0].score - memories[1].score);
+    return this._clamp(Math.exp(-diff * this.config.tensionSensitivity));
+  }
+
+  _decay(memory) {
+    const decay = this.config.decayRate;
+    memory.importance *= (1 - decay);
+    memory.utility *= (1 - decay * 0.5);
+  }
+
+  _clamp(v) { return Math.max(0, Math.min(1, v)); }
 
   async execute(task) {
     const startTime = Date.now();
@@ -1146,6 +1471,15 @@ class MnemonicArbiter extends BaseArbiter {
 
       let result;
       switch (action) {
+                case 'arbitrate':
+          result = await this.arbitrate({ query, context: context.context, topK: context.topK });
+          break;
+        case 'recall_episodes':
+          result = await this.recall_episodes(context);
+          break;
+        case 'reinforce':
+          result = await this.reinforce(context.id, context.outcome);
+          break;
         case 'remember':
           result = await this.remember(context.content, context.metadata);
           break;
@@ -1160,6 +1494,9 @@ class MnemonicArbiter extends BaseArbiter {
           break;
         case 'optimize':
           result = await this._optimize();
+          break;
+        case 'deep_cleanup':
+          result = await this.deepCleanup();
           break;
         default:
           throw new Error(`Unknown action: ${action}`);
@@ -1184,7 +1521,7 @@ class MnemonicArbiter extends BaseArbiter {
   }
 
   async _optimize() {
-    this.log('info', '⚙️  Running memory optimization...');
+    this.log('info', 'âš™ï¸  Running memory optimization...');
 
     // Consolidate, compress, and optimize all tiers
     await this._checkMemoryPressure();
@@ -1199,6 +1536,65 @@ class MnemonicArbiter extends BaseArbiter {
       optimized: true,
       metrics: this.getMemoryStats()
     };
+  }
+
+  /**
+   * Deep Cleanup - Automated Digital Constipation Fix
+   * Purges massive state dumps and optimizes the database.
+   */
+  async deepCleanup() {
+    this.log('info', 'ðŸ§¹ Starting Deep Memory Cleanup (Digital Constipation Fix)...');
+    
+    if (!this.db) return { success: false, error: 'Cold storage not available' };
+
+    try {
+      const statsBefore = this.db.prepare(`
+        SELECT 
+            count(*) as total,
+            sum(CASE WHEN length(content) > 100000 THEN 1 ELSE 0 END) as massive,
+            sum(CASE WHEN content LIKE '%"experiences":%' THEN 1 ELSE 0 END) as state_dumps
+        FROM memories
+      `).get();
+
+      // 1. Purge Garbage
+      const result = this.db.prepare(`
+        DELETE FROM memories 
+        WHERE length(content) > 100000 
+           OR content LIKE '%"experiences":%'
+           OR content LIKE '%[MessageBroker] Arbiter not found%'
+      `).run();
+
+      this.log('info', `âœ… Purged ${result.changes} garbage entries from DB.`);
+
+      // 2. Index Optimization
+      if (result.changes > 50) {
+        this.log('info', 'â³ Reclaiming disk space (VACUUM)...');
+        this.db.exec("VACUUM;");
+        this.log('info', 'âœ¨ Vacuum complete.');
+      }
+
+      this.db.exec("ANALYZE;");
+
+      const statsAfter = this.db.prepare("SELECT count(*) as total FROM memories").get();
+
+      return {
+        success: true,
+        purged: result.changes,
+        before: statsBefore.total,
+        after: statsAfter.total,
+        massiveFound: statsBefore.massive || 0,
+        stateDumpsFound: statsBefore.state_dumps || 0
+      };
+
+    } catch (error) {
+      this.log('error', `Deep cleanup failed: ${error.message}`);
+      return { success: false, error: error.message };
+    }
+  }
+
+  async _handleDeepCleanup(envelope) {
+    const result = await this.deepCleanup();
+    await this.sendMessage(envelope.from, 'deep_cleanup_response', result);
   }
 
   async _handleRemember(envelope) {
@@ -1258,7 +1654,7 @@ class MnemonicArbiter extends BaseArbiter {
   }
 
   getAvailableCommands() {
-    return ['remember', 'recall', 'forget', 'stats', 'optimize'];
+    return ['remember', 'recall', 'forget', 'stats', 'optimize', 'arbitrate', 'reinforce', 'recall_episodes'];
   }
 }
 

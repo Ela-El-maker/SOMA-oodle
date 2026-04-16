@@ -30,11 +30,16 @@ class CuriosityWebAccessConnector extends BaseArbiter {
       ...config
     });
 
-    // Web access systems (enhanced with Phase 1 utilities)
-    this.braveSearch = new BraveSearchAdapter({
-      maxResults: config.maxSearchResults || 10,
-      timeout: 15000
-    });
+    // Web access systems (BraveSearch optional — falls back to scraping if no API key)
+    try {
+      this.braveSearch = new BraveSearchAdapter({
+        maxResults: config.maxSearchResults || 10,
+        timeout: 15000
+      });
+    } catch (e) {
+      logger.warn(`[${this.name}] BraveSearch unavailable (${e.message}) — web scraping only`);
+      this.braveSearch = null;
+    }
 
     this.webScraper = new WebScraperDendrite({
       name: 'curiosity-scraper',
@@ -137,6 +142,14 @@ class CuriosityWebAccessConnector extends BaseArbiter {
 
       logger.info(`[${this.name}] ✅ Curiosity satisfied: "${question}"`);
 
+      // Close the curiosity loop — CuriosityEngine subscribes to this to track completions
+      this.publish('learning:completed', {
+        domain: question,
+        type,
+        success: !!knowledge,
+        timestamp: Date.now()
+      });
+
     } catch (err) {
       logger.error(`[${this.name}] Failed to satisfy curiosity: ${err.message}`);
     }
@@ -157,7 +170,7 @@ class CuriosityWebAccessConnector extends BaseArbiter {
       try {
         const scrapedData = await this.webScraper.scrapeURL(url, {
           extractors: { mainContent: 'article, main, .content' },
-          timeout: 5000
+          timeout: 20000
         });
 
         if (scrapedData.success) {
@@ -176,6 +189,7 @@ class CuriosityWebAccessConnector extends BaseArbiter {
     }
 
     // FALLBACK: Use BraveSearch only if scraping fails
+    if (!this.braveSearch) return null;
     logger.warn(`[${this.name}]    ⚠️ Scraping failed, using Brave API (last resort)`);
     const results = await this.braveSearch.searchWeb(question);
 
@@ -235,6 +249,7 @@ class CuriosityWebAccessConnector extends BaseArbiter {
     }
 
     // FALLBACK: Use Brave Search only if direct scraping fails
+    if (!this.braveSearch) return null;
     logger.warn(`[${this.name}]    ⚠️ Direct scraping failed, using Brave API (last resort)`);
     const searchResults = await this.braveSearch.searchWeb(question);
 
@@ -288,7 +303,7 @@ class CuriosityWebAccessConnector extends BaseArbiter {
 
     for (const url of tryUrls) {
       try {
-        const scrapedData = await this.webScraper.scrapeURL(url, { timeout: 5000 });
+        const scrapedData = await this.webScraper.scrapeURL(url, { timeout: 20000 });
         if (scrapedData.success) {
           startUrl = url;
           logger.info(`[${this.name}]    ✅ Found starting point (free): ${url}`);
@@ -301,6 +316,7 @@ class CuriosityWebAccessConnector extends BaseArbiter {
 
     // FALLBACK: Use Brave Search only if no valid starting point found
     if (!startUrl) {
+      if (!this.braveSearch) return null;
       logger.warn(`[${this.name}]    ⚠️ No direct URL worked, using Brave API (last resort)`);
       const searchResults = await this.braveSearch.searchWeb(question);
 
@@ -589,7 +605,7 @@ class CuriosityWebAccessConnector extends BaseArbiter {
   getStats() {
     return {
       ...this.stats,
-      braveSearch: this.braveSearch.getMetrics(),
+      braveSearch: this.braveSearch?.getMetrics() || { available: false },
       webScraper: this.webScraper.getStatus()
     };
   }

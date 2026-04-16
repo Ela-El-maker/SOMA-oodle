@@ -1,7 +1,7 @@
 import fs from 'fs/promises';
 import path from 'path';
 import crypto from 'crypto';
-import { spawn } from 'child_process';
+import { spawn, exec } from 'child_process';
 import os from 'os';
 
 /**
@@ -99,11 +99,34 @@ export class SwarmEngine {
       const artifacts = [];
       const startTime = Date.now();
 
-      const proc = spawn(task.command, {
-        shell: true,
+      // 🛡️ The Ralph Sandbox (Industrial Logic)
+      const scrubbedCommand = task.command.replace(/[&|;]/g, '');
+
+      // Build a safe, functional Windows environment
+      const safeEnv = {};
+      const blacklist = ['API', 'KEY', 'SECRET', 'TOKEN', 'PASSWORD', 'CREDENTIAL', 'SOMA_BACKEND_URL'];
+      const windowsEssentials = ['PATH', 'PATHEXT', 'SYSTEMROOT', 'WINDIR', 'COMSPEC', 'TEMP', 'TMP'];
+
+      Object.keys(process.env).forEach(key => {
+          const upperKey = key.toUpperCase();
+          const isBlacklisted = blacklist.some(b => upperKey.includes(b));
+          const isEssential = windowsEssentials.includes(upperKey);
+          
+          if (isEssential || !isBlacklisted) {
+              safeEnv[key] = process.env[key];
+          }
+      });
+
+      const proc = spawn(scrubbedCommand, {
+        shell: true, 
         cwd: task.cwd,
-        env: process.env,
-        timeout: task.timeout
+        env: {
+            ...safeEnv,
+            NODE_ENV: 'sandbox',
+            SOMA_SANDBOXED: 'true'
+        },
+        timeout: task.timeout || 10000,
+        killSignal: 'SIGKILL' // 🪓 No-bullshit termination
       });
 
       let stdout = '';
@@ -112,9 +135,35 @@ export class SwarmEngine {
       proc.stdout.on('data', d => stdout += d.toString());
       proc.stderr.on('data', d => stderr += d.toString());
 
-      proc.on('close', code => {
-        task.status = code === 0 ? 'done' : 'failed';
+      // 🛡️ The Ralph Sandbox (Process Tree Guillotine)
+      const timeoutLimit = task.timeout || 10000;
+      let isTimedOut = false;
+
+      const killTimer = setTimeout(() => {
+          isTimedOut = true;
+          this.logger.warn(`[SwarmRuntime] ⌛ Task ${task.taskId} timed out after ${timeoutLimit}ms. Executing hard kill.`);
+          
+          // Physically wipe the process tree on Windows
+          exec(`taskkill /F /T /PID ${proc.pid}`, (err) => {
+              // We resolve even if taskkill fails, because the timeout IS the result.
+              task.status = 'timeout';
+              resolve({ 
+                  task, 
+                  artifacts, 
+                  exitCode: 1, 
+                  error: `Task timed out after ${timeoutLimit}ms. Hard kill executed.` 
+              });
+          });
+      }, timeoutLimit);
+
+      proc.on('close', (code, signal) => {
+        if (isTimedOut) return; // Already handled by killTimer
+        clearTimeout(killTimer);
+        
+        task.status = (code === 0) ? 'done' : 'failed';
         const duration = Date.now() - startTime;
+
+        this.logger.debug(`[SwarmRuntime] Task ${task.taskId} closed. Code: ${code}, Signal: ${signal}`);
 
         if (stdout.trim()) {
           artifacts.push(new Artifact({
@@ -122,7 +171,7 @@ export class SwarmEngine {
             content: stdout.trim(),
             producedBy: `worker_${task.taskId}`,
             confidence: 0.9,
-            metadata: { duration, exitCode: code }
+            metadata: { duration, exitCode: code, signal }
           }));
         }
 

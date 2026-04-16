@@ -1,0 +1,5 @@
+{
+  "name": "Market View",
+  "description": "A non-transactional, perceptual interface for visualizing market rhythms and terrain.",
+  "requestFramePermissions": []
+}

@@ -6,6 +6,13 @@ import crypto from 'crypto';
 import toolRegistry from './ToolRegistry.js';
 import { SafeArbiter } from './SafeArbiter.js';
 
+// ── ASI Systems ──────────────────────────────────────────────────────────────
+import { ConstitutionalCore }   from './ConstitutionalCore.js';
+import { CapabilityBenchmark }  from './CapabilityBenchmark.js';
+import { TransferSynthesizer }  from './TransferSynthesizer.js';
+import { LongHorizonPlanner }   from './LongHorizonPlanner.js';
+import { ASIKernel }            from './ASIKernel.js';
+
 export class SomaBootstrap {
     constructor(rootPath, config) {
         this.rootPath = rootPath;
@@ -33,10 +40,18 @@ export class SomaBootstrap {
             // Phase 3: Add autonomous learning systems (on top of Trinity)
             await this._phase3_learningSystems(modules);
 
+            // Phase ASI: Close the recursive self-improvement loop
+            await this._phase_asi();
+
+            // Phase Perception: Boot daemon layer, attention engine, and engineering swarm
+            await this._phase_perception();
+
             console.log('\n╔═══════════════════════════════════════════════════════════════════════╗');
             console.log('║  🎉 SOMA Bootstrap Complete!                                         ║');
             console.log('║  🔱 Trinity Architecture: ACTIVE                                     ║');
             console.log('║  🧠 Autonomous Systems: ACTIVE                                       ║');
+            console.log('║  ⚡ ASI Kernel: ACTIVE                                               ║');
+            console.log('║  👁️  Perception Layer: ACTIVE                                        ║');
             console.log('╚═══════════════════════════════════════════════════════════════════════╝\n');
 
             // Generate Trinity Status Report
@@ -561,6 +576,8 @@ export class SomaBootstrap {
                     capabilities: ['execute-task'],
                     instance: { handleMessage: async (env) => agent.execute(env) }
                 });
+                // Save Black agent instance so we can subscribe to its alerts later
+                if (name === 'BlackAgent') this.system.blackAgent = agent;
                 console.log(`   ✅ ${name} registered`);
             } catch (e) {
                 console.error(`   ⚠️  Failed to initialize ${name}:`, e.message);
@@ -602,7 +619,8 @@ export class SomaBootstrap {
             learningPipeline: this.system.learningPipeline,
             messageBroker: this.system.messageBroker,
             optimizationInterval: 100,
-            minExperiencesForOptimization: 50
+            minExperiencesForOptimization: 50,
+            fixProposalSystem: this.system.fixProposal // Pass FixProposalSystem
         });
         await this.system.metaLearning.initialize({
             experienceBuffer: this.system.learningPipeline.experienceBuffer,
@@ -711,7 +729,7 @@ export class SomaBootstrap {
         this.system.localModelManager = new LocalModelManager({
             name: 'LocalModelManager',
             baseModel: 'gemma3:4b',
-            somaModelPrefix: 'soma-1t',
+            somaModelPrefix: 'GEMMA-3',
             fineTuneThreshold: 500,
             autoFineTune: true,
             minDatasetSize: 100,
@@ -1292,6 +1310,61 @@ export class SomaBootstrap {
         this.system.messageBroker.registerArbiter('GoalPlannerArbiter', { instance: this.system.goalPlanner });
         console.log('   ✅ GoalPlannerArbiter ready');
 
+        // ── Wire Black's alerts → GoalPlanner ───────────────────────────────
+        // Black monitors system health and emits alerts. Here we turn those
+        // alerts into real goals so SOMA acts on her own warnings instead of
+        // just logging them.
+        if (this.system.blackAgent) {
+            const _blackGoalCooldown = new Map(); // prevent duplicate goals per alert type
+            const COOLDOWN_MS = 10 * 60 * 1000;  // 10 minutes between same-type goals
+
+            this.system.blackAgent.on('alert', async (alert) => {
+                try {
+                    const now = Date.now();
+                    const last = _blackGoalCooldown.get(alert.type) || 0;
+                    if (now - last < COOLDOWN_MS) return; // still in cooldown
+                    _blackGoalCooldown.set(alert.type, now);
+
+                    const goalMap = {
+                        memory: {
+                            title:       'Free up system memory',
+                            description: `Black reported high memory usage (${alert.message}). Run garbage collection, clear caches, and identify any memory-leaking processes. Then verify memory usage drops below 80%.`,
+                            priority:    alert.severity === 'critical' ? 90 : 70,
+                        },
+                        cpu: {
+                            title:       'Reduce CPU load',
+                            description: `Black reported high CPU usage (${alert.message}). Identify the heaviest processes, throttle or defer non-essential background work, and verify load drops to normal.`,
+                            priority:    alert.severity === 'critical' ? 85 : 65,
+                        },
+                        disk: {
+                            title:       'Free up disk space',
+                            description: `Black reported high disk usage (${alert.message}). Clean up temporary files, old logs, and stale caches. Identify the largest directories consuming space.`,
+                            priority:    alert.severity === 'critical' ? 80 : 60,
+                        },
+                    };
+
+                    const template = goalMap[alert.type];
+                    if (!template) return;
+
+                    await this.system.goalPlanner.createGoal({
+                        type:        'operational',
+                        category:    'system_health',
+                        title:       template.title,
+                        description: template.description,
+                        priority:    template.priority,
+                        confidence:  0.95,
+                        rationale:   `Black agent alert [${alert.severity}]: ${alert.message}`,
+                        metadata:    { source: 'black_agent', alertType: alert.type, severity: alert.severity }
+                    }, 'autonomous');
+
+                    console.log(`[Black → GoalPlanner] 🎯 Created goal: "${template.title}" (${alert.severity})`);
+                } catch (err) {
+                    console.error('[Black → GoalPlanner] Failed to create goal:', err.message);
+                }
+            });
+            console.log('   ✅ Black alerts → GoalPlanner wired');
+        }
+
         // Recursive Self-Model
         this.system.selfModel = new RecursiveSelfModel({
             messageBroker: this.system.messageBroker,
@@ -1365,7 +1438,7 @@ export class SomaBootstrap {
         this.system.steveArbiter = new SteveArbiter(this.system.messageBroker, {
             kevinManager: this.system.kevinManager,
             learningPipeline: this.system.learningPipeline,
-            orchestrator: { population: new Map() } // Minimal orchestrator stub
+            orchestrator: { population: this.system.arbiters || new Map() } // Wire live arbiter registry so Steve can find agents
         });
         await this.system.steveArbiter.initialize();
         this.system.messageBroker.registerArbiter('SteveArbiter', { instance: this.system.steveArbiter, role: 'toolmaker' });
@@ -1375,7 +1448,8 @@ export class SomaBootstrap {
         this.system.fixProposal = new FixProposalSystem({
             quadBrain: this.system.quadBrain,
             codeObserver: this.system.codeObserver,
-            minConfidence: 0.7
+            minConfidence: 0.7,
+            messageBroker: this.system.messageBroker // Pass the message broker
         });
         await this.system.fixProposal.initialize();
         this.system.messageBroker.registerArbiter('FixProposalSystem', { instance: this.system.fixProposal });
@@ -1757,23 +1831,38 @@ export class SomaBootstrap {
             console.warn('   ⚠️ AudioProcessingArbiter not found - skipping');
         }
 
-        // Vision Processing (CLIP)
-        const { VisionProcessingArbiter } = await import('../arbiters/VisionProcessingArbiter.js');
-        this.system.visionProcessing = new VisionProcessingArbiter({
-            name: 'VisionProcessingArbiter',
-            batchSize: 32,
-            loadPipeline: this.system.loadPipeline // Inject load pipeline for GPU check
-        });
-        await this.system.visionProcessing.initialize();
-        this.system.messageBroker.registerArbiter('VisionProcessingArbiter', { instance: this.system.visionProcessing });
-        console.log('   ✅ VisionProcessingArbiter ready (CLIP Active)');
+        // Vision Processing (CLIP) — gated behind SOMA_LOAD_VISION=true
+        // CLIP WASM kernel compilation blocks the event loop for 30-90s; run in background only
+        if (process.env.SOMA_LOAD_VISION === 'true') {
+            import('../arbiters/VisionProcessingArbiter.js').then(({ VisionProcessingArbiter }) => {
+                const va = new VisionProcessingArbiter({
+                    name: 'VisionProcessingArbiter',
+                    batchSize: 32,
+                    loadPipeline: this.system.loadPipeline
+                });
+                return va.initialize().then(() => {
+                    this.system.visionProcessing = va;
+                    this.system.messageBroker.registerArbiter('VisionProcessingArbiter', { instance: va });
+                    console.log('   ✅ VisionProcessingArbiter ready (CLIP Active)');
+                });
+            }).catch(e => console.warn('   ⚠️ VisionProcessingArbiter failed to load:', e.message));
+            console.log('   👁️  VisionProcessingArbiter loading CLIP in background (SOMA_LOAD_VISION=true)...');
+        } else {
+            console.log('   ⏭️  VisionProcessingArbiter skipped (set SOMA_LOAD_VISION=true to enable)');
+        }
 
         // Quantum Simulation (Strategic Directive Q1 2026)
         this.system.quantumSim = new QuantumSimulationArbiter({ name: 'QuantumSimulationArbiter' });
         await this.system.quantumSim.initialize();
         console.log('   ✅ Quantum Simulation Arbiter active (Ready for Circuit Simulation)');
 
-        // Physics Simulation (Embodied Learning)
+        // Physics Simulation (Embodied Learning) — disabled until fully implemented
+        // Gate behind SOMA_LOAD_SIMULATION=true to prevent runaway CPU/memory in daemon
+        if (process.env.SOMA_LOAD_SIMULATION !== 'true') {
+            console.log('\n🎮 Physics Simulation: SKIPPED (set SOMA_LOAD_SIMULATION=true to enable)');
+        } else
+        // eslint-disable-next-line no-constant-condition
+        if (true) {
         console.log('\n🎮 Initializing Physics Simulation for Embodied Learning...');
         try {
             this.system.simulation = new SimulationArbiter({ name: 'SimulationArbiter', port: 8081 });
@@ -1803,6 +1892,7 @@ export class SomaBootstrap {
         } catch (error) {
             console.error('   ⚠️  Physics Simulation failed to start:', error.message);
         }
+        } // end SOMA_LOAD_SIMULATION guard
 
         // Gist Arbiter (Wisdom Distiller)
         this.system.gistArbiter = new GistArbiter({ name: 'GistArbiter', threshold: 20 });
@@ -2146,6 +2236,272 @@ export class SomaBootstrap {
     async _phase6_integration(modules) {
         console.log('\n🔗 PHASE 6: Integration & Finalization...');
         // AGI-Integration and plugins will be moved here
+    }
+
+    // ─── Phase ASI: Recursive Self-Improvement Loop ───────────────────────────
+    async _phase_asi() {
+        console.log('\n⚡ Initializing ASI Systems...');
+
+        try {
+            // 1. Constitutional Core — must be first (safety gate for everything else)
+            this.system.constitutional = new ConstitutionalCore();
+            await this.system.constitutional.initialize();
+            console.log('   ✅ ConstitutionalCore ready');
+
+            // 2. Capability Benchmark — must be second (needed by ASIKernel)
+            this.system.benchmark = new CapabilityBenchmark({ system: this.system });
+            await this.system.benchmark.initialize();
+            // Take an initial baseline snapshot
+            this.system.benchmark.snapshot().catch(() => {});
+            console.log('   ✅ CapabilityBenchmark ready');
+
+            // 3. Transfer Synthesizer — cross-domain pattern extraction
+            this.system.transfer = new TransferSynthesizer({
+                system: this.system,
+                brain:  this.system.quadBrain,
+            });
+            await this.system.transfer.initialize();
+            console.log('   ✅ TransferSynthesizer ready');
+
+            // 4. Long Horizon Planner — vision-level planning
+            this.system.longHorizon = new LongHorizonPlanner({
+                system: this.system,
+                brain:  this.system.quadBrain,
+            });
+            await this.system.longHorizon.initialize();
+            console.log('   ✅ LongHorizonPlanner ready');
+
+            // 5. ASI Kernel — closes the loop
+            this.system.asiKernel = new ASIKernel({ system: this.system });
+            await this.system.asiKernel.initialize();
+            console.log('   ✅ ASIKernel ready');
+
+            // Wire ASI events → messageBroker for frontend consumption
+            if (this.system.messageBroker) {
+                this.system.asiKernel.on('improvement', (data) => {
+                    this.system.messageBroker.publish?.('asi_improvement', data);
+                    this.system.ws?.broadcast?.('asi_improvement', data);
+                });
+                this.system.asiKernel.on('blocked', (data) => {
+                    this.system.messageBroker.publish?.('asi_blocked', data);
+                });
+            }
+
+            // Wire AutonomousHeartbeat to trigger ASI cycle when tension is high
+            if (this.system.autonomousHeartbeat) {
+                const _origTick = this.system.autonomousHeartbeat.tick?.bind(this.system.autonomousHeartbeat);
+                if (_origTick) {
+                    this.system.autonomousHeartbeat.tick = async function (...args) {
+                        // Run ASI cycle if drive tension is high and kernel isn't busy
+                        const drive = this.drive?.getStatus?.() || {};
+                        if (drive.tension > 0.6 && this.system.asiKernel && !this.system.asiKernel._busy) {
+                            this.system.asiKernel.runCycle().catch(() => {});
+                        }
+                        return _origTick(...args);
+                    };
+                }
+            }
+
+            // Daily long-horizon alignment (midnight cron)
+            if (this.system.autonomousHeartbeat?.addSchedule) {
+                this.system.autonomousHeartbeat.addSchedule({
+                    id:       'asi_daily_align',
+                    name:     'ASI daily goal alignment',
+                    schedule: { kind: 'cron', expr: '0 0 * * *' },
+                    message:  'ASI daily: align goals to long-horizon milestones',
+                });
+            }
+
+            console.log('[SOMA] ⚡ ASI Kernel online — recursive self-improvement ACTIVE');
+
+        } catch (err) {
+            // ASI systems are enhancement — never block SOMA boot on their failure
+            console.warn(`   ⚠️  ASI systems failed to initialize: ${err.message}`);
+            console.warn('   SOMA will continue without ASI recursive improvement.');
+        }
+    }
+
+// TEMP: perception phase method to inject into SomaBootstrap.js
+// This file is read by the injection script and then deleted.
+
+    // ─── Phase Perception: Daemon Layer + Attention Engine + Engineering Swarm ─
+    async _phase_perception() {
+        console.log('\n\u{1F441}\uFE0F  PHASE PERCEPTION: Booting Daemon Layer...');
+        try {
+            // 1. DaemonManager
+            const { DaemonManager }      = await import('./DaemonManager.js');
+            const { RepoWatcherDaemon }  = await import('../daemons/RepoWatcherDaemon.js');
+            const { HealthDaemon }       = await import('../daemons/HealthDaemon.js');
+            const { OptimizationDaemon } = await import('../daemons/OptimizationDaemon.js');
+            const { DiscoveryDaemon }    = await import('../daemons/DiscoveryDaemon.js');
+            const { default: MemoryPrunerDaemon } = await import('../daemons/MemoryPrunerDaemon.js');
+            const { CuriosityReactor }    = await import('./CuriosityReactor.js');
+            const { default: CuriosityDaemon }    = await import('../daemons/CuriosityDaemon.js');
+
+            this.system.daemonManager = new DaemonManager({ logger: console });
+
+            // Curiosity Reactor (The Wandering Mind)
+            this.system.curiosityReactor = new CuriosityReactor({
+                quadBrain: this.system.quadBrain,
+                messageBroker: this.system.messageBroker
+            });
+
+            // 2. AttentionArbiter — wired as CNS gate BEFORE daemons start
+            //    MessageBroker._deliverSignal already checks this.attentionEngine
+            try {
+                const { AttentionArbiter } = await import('../arbiters/AttentionArbiter.js');
+                this.system.attentionArbiter = new AttentionArbiter({ name: 'AttentionArbiter' });
+                await this.system.attentionArbiter.initialize();
+                this.system.messageBroker.attentionEngine = this.system.attentionArbiter;
+                console.log('   \u2705 AttentionArbiter wired as CNS gate (prevents arbiter storms)');
+            } catch (err) {
+                console.warn(`   ⚠️  AttentionArbiter skipped: ${err.message}`);
+            }
+            // Assert: if attentionEngine isn't wired, the CNS gate is gone — log loudly
+            if (!this.system.messageBroker.attentionEngine) {
+                console.error('[CRITICAL] AttentionArbiter NOT wired — CNS gate is absent. Arbiter storms are possible under load. Check arbiters/AttentionArbiter.js and BaseArbiter.js import.');
+            }
+
+            // 3. EngineeringSwarmArbiter — full research/plan/debate/synthesis cycle
+            try {
+                const { EngineeringSwarmArbiter } = await import('../arbiters/EngineeringSwarmArbiter.js');
+                this.system.engineeringSwarm = new EngineeringSwarmArbiter({
+                    name:      'EngineeringSwarmArbiter',
+                    quadBrain: this.system.quadBrain,
+                    rootPath:  this.rootPath
+                });
+                await this.system.engineeringSwarm.initialize();
+                this.system.messageBroker.registerArbiter('EngineeringSwarmArbiter', {
+                    instance:       this.system.engineeringSwarm,
+                    role:           'implementer',
+                    lobe:           'motor_cortex',
+                    classification: 'engineering'
+                });
+                console.log('   \u2705 EngineeringSwarmArbiter online (research \u2192 plan \u2192 debate \u2192 patch \u2192 verify)');
+            } catch (err) {
+                console.warn(`   \u26A0\uFE0F  EngineeringSwarmArbiter skipped: ${err.message}`);
+            }
+
+            // 4. SwarmOptimizer — records swarm outcomes and proposes improvements
+            try {
+                const { SwarmOptimizer } = await import('../arbiters/SwarmOptimizer.js');
+                this.system.swarmOptimizer = new SwarmOptimizer({
+                    name:      'SwarmOptimizer',
+                    swarm:     this.system.engineeringSwarm,
+                    quadBrain: this.system.quadBrain
+                });
+                await this.system.swarmOptimizer.initialize();
+                if (this.system.engineeringSwarm?.setOptimizer) {
+                    this.system.engineeringSwarm.setOptimizer(this.system.swarmOptimizer);
+                }
+                this.system.messageBroker.registerArbiter('SwarmOptimizer', {
+                    instance:       this.system.swarmOptimizer,
+                    role:           'analyst',
+                    lobe:           'prefrontal',
+                    classification: 'optimizer'
+                });
+                console.log('   \u2705 SwarmOptimizer wired (hourly perf analysis + self-improvement loop)');
+            } catch (err) {
+                console.warn(`   \u26A0\uFE0F  SwarmOptimizer skipped: ${err.message}`);
+            }
+
+            // 5. DiscoverySwarm — autonomous capability invention, daily scan
+            try {
+                const { DiscoverySwarm } = await import('../arbiters/DiscoverySwarm.js');
+                this.system.discoverySwarm = new DiscoverySwarm({
+                    name:        'DiscoverySwarm',
+                    engineering: this.system.engineeringSwarm,
+                    quadBrain:   this.system.quadBrain
+                });
+                await this.system.discoverySwarm.initialize();
+                this.system.messageBroker.registerArbiter('DiscoverySwarm', {
+                    instance:       this.system.discoverySwarm,
+                    role:           'scout',
+                    lobe:           'prefrontal',
+                    classification: 'discovery'
+                });
+                console.log('   \u2705 DiscoverySwarm online (daily capability invention scan)');
+            } catch (err) {
+                console.warn(`   \u26A0\uFE0F  DiscoverySwarm skipped: ${err.message}`);
+            }
+
+            // 6. Register daemons and start (startAll also launches watchdog)
+            this.system.daemonManager.register(new RepoWatcherDaemon({ root: this.rootPath }));
+            this.system.daemonManager.register(new HealthDaemon({ intervalMs: 30_000 }));
+            this.system.daemonManager.register(new MemoryPrunerDaemon({ 
+                mnemonic: this.system.mnemonic,
+                intervalMs: 43200000 // 12 hours
+            }));
+            this.system.daemonManager.register(new OptimizationDaemon({
+                optimizer:  this.system.swarmOptimizer,
+                intervalMs: 3_600_000     // hourly
+            }));
+            this.system.daemonManager.register(new DiscoveryDaemon({
+                discovery:  this.system.discoverySwarm,
+                intervalMs: 86_400_000    // daily
+            }));
+            await this.system.daemonManager.startAll();
+
+            // 7. Wire signal reactions: perception drives the decision/execution loop
+            this.system.messageBroker.subscribe('swarm.optimization.needed', async (signal) => {
+                if (!this.system.swarmOptimizer) return;
+                console.log('[SOMA] \uD83D\uDCCA Swarm optimization signal — running improvement cycle...');
+                try {
+                    const result = await this.system.swarmOptimizer.improve();
+                    // Persist improvement outcome to mnemonic so SOMA remembers what changed
+                    if (result && this.system.mnemonic) {
+                        const summary = typeof result === 'string' ? result : JSON.stringify(result).slice(0, 500);
+                        await this.system.mnemonic.remember(
+                            `Optimization cycle completed: ${summary}`,
+                            { source: 'swarm_optimizer', timestamp: Date.now() }
+                        ).catch(() => {});
+                    }
+                } catch (err) {
+                    console.warn('[SOMA] SwarmOptimizer.improve() failed:', err.message);
+                }
+            });
+
+            this.system.messageBroker.subscribe('swarm.discovery.ideas', async (signal) => {
+                if (!this.system.discoverySwarm) return;
+                const ideas = signal.payload?.ideas || [];
+                console.log(`[SOMA] \uD83D\uDCA1 DiscoverySwarm: ${ideas.length} idea(s) — prototyping top 3`);
+                for (const idea of ideas.slice(0, 3)) {
+                    try {
+                        const result = await this.system.discoverySwarm.prototype(idea);
+                        // Persist discovery outcome to mnemonic
+                        if (this.system.mnemonic) {
+                            const summary = typeof result === 'string' ? result : JSON.stringify(result).slice(0, 400);
+                            await this.system.mnemonic.remember(
+                                `Discovery prototyped: "${idea.name || idea}"\nOutcome: ${summary}`,
+                                { source: 'discovery_swarm', timestamp: Date.now() }
+                            ).catch(() => {});
+                        }
+                    } catch (err) {
+                        console.warn(`[SOMA] Prototype failed for ${idea.name}: ${err.message}`);
+                    }
+                }
+            });
+
+            this.system.messageBroker.subscribe('health.warning', (signal) => {
+                console.warn(`[SOMA] \uD83C\uDFE5 Health warning [${signal.source}]: ${JSON.stringify(signal.payload)}`);
+                this.system.anomalyDetector?.record?.({
+                    type: 'health_warning', payload: signal.payload, source: signal.source
+                });
+                // Persist health warnings to mnemonic for pattern recognition
+                if (this.system.mnemonic) {
+                    this.system.mnemonic.remember(
+                        `Health warning from ${signal.source}: ${JSON.stringify(signal.payload)}`,
+                        { source: 'health_daemon', priority: 'high', timestamp: Date.now() }
+                    ).catch(() => {});
+                }
+            });
+
+            console.log('[SOMA] \uD83D\uDC41\uFE0F  Perception Layer ACTIVE — 4 daemons, watchdog, attention gate, engineering swarm');
+
+        } catch (err) {
+            console.warn(`   \u26A0\uFE0F  Perception Layer failed: ${err.message}`);
+            console.warn('   SOMA will continue without daemon perception. Non-fatal.');
+        }
     }
 
     getHealth() {

@@ -65,6 +65,22 @@ class AdaptiveLearningPlanner extends EventEmitter {
     // Build user interest profile
     await this.buildUserInterestProfile();
 
+    // Subscribe to live outcome events so knowledge graph adapts in real-time
+    // (previously only updated via historical queryOutcomes() on startup)
+    this.outcomeTracker.on('outcome', (outcome) => {
+      const topic = outcome.context?.topic || outcome.metadata?.topic;
+      if (!topic) return;
+      if (!this.knowledgeGraph.has(topic)) {
+        this.knowledgeGraph.set(topic, { topic, lastLearned: 0, useCount: 0, successRate: 0, successes: 0, failures: 0, avgReward: 0, totalReward: 0 });
+      }
+      const k = this.knowledgeGraph.get(topic);
+      k.lastLearned = Date.now();
+      if (outcome.success) { k.successes++; } else { k.failures++; }
+      k.totalReward += outcome.reward || 0;
+      k.avgReward = k.totalReward / (k.successes + k.failures);
+      k.successRate = k.successes / (k.successes + k.failures);
+    });
+
     console.log(`   ✅ AdaptiveLearningPlanner ready`);
     console.log(`      - Knowledge graph: ${this.knowledgeGraph.size} topics`);
     console.log(`      - User interests: ${this.userInterests.size} topics`);

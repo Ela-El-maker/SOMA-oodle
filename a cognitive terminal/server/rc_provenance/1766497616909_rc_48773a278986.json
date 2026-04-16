@@ -1,0 +1,65 @@
+{
+  "traceId": "rc_48773a278986",
+  "ts": "2025-12-23T13:46:56.908Z",
+  "query": "I'm just testing you out because it sounds like you have more",
+  "meta": {},
+  "candidates": [
+    {
+      "source": "PROMETHEUS",
+      "text": "Understood. I am optimized for rapid information processing and concise responses.\n",
+      "confidence": 0.85,
+      "role": "prometheus"
+    },
+    {
+      "source": "LOGOS",
+      "text": "Understood. I am ready for any task or query you may have. My purpose is to provide precise and thorough analysis and reasoning. Please proceed with your test.\n",
+      "confidence": 0.85,
+      "role": "logos"
+    },
+    {
+      "source": "AURORA",
+      "text": "Understood. What would you like me to do?\n",
+      "confidence": 0.85,
+      "role": "aurora"
+    }
+  ],
+  "fused": {
+    "text": "Understood. I am ready for any task or query you may have. My purpose is to provide precise and thorough analysis and reasoning. Please proceed with your test.\n",
+    "weights": [
+      {
+        "source": "PROMETHEUS",
+        "norm": 0.32432432432432434,
+        "conf": 0.85
+      },
+      {
+        "source": "LOGOS",
+        "norm": 0.35135135135135126,
+        "conf": 0.85
+      },
+      {
+        "source": "AURORA",
+        "norm": 0.32432432432432434,
+        "conf": 0.85
+      }
+    ],
+    "confidence": 0.8499999999999999,
+    "provenance": [
+      {
+        "source": "PROMETHEUS",
+        "snippet": "Understood. I am optimized for rapid information processing and concise responses.\n",
+        "confidence": 0.85
+      },
+      {
+        "source": "LOGOS",
+        "snippet": "Understood. I am ready for any task or query you may have. My purpose is to provide precise and thorough analysis and reasoning. Please proceed with your test.\n",
+        "confidence": 0.85
+      },
+      {
+        "source": "AURORA",
+        "snippet": "Understood. What would you like me to do?\n",
+        "confidence": 0.85
+      }
+    ]
+  },
+  "iter": 0
+}

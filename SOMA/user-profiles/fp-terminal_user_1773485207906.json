@@ -1,0 +1,19 @@
+{
+  "userId": "terminal_user_1773485207906",
+  "sessions": 1,
+  "totalMessages": 4,
+  "avgMsgLength": 5,
+  "questionRatio": 0.5,
+  "vocabRichness": 1,
+  "avgWordLength": 4.1,
+  "typicalStyle": "terse",
+  "hourHistogram": {
+    "6": 1,
+    "7": 3
+  },
+  "topicFreq": {},
+  "recentTopics": [],
+  "lastSeen": 1773485953412,
+  "lastUpdated": 1773486321028,
+  "createdAt": 1773485953413
+}

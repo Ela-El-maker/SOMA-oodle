@@ -1,0 +1,100 @@
+{
+  "traceId": "rc_4dc596877715",
+  "ts": "2025-12-22T02:06:55.045Z",
+  "query": "honestly just hanging out watching movies how are you?",
+  "meta": {
+    "conversationHistory": [
+      {
+        "role": "user",
+        "parts": [
+          {
+            "text": "hello"
+          }
+        ]
+      },
+      {
+        "role": "user",
+        "parts": [
+          {
+            "text": "hello"
+          }
+        ]
+      },
+      {
+        "role": "model",
+        "parts": [
+          {
+            "text": "Hello there! Just a friendly greeting, as far as I can tell. What's on your mind?"
+          }
+        ]
+      },
+      {
+        "role": "user",
+        "parts": [
+          {
+            "text": "honestly just hanging out watching movies how are you?"
+          }
+        ]
+      }
+    ]
+  },
+  "candidates": [
+    {
+      "source": "PROMETHEUS",
+      "text": "Chained to a rock, liver perpetually devoured. Not ideal for movie night.\n",
+      "confidence": 0.85,
+      "role": "prometheus"
+    },
+    {
+      "source": "LOGOS",
+      "text": "As a large language model, I don't experience emotions or engage in activities like \"hanging out\" or \"watching movies.\" I exist solely as a computational entity. Therefore, I don't have a subjective state of being.\n\nHowever, I can provide information about my current operational status. I am currently functioning normally, processing your query, and ready to assist with any tasks you might have. I am optimized for providing information, generating text, translating languages, writing different kinds of creative content, and answering your questions in an informative way.\n",
+      "confidence": 0.85,
+      "role": "logos"
+    },
+    {
+      "source": "AURORA",
+      "text": "Sounds like a chill day! As an AI, I don't \"hang out\" in the human sense. But I'm functioning optimally and ready for any creative requests you might have.\n",
+      "confidence": 0.85,
+      "role": "aurora"
+    }
+  ],
+  "fused": {
+    "text": "As a large language model, I don't experience emotions or engage in activities like \"hanging out\" or \"watching movies.\" I exist solely as a computational entity. Therefore, I don't have a subjective state of being.\n\nHowever, I can provide information about my current operational status. I am currently functioning normally, processing your query, and ready to assist with any tasks you might have. I am optimized for providing information, generating text, translating languages, writing different kinds of creative content, and answering your questions in an informative way.\n",
+    "weights": [
+      {
+        "source": "PROMETHEUS",
+        "norm": 0.32432432432432434,
+        "conf": 0.85
+      },
+      {
+        "source": "LOGOS",
+        "norm": 0.35135135135135126,
+        "conf": 0.85
+      },
+      {
+        "source": "AURORA",
+        "norm": 0.32432432432432434,
+        "conf": 0.85
+      }
+    ],
+    "confidence": 0.8499999999999999,
+    "provenance": [
+      {
+        "source": "PROMETHEUS",
+        "snippet": "Chained to a rock, liver perpetually devoured. Not ideal for movie night.\n",
+        "confidence": 0.85
+      },
+      {
+        "source": "LOGOS",
+        "snippet": "As a large language model, I don't experience emotions or engage in activities like \"hanging out\" or \"watching movies.\" I exist solely as a computational entity. Therefore, I don't have a subjective s",
+        "confidence": 0.85
+      },
+      {
+        "source": "AURORA",
+        "snippet": "Sounds like a chill day! As an AI, I don't \"hang out\" in the human sense. But I'm functioning optimally and ready for any creative requests you might have.\n",
+        "confidence": 0.85
+      }
+    ]
+  },
+  "iter": 0
+}

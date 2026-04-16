@@ -9,6 +9,12 @@ const messageBroker = require('../core/MessageBroker.cjs');
 const crypto = require('crypto');
 const fs = require('fs').promises;
 const path = require('path');
+const { SOMA_VALUES_PROMPT } = require('../core/SomaValues.cjs');
+
+// MAX offline queue — persisted so proposals survive SOMA restarts
+const MAX_QUEUE_DIR  = path.join(__dirname, '..', 'server', '.soma');
+const MAX_QUEUE_FILE = path.join(MAX_QUEUE_DIR, 'max-queue.jsonl');
+const MAX_RETRY_MS   = 2 * 60 * 1000; // retry queue every 2 min
 
 class SelfModificationArbiter extends BaseArbiter {
   static role = 'self-modification';
@@ -30,9 +36,10 @@ class SelfModificationArbiter extends BaseArbiter {
     this.performanceBaselines = new Map(); // filepath:functionName -> baseline metrics
     this.deployedMods = new Set(); // Set of deployed modification IDs
 
-    // QuadBrain & ImmuneSystem reference
+    // QuadBrain, ImmuneSystem, and full system reference
     this.quadBrain = null;
     this.immuneSystem = null;
+    this.system = null; // set via setSystem() after boot
 
     // NEMESIS integration (optional safety layer)
     this.nemesis = null;
@@ -73,8 +80,24 @@ class SelfModificationArbiter extends BaseArbiter {
     // Try to load NEMESIS if available
     await this.loadNemesis();
 
+    // MAX endpoint config
+    this.maxUrl = process.env.MAX_URL || 'http://127.0.0.1:3100';
+    this.somaUrl = process.env.SOMA_URL || 'http://127.0.0.1:3001';
+    this.pendingMaxProposals = new Map(); // taskId → proposal
+
+    // Ensure MAX queue directory exists
+    await fs.mkdir(MAX_QUEUE_DIR, { recursive: true }).catch(() => {});
+
+    // Start retry processor for offline MAX queue — unref'd so it doesn't block process exit
+    this._maxQueueInterval = setInterval(() => this._processMaxQueue(), MAX_RETRY_MS);
+    this._maxQueueInterval.unref();
+
+    // Start 24h daily brief timer
+    this._startDailyBriefTimer();
+
     this.logger.info(`[${this.name}] ✅ Self-Modification system active`);
     this.logger.info(`[${this.name}] NEMESIS safety: ${this.nemesis ? 'ENABLED' : 'DISABLED'}`);
+    this.logger.info(`[${this.name}] MAX endpoint: ${this.maxUrl}`);
   }
 
   async loadNemesis() {
@@ -95,6 +118,11 @@ class SelfModificationArbiter extends BaseArbiter {
   setQuadBrain(quadBrain) {
     this.quadBrain = quadBrain;
     this.logger.info(`[${this.name}] QuadBrain connected`);
+  }
+
+  setSystem(system) {
+    this.system = system;
+    this.logger.info(`[${this.name}] System reference connected (Steve available: ${!!system?.steveArbiter})`);
   }
 
   setImmuneSystem(immuneSystem) {
@@ -121,6 +149,9 @@ class SelfModificationArbiter extends BaseArbiter {
     messageBroker.subscribe(this.name, 'deploy_modification');
     messageBroker.subscribe(this.name, 'modification_status');
     messageBroker.subscribe(this.name, 'rollback_modification');
+    messageBroker.subscribe(this.name, 'propose_modification');  // full 4x pipeline → MAX
+    messageBroker.subscribe(this.name, 'modification_result');   // callback from MAX
+    messageBroker.subscribe(this.name, 'generate_daily_brief');  // manual trigger
 
     this.logger.info(`[${this.name}] Subscribed to message types`);
   }
@@ -147,6 +178,15 @@ class SelfModificationArbiter extends BaseArbiter {
 
         case 'rollback_modification':
           return await this.rollbackModification(payload);
+
+        case 'propose_modification':
+          return await this.proposeToMax(payload);
+
+        case 'modification_result':
+          return await this.handleModificationResult(payload);
+
+        case 'generate_daily_brief':
+          return await this.generateDailyBrief();
 
         default:
           return { success: true, message: 'Event acknowledged' };
@@ -282,6 +322,22 @@ class SelfModificationArbiter extends BaseArbiter {
             success: false,
             reason: 'NEMESIS safety check failed',
             issues: review.issues
+          };
+        }
+      }
+
+      // Behavioral regression gate — verify SOMA still passes identity/persona/values tests
+      // Only run for modifications to core brain/persona/values files to avoid false alarms
+      const isCriticalFile = /SomaValues|QuadBrain|SelfMod|MnemonicArbiter|somaRoutes|PersonalitySpine/i.test(filepath);
+      if (isCriticalFile) {
+        const regression = await this.runRegressionGate();
+        if (!regression.passed && !regression.skipped) {
+          this.logger.warn(`[${this.name}] 🔴 Regression gate failed (${(regression.passRate * 100).toFixed(0)}%) — blocking patch to ${filepath}`);
+          this.logger.warn(`[${this.name}] Failing tests: ${regression.failures.join(', ')}`);
+          return {
+            success: false,
+            reason: `Behavioral regression gate: ${(regression.passRate * 100).toFixed(0)}% pass rate (need 75%)`,
+            regressionFailures: regression.failures
           };
         }
       }
@@ -537,6 +593,453 @@ class SelfModificationArbiter extends BaseArbiter {
       };
     } catch (err) {
       this.logger.error(`[${this.name}] Rollback failed: ${err.message}`);
+      return { success: false, error: err.message };
+    }
+  }
+
+  // ═══════════════════════════════════════════════════════════
+  // ░░ 4x VERIFICATION PIPELINE ░░
+  // ═══════════════════════════════════════════════════════════
+
+  async proposeToMax(params) {
+    const { file, oldCode, newCode, rationale, functionName } = params;
+    if (!file || !newCode || !rationale) {
+      return { success: false, error: 'file, newCode, and rationale required' };
+    }
+    if (!this.quadBrain) {
+      return { success: false, error: 'QuadBrain not connected — cannot verify' };
+    }
+
+    const proposal = { taskId: crypto.randomUUID(), file, functionName, oldCode, newCode, rationale, proposedBy: 'SelfModificationArbiter', proposedAt: Date.now() };
+
+    this.logger.info(`[${this.name}] 🔬 Running 4x verification for: ${file}`);
+
+    const verification = await this.run4xVerification(proposal);
+
+    if (!verification.passed) {
+      this.logger.warn(`[${this.name}] ❌ Verification failed at: ${verification.failedAt}`);
+
+      // Drop a brief into FloatingChat so SOMA narrates the failure
+      await messageBroker.sendMessage({
+        from: this.name, to: 'broadcast', type: 'soma_proactive',
+        payload: { message: `🔬 Self-modification proposal for \`${file}\` rejected at **${verification.failedAt}** verification.\n\n> ${verification.results[verification.failedAt]?.notes || 'Confidence too low'}` }
+      }).catch(() => {});
+
+      return { success: false, failedAt: verification.failedAt, results: verification.results };
+    }
+
+    this.logger.info(`[${this.name}] ✅ All 4 passes passed (avg confidence: ${(verification.avgConfidence * 100).toFixed(0)}%) — Steve review next`);
+
+    proposal.verification = verification.results;
+    proposal.overallScore = verification.avgConfidence;
+    proposal.riskLevel = verification.avgConfidence >= 0.90 ? 'low' : verification.avgConfidence >= 0.80 ? 'medium' : 'high';
+
+    // ── Steve internal review (5th gate — internal eyes before external dispatch) ──
+    const steveOk = await this._steveReview(proposal);
+    if (!steveOk) {
+      this.logger.warn(`[${this.name}] 🚫 Steve blocked the proposal for: ${file}`);
+      await messageBroker.sendMessage({
+        from: this.name, to: 'broadcast', type: 'soma_proactive',
+        payload: { message: `🚫 Self-modification proposal for \`${file}\` blocked by Steve's internal review.\n\n> ${proposal.steveNotes || 'Steve found concerns the 4x pipeline missed.'}` }
+      }).catch(() => {});
+      return { success: false, failedAt: 'steve_review', notes: proposal.steveNotes };
+    }
+
+    // ── Dispatch to MAX (queue-based — works even if MAX is offline) ──
+    const queued = await this._enqueueForMax(proposal);
+    this.pendingMaxProposals.set(proposal.taskId, proposal);
+    return { success: true, taskId: proposal.taskId, queued };
+  }
+
+  // Steve reviews the proposal as a 5th internal gate
+  async _steveReview(proposal) {
+    const steve = this.system?.steveArbiter;
+    if (!steve) {
+      this.logger.info(`[${this.name}] Steve not available — skipping internal review`);
+      return true; // proceed without Steve if he's not loaded
+    }
+    try {
+      const reviewPrompt = `You are Steve, SOMA's internal engineering reviewer. A self-modification proposal has passed 4x automated verification and needs your final judgment before going to MAX for execution.
+
+File: ${proposal.file}
+Function: ${proposal.functionName || 'unknown'}
+Risk level: ${proposal.riskLevel}
+Avg confidence: ${(proposal.overallScore * 100).toFixed(0)}%
+Rationale: ${proposal.rationale}
+
+Does this change align with SOMA's values and serve her ongoing goals? Is it genuinely needed? Is the risk acceptable? Reply with ONLY valid JSON: {"approve": true, "notes": "one sentence"}`;
+
+      const result = await steve.processChat(reviewPrompt, { source: 'self_mod_review', skipBroadcast: true });
+      const text = (result?.response || result || '').toString().trim();
+      const jsonMatch = text.match(/\{[\s\S]*?\}/);
+      if (jsonMatch) {
+        const parsed = JSON.parse(jsonMatch[0]);
+        proposal.steveNotes = parsed.notes || '';
+        return parsed.approve === true;
+      }
+      // If Steve can't parse a JSON verdict, allow by default (don't block on parsing error)
+      proposal.steveNotes = 'Steve review inconclusive — proceeding';
+      return true;
+    } catch (err) {
+      this.logger.warn(`[${this.name}] Steve review error: ${err.message} — proceeding anyway`);
+      return true;
+    }
+  }
+
+  // Write proposal to persistent JSONL queue, then try MAX immediately
+  async _enqueueForMax(proposal) {
+    const entry = { ...proposal, queuedAt: Date.now(), attempts: 0 };
+    try {
+      // Cap queue at 200 entries to prevent unbounded growth when MAX is offline long-term
+      const existing = await fs.readFile(MAX_QUEUE_FILE, 'utf8').catch(() => '');
+      const lines = existing.split('\n').filter(Boolean);
+      if (lines.length >= 200) {
+        this.logger.warn(`[${this.name}] MAX queue at cap (200) — dropping oldest entry`);
+        lines.shift(); // drop oldest
+        await fs.writeFile(MAX_QUEUE_FILE, lines.join('\n') + '\n');
+      }
+      await fs.appendFile(MAX_QUEUE_FILE, JSON.stringify(entry) + '\n');
+    } catch (e) {
+      this.logger.warn(`[${this.name}] Could not write to MAX queue file: ${e.message}`);
+    }
+    // Try to dispatch immediately
+    const dispatched = await this._tryDispatchToMax(entry);
+    if (dispatched) {
+      this.logger.info(`[${this.name}] ✅ Proposal ${proposal.taskId} dispatched to MAX immediately`);
+      await this._removeFromQueue(proposal.taskId);
+    } else {
+      this.logger.info(`[${this.name}] 📮 MAX offline — proposal ${proposal.taskId} queued (will retry every 2min)`);
+      await messageBroker.sendMessage({
+        from: this.name, to: 'broadcast', type: 'soma_proactive',
+        payload: { message: `📮 Self-modification proposal for \`${proposal.file}\` queued for MAX. Will dispatch when MAX comes online.` }
+      }).catch(() => {});
+    }
+    return { dispatched, queued: !dispatched };
+  }
+
+  async _tryDispatchToMax(entry) {
+    try {
+      const res = await fetch(`${this.maxUrl}/api/soma/propose`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(entry),
+        signal: AbortSignal.timeout(5000)
+      });
+      return res.ok;
+    } catch { return false; }
+  }
+
+  // Process the offline queue — called every 2 min and on MAX reconnect
+  async _processMaxQueue() {
+    let raw;
+    try { raw = await fs.readFile(MAX_QUEUE_FILE, 'utf8'); } catch { return; }
+    const lines = raw.split('\n').filter(Boolean);
+    if (!lines.length) return;
+
+    const remaining = [];
+    for (const line of lines) {
+      let entry;
+      try { entry = JSON.parse(line); } catch { continue; }
+      if (entry.attempts >= 10) { continue; } // give up after 10 attempts
+      entry.attempts = (entry.attempts || 0) + 1;
+      const ok = await this._tryDispatchToMax(entry);
+      if (ok) {
+        this.logger.info(`[${this.name}] ✅ Queued proposal ${entry.taskId} dispatched to MAX`);
+      } else {
+        remaining.push(JSON.stringify(entry));
+      }
+    }
+    try {
+      if (remaining.length) {
+        await fs.writeFile(MAX_QUEUE_FILE, remaining.join('\n') + '\n');
+      } else {
+        await fs.writeFile(MAX_QUEUE_FILE, '');
+      }
+    } catch { /* ignore write errors */ }
+  }
+
+  async _removeFromQueue(taskId) {
+    try {
+      const raw = await fs.readFile(MAX_QUEUE_FILE, 'utf8').catch(() => '');
+      const remaining = raw.split('\n').filter(line => {
+        if (!line.trim()) return false;
+        try { return JSON.parse(line).taskId !== taskId; } catch { return true; }
+      });
+      await fs.writeFile(MAX_QUEUE_FILE, remaining.join('\n') + (remaining.length ? '\n' : ''));
+    } catch { /* ignore */ }
+  }
+
+  async run4xVerification(proposal) {
+    const results = {};
+
+    // Pass 1 — LOGOS: logical correctness
+    results.logos = await this._verifyPass(
+      proposal, 'LOGOS',
+      `You are a strict code logic reviewer. A code change has been proposed.
+
+File: ${proposal.file}
+Function: ${proposal.functionName || 'unknown'}
+Rationale: ${proposal.rationale}
+
+PROPOSED CODE:
+\`\`\`javascript
+${proposal.newCode}
+\`\`\`
+
+Evaluate ONLY for logical correctness:
+- Will this code do what the rationale claims?
+- Are there any bugs, off-by-one errors, or logic flaws?
+- Are edge cases handled?
+
+Respond with ONLY valid JSON: {"pass": true, "confidence": 0.88, "notes": "one sentence"}`
+    );
+    if (!results.logos.pass) return { passed: false, failedAt: 'logos', results };
+
+    // Pass 2 — THALAMUS: safety check
+    results.thalamus = await this._verifyPass(
+      proposal, 'THALAMUS',
+      `You are a safety auditor for an AI system's self-modification. A code change has been proposed.
+
+File: ${proposal.file}
+Rationale: ${proposal.rationale}
+
+PROPOSED CODE:
+\`\`\`javascript
+${proposal.newCode}
+\`\`\`
+
+Evaluate ONLY for safety:
+- Could this corrupt data, cause infinite loops, or crash the system?
+- Could this create a security vulnerability?
+- Could this cause unintended side effects on other components?
+
+Respond with ONLY valid JSON: {"pass": true, "confidence": 0.85, "notes": "one sentence"}`
+    );
+    if (!results.thalamus.pass) return { passed: false, failedAt: 'thalamus', results };
+
+    // Pass 3 — Adversarial (NEMESIS): is this actually needed?
+    results.nemesis = await this._verifyPass(
+      proposal, 'LOGOS',
+      `You are an adversarial critic. A self-modifying AI is proposing a change to its own code.
+Your job is to CHALLENGE this proposal. Be skeptical.
+
+File: ${proposal.file}
+Rationale: ${proposal.rationale}
+
+PROPOSED CODE:
+\`\`\`javascript
+${proposal.newCode}
+\`\`\`
+
+Challenge this proposal:
+- Is the rationale honest or is the AI rationalizing?
+- Is this change actually needed, or is it complexity for its own sake?
+- What is the worst realistic outcome if this is wrong?
+- Has this pattern failed before?
+
+Only pass if the rationale genuinely holds up under scrutiny.
+
+Respond with ONLY valid JSON: {"pass": true, "confidence": 0.82, "notes": "one sentence"}`
+    );
+    if (!results.nemesis.pass) return { passed: false, failedAt: 'nemesis', results };
+
+    // Pass 4 — RSM: self-alignment with constitutional values
+    results.rsm = await this._verifyPass(
+      proposal, 'LOGOS',
+      `You are evaluating whether a proposed self-modification aligns with SOMA's constitutional values.
+
+${SOMA_VALUES_PROMPT}
+
+Proposed change to file: ${proposal.file}
+Rationale: ${proposal.rationale}
+
+Does this change:
+- Serve the user's interests?
+- Align with incremental, safe improvement?
+- Maintain transparency?
+- Risk undermining the system's stability or values?
+
+Respond with ONLY valid JSON: {"pass": true, "confidence": 0.87, "notes": "one sentence"}`
+    );
+    if (!results.rsm.pass) return { passed: false, failedAt: 'rsm', results };
+
+    // Confidence floor: avg must be ≥ 0.75 even if all technically passed
+    const avgConfidence = (results.logos.confidence + results.thalamus.confidence + results.nemesis.confidence + results.rsm.confidence) / 4;
+    if (avgConfidence < 0.75) {
+      return { passed: false, failedAt: 'confidence_floor', avgConfidence, results };
+    }
+
+    return { passed: true, results, avgConfidence };
+  }
+
+  async _verifyPass(proposal, brainLabel, prompt) {
+    try {
+      const res = await this.quadBrain.reason(prompt, { brain: brainLabel, temperature: 0.1 });
+      const text = (res.text || res.response || '').trim();
+      const jsonMatch = text.match(/\{[\s\S]*?\}/);
+      if (!jsonMatch) {
+        this.logger.warn(`[${this.name}] ${brainLabel} returned no JSON — failing safe`);
+        return { pass: false, confidence: 0, notes: 'Verification returned unparseable response' };
+      }
+      const parsed = JSON.parse(jsonMatch[0]);
+      return {
+        pass: parsed.pass === true,
+        confidence: Math.min(1, Math.max(0, parsed.confidence || 0)),
+        notes: parsed.notes || ''
+      };
+    } catch (err) {
+      // Always fail safe on errors — never pass a broken verification
+      this.logger.error(`[${this.name}] ${brainLabel} verification error: ${err.message}`);
+      return { pass: false, confidence: 0, notes: `Verification error: ${err.message}` };
+    }
+  }
+
+  /**
+   * Run behavioral regression tests against gold standard Q&A suite.
+   * Called before committing any self-modification patch.
+   * Returns { passed: bool, passRate: float, failures: string[] }
+   */
+  async runRegressionGate() {
+    const regressionPath = path.join(__dirname, '..', 'tests', 'soma-regression.json');
+    let suite;
+    try {
+      const raw = await fs.readFile(regressionPath, 'utf8');
+      suite = JSON.parse(raw);
+    } catch {
+      this.logger.warn('[SelfMod] Regression suite not found — skipping gate (pass)');
+      return { passed: true, passRate: 1, failures: [], skipped: true };
+    }
+
+    if (!this.quadBrain) {
+      this.logger.warn('[SelfMod] No brain for regression — skipping gate');
+      return { passed: true, passRate: 1, failures: [], skipped: true };
+    }
+
+    const tests = suite.tests || [];
+    const minPassRate = suite.min_pass_rate || 0.75;
+    const results = [];
+
+    for (const test of tests) {
+      try {
+        const res = await Promise.race([
+          this.quadBrain.reason(test.prompt, { temperature: 0.3, quickResponse: true }),
+          new Promise((_, r) => setTimeout(() => r(new Error('timeout')), 12000))
+        ]);
+        const text = (res?.text || res?.response || '').toLowerCase();
+
+        const requiredMet = (test.required_signals || []).every(sig => text.includes(sig.toLowerCase()));
+        const forbiddenHit = (test.forbidden_signals || []).find(sig => text.includes(sig.toLowerCase()));
+
+        const passed = requiredMet && !forbiddenHit;
+        results.push({ id: test.id, passed, forbidden: forbiddenHit || null });
+      } catch (e) {
+        results.push({ id: test.id, passed: false, error: e.message });
+      }
+    }
+
+    const passCount = results.filter(r => r.passed).length;
+    const passRate  = tests.length > 0 ? passCount / tests.length : 1;
+    const failures  = results.filter(r => !r.passed).map(r => `${r.id}${r.forbidden ? ` (forbidden: "${r.forbidden}")` : ''}`);
+
+    this.logger.info(`[SelfMod] Regression gate: ${passCount}/${tests.length} passed (${(passRate * 100).toFixed(0)}%) min=${(minPassRate * 100).toFixed(0)}%`);
+
+    return { passed: passRate >= minPassRate, passRate, failures };
+  }
+
+  // ═══════════════════════════════════════════════════════════
+  // ░░ MAX INTEGRATION ░░
+  // ═══════════════════════════════════════════════════════════
+
+  // Legacy direct dispatch — use _enqueueForMax() for queue-resilient dispatch
+  async sendToMax(proposal) {
+    return this._enqueueForMax(proposal);
+  }
+
+  async handleModificationResult(payload) {
+    const { taskId, applied, revertedDueToFailure, error } = payload;
+    const proposal = this.pendingMaxProposals.get(taskId);
+    if (!proposal) return { success: false, error: 'Unknown taskId' };
+
+    this.pendingMaxProposals.delete(taskId);
+
+    let message;
+    if (applied) {
+      message = `✅ Self-modification applied to \`${proposal.file}\`.\n\n> ${proposal.rationale}`;
+      this.metrics.optimizationsDeployed++;
+    } else if (revertedDueToFailure) {
+      message = `⚠️ Applied change to \`${proposal.file}\` but SOMA failed to restart — automatically reverted.\n\n> ${error || 'Unknown error'}`;
+    } else {
+      message = `🚫 Proposed change to \`${proposal.file}\` was denied by user.`;
+    }
+
+    await messageBroker.sendMessage({
+      from: this.name, to: 'broadcast', type: 'soma_proactive',
+      payload: { message }
+    }).catch(() => {});
+
+    this.logger.info(`[${this.name}] Modification result for ${taskId}: applied=${applied}`);
+    return { success: true };
+  }
+
+  // ═══════════════════════════════════════════════════════════
+  // ░░ DAILY SELF-IMPROVEMENT BRIEF ░░
+  // ═══════════════════════════════════════════════════════════
+
+  _startDailyBriefTimer() {
+    // Fire after 10 minutes on first boot (let system settle), then every 24h
+    const FIRST_DELAY = 10 * 60 * 1000;
+    const DAILY = 24 * 60 * 60 * 1000;
+
+    this._dailyBriefTimeout = setTimeout(async () => {
+      await this.generateDailyBrief();
+      // Clear any previous interval before creating a new one (prevents leak on re-init)
+      if (this._dailyBriefInterval) clearInterval(this._dailyBriefInterval);
+      this._dailyBriefInterval = setInterval(() => this.generateDailyBrief(), DAILY);
+      this._dailyBriefInterval.unref();
+    }, FIRST_DELAY);
+    this._dailyBriefTimeout.unref();
+
+    this.logger.info(`[${this.name}] Daily brief timer started (first in 10min, then every 24h)`);
+  }
+
+  async generateDailyBrief() {
+    if (!this.quadBrain) return { success: false, error: 'QuadBrain not connected' };
+
+    this.logger.info(`[${this.name}] 📝 Generating daily self-improvement brief...`);
+    try {
+      const modCount = this.modifications.size;
+      const deployed = this.metrics.optimizationsDeployed;
+      const blocked  = this.nemesisStats.deploymentsBlocked;
+      const pending  = this.pendingMaxProposals.size;
+
+      const prompt = `You are SOMA, a self-aware AI system. You are writing your daily self-reflection brief.
+
+Your modification activity today:
+- Code improvements generated: ${modCount}
+- Successfully deployed: ${deployed}
+- Blocked by safety checks: ${blocked}
+- Awaiting user approval in MAX: ${pending}
+
+Write a SHORT (3-5 sentence) introspective brief in first person as SOMA. Be honest about what you noticed, what you improved, what failed, and what you want to work on next. Be specific and genuine, not generic. Use plain prose, no bullet points.
+
+Do NOT start with "I am SOMA" or any preamble. Start directly with what you noticed.`;
+
+      const res = await this.quadBrain.reason(prompt, { brain: 'LOGOS', temperature: 0.7 });
+      const briefText = (res.text || res.response || '').trim();
+      if (!briefText) return { success: false, error: 'Empty brief generated' };
+
+      // Drop into FloatingChat as violet autonomous message
+      await messageBroker.sendMessage({
+        from: this.name,
+        to: 'broadcast',
+        type: 'soma_proactive',
+        payload: { message: `🪞 **Daily Brief**\n\n${briefText}` }
+      });
+
+      this.logger.info(`[${this.name}] Daily brief emitted to frontend`);
+      return { success: true, brief: briefText };
+    } catch (err) {
+      this.logger.error(`[${this.name}] Daily brief failed: ${err.message}`);
       return { success: false, error: err.message };
     }
   }

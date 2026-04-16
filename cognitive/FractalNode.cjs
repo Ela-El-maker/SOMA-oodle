@@ -10,6 +10,7 @@ class FractalNode {
         this.id = config.id || this.generateId();
         this.type = config.type || 'concept'; // concept, memory, pattern, skill
         this.content = config.content || '';
+        this.sector = config.sector || 'GEN'; // Sovereign Archipelago (Spatial Geography)
         this.embedding = config.embedding || null; // Vector representation
         
         // Fractal structure
@@ -120,6 +121,7 @@ class FractalNode {
             id: this.id,
             type: this.type,
             content: this.content,
+            sector: this.sector,
             embedding: this.embedding,
             parent: this.parent?.id || null,
             children: Array.from(this.children).map(c => c.id),
@@ -146,6 +148,7 @@ class FractalNode {
             id: data.id,
             type: data.type,
             content: data.content,
+            sector: data.sector,
             embedding: data.embedding,
             strength: data.strength,
             decay: data.decay,

@@ -1,0 +1,11 @@
+{
+  "event": "commit_started",
+  "ts": 1767861012932,
+  "data": {
+    "packageId": "pkg_1767861012611",
+    "snapshot": {
+      "timestamp": 1767861012924,
+      "note": "Pre-deployment snapshot"
+    }
+  }
+}

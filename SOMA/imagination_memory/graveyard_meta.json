@@ -1,0 +1,47 @@
+[
+  {
+    "signature": "e47dbea78c55193352cc126522c34c3b0d73d39e3e96329db18ef5f6a121159e",
+    "deaths": 13,
+    "triography": {
+      "mass": 0.4286395478322724,
+      "charge": 3.483120488065129,
+      "friction": 4.879689436501879
+    }
+  },
+  {
+    "signature": "32b9096780b4a59b572092e1c133b3bd0cc8cfaaa972a25acb5392f19c237a26",
+    "deaths": 1,
+    "triography": {
+      "mass": 1.3835789043732516,
+      "charge": 1.8312898321400006,
+      "friction": 4.869570066872953
+    }
+  },
+  {
+    "signature": "beabbd38655a7d2386738c078415aa5b6186f26474356497119c7df60554352a",
+    "deaths": 1,
+    "triography": {
+      "mass": 0.1515616555188637,
+      "charge": 2.2405647452121924,
+      "friction": 2.6042157042027894
+    }
+  },
+  {
+    "signature": "f24096680dd2573f781a88acc3d67754c87253b1e8d2f003d117cbde023fb5f9",
+    "deaths": 1,
+    "triography": {
+      "mass": 0.41214263518026595,
+      "charge": 1.2810751821893973,
+      "friction": 3.8860199285748553
+    }
+  },
+  {
+    "signature": "7b623cad80e68a1dd1269b1597361895a7118c6996887e80f812bcc4ce84df99",
+    "deaths": 1,
+    "triography": {
+      "mass": 4.647070646971073,
+      "charge": 1.9303483439516356,
+      "friction": 4.9339344809887375
+    }
+  }
+]

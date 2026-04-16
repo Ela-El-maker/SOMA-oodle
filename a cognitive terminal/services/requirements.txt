@@ -1,0 +1,15 @@
+# SOMA Whisper Flask Server Dependencies
+# Minimal requirements for Flask API (scipy not needed for HTTP server)
+
+# Flask for HTTP API
+flask>=3.0.0
+flask-cors>=4.0.0
+
+# File upload handling
+werkzeug>=3.0.0
+
+# Audio processing (use pre-built wheels)
+sounddevice>=0.4.6
+
+# Note: openai-whisper should already be installed
+# If not: pip install openai-whisper

@@ -104,6 +104,9 @@ export class AutoTrainingCoordinator extends EventEmitter {
       return { success: true, enabled: false };
     }
 
+    // Ensure venv detection has completed before checking deps
+    await this._detectPythonEnv();
+
     // Check Python dependencies
     console.log(`[${this.name}]    🔍 Checking Python dependencies...`);
     const depsOk = await this.checkDependencies();
@@ -196,6 +199,11 @@ export class AutoTrainingCoordinator extends EventEmitter {
    * HANDS-OFF: SOMA installs what she needs
    */
   async installDependencies() {
+    // requirements-training.txt is gitignored — skip pip if file doesn't exist
+    try { await fs.access('requirements-training.txt'); } catch {
+      console.warn(`[${this.name}]       ⚠️  requirements-training.txt not found — skipping pip install`);
+      return false;
+    }
     console.log(`[${this.name}]       Installing from requirements-training.txt...`);
 
     return new Promise((resolve) => {
@@ -373,10 +381,7 @@ export class AutoTrainingCoordinator extends EventEmitter {
       // Step 1: Train on experiences
       console.log(`[${this.name}]    Step 1/3: Training on accumulated experiences...`);
 
-      // Use the configured SOMA model if available, otherwise default to soma-1t
-      const targetModel = this.localModelServer?.defaultModel?.includes('soma') 
-          ? this.localModelServer.defaultModel 
-          : 'soma-1t';
+      const targetModel = process.env.OLLAMA_MODEL || this.localModelServer?.defaultModel || 'gemma3:4b';
 
       const trainingResult = await this.gpuTraining.trainOnExperiences({
         modelName: targetModel,

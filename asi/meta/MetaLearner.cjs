@@ -14,6 +14,7 @@ class MetaLearner {
   constructor(config = {}) {
     this.strategyOptimizer = null;
     this.outcomeTracker = null;
+    this.fixProposalSystem = config.fixProposalSystem || null; // New: FixProposalSystem
     
     this.state = {
       maturityLevel: 0, // 0.0 to 1.0 (Novice to Expert)
@@ -78,24 +79,71 @@ class MetaLearner {
     }
 
     // Tune the optimizer's parameters based on maturity
-    this.tuneHyperparameters();
+    await this.tuneHyperparameters();
   }
 
   /**
    * Adjust StrategyOptimizer's exploration parameters dynamically
    */
-  tuneHyperparameters() {
+  async tuneHyperparameters() { // Make async to allow fixProposalSystem.generateProposalFromObservations
     // As maturity increases, reduce random exploration (epsilon)
-    // Novice: 0.2 (20% random) -> Expert: 0.05 (5% random)
     const newEpsilon = 0.2 - (0.15 * this.state.maturityLevel);
-    
-    this.strategyOptimizer.config.epsilonGreedy = Math.max(0.05, newEpsilon);
+    this.newEpsilon = Math.max(0.05, newEpsilon); // Store for proposal
     
     // As maturity increases, trust recent data more (higher decay factor)
-    // Novice: 0.90 -> Expert: 0.99
-    this.strategyOptimizer.config.decayFactor = 0.90 + (0.09 * this.state.maturityLevel);
-    
-    console.log(`[MetaLearner] 🔧 Tuned Hyperparameters: Epsilon=${newEpsilon.toFixed(3)}, Decay=${this.strategyOptimizer.config.decayFactor.toFixed(3)}`);
+    this.newDecayFactor = 0.90 + (0.09 * this.state.maturityLevel); // Store for proposal
+
+    const currentEpsilon = this.strategyOptimizer.config.epsilonGreedy;
+    const currentDecayFactor = this.strategyOptimizer.config.decayFactor;
+
+    // Only propose a change if the new values are significantly different
+    if (Math.abs(this.newEpsilon - currentEpsilon) > 0.01 || Math.abs(this.newDecayFactor - currentDecayFactor) > 0.005) {
+      const proposalTitle = `Tune Learning Hyperparameters (Epsilon: ${currentEpsilon.toFixed(3)} -> ${this.newEpsilon.toFixed(3)}, Decay: ${currentDecayFactor.toFixed(3)} -> ${this.newDecayFactor.toFixed(3)})`;
+      const proposalDescription = `Based on current system maturity (${(this.state.maturityLevel * 100).toFixed(1)}%), it is proposed to adjust the StrategyOptimizer's hyperparameters to better balance exploration and exploitation. This should lead to more efficient learning.`;
+      
+      const fixDetails = {
+        type: 'config_change',
+        changes: [{
+          file: 'StrategyOptimizer.js (config)', // Conceptual file path
+          parameter: 'epsilonGreedy',
+          originalValue: currentEpsilon,
+          newValue: this.newEpsilon
+        }, {
+          file: 'StrategyOptimizer.js (config)',
+          parameter: 'decayFactor',
+          originalValue: currentDecayFactor,
+          newValue: this.newDecayFactor
+        }],
+        // Before/After could be more complex, showing config block or relevant code
+        beforeAfter: {
+          file: 'StrategyOptimizer.js',
+          original: `epsilonGreedy: ${currentEpsilon.toFixed(3)}, decayFactor: ${currentDecayFactor.toFixed(3)}`,
+          modified: `epsilonGreedy: ${this.newEpsilon.toFixed(3)}, decayFactor: ${this.newDecayFactor.toFixed(3)}`
+        }
+      };
+
+      if (this.fixProposalSystem) {
+        await this.fixProposalSystem.generateProposalFromObservations(
+          { description: proposalDescription, context: { maturity: this.state.maturityLevel } },
+          {
+            title: proposalTitle,
+            description: proposalDescription,
+            confidence: this.state.maturityLevel, // Confidence scales with maturity
+            risk: 1 - this.state.maturityLevel,    // Risk reduces with maturity
+            safetyApproved: true, // Assuming hyperparameter tuning is inherently safe
+            fix: fixDetails
+          }
+        );
+        console.log(`[MetaLearner] 📝 Proposed hyperparameter tuning: ${proposalTitle}`);
+      } else {
+        // Fallback: apply directly if no proposal system
+        this.strategyOptimizer.config.epsilonGreedy = this.newEpsilon;
+        this.strategyOptimizer.config.decayFactor = this.newDecayFactor;
+        console.log(`[MetaLearner] 🔧 Tuned Hyperparameters Directly: Epsilon=${this.newEpsilon.toFixed(3)}, Decay=${this.newDecayFactor.toFixed(3)} (No Fix Proposal System)`);
+      }
+    } else {
+      console.log('[MetaLearner] Hyperparameters within tolerance; no tuning proposed.');
+    }
   }
 
   /**
@@ -112,9 +160,6 @@ class MetaLearner {
       return { success: false, reason: 'Source domain has no data' };
     }
 
-    console.log(`[MetaLearner] 🔄 Attempting Transfer: ${sourceDomain} -> ${targetDomain}`);
-
-    // Get top strategies from source
     const topStrategies = sourceStats.strategies
       .filter(s => s.successRate > 0.7) // Only high performing strategies
       .map(s => s.name);
@@ -123,22 +168,50 @@ class MetaLearner {
       return { success: false, reason: 'No high-quality strategies to transfer' };
     }
 
-    // Seed the target domain with these strategies (give them a small "bonus" to encourage exploration)
-    for (const strategy of topStrategies) {
-      // We "fake" a small positive outcome to jumpstart UCB1 exploration for this strategy in the new domain
-      // This is the mathematical equivalent of "giving it a try because it worked elsewhere"
-      this.strategyOptimizer.recordOutcome(targetDomain, strategy, {
-        success: true,
-        reward: 0.5, // Small positive reward
-        context: { transfer: true, source: sourceDomain }
-      });
-    }
+    // Instead of directly applying, propose as a FixProposal
+    const proposalTitle = `Propose Knowledge Transfer: ${sourceDomain} -> ${targetDomain}`;
+    const proposalDescription = `Based on successful strategies in '${sourceDomain}', it is proposed to transfer and apply the following high-performing strategies to '${targetDomain}': ${topStrategies.join(', ')}. This is expected to accelerate learning and performance in the target domain.`;
 
-    return { 
-      success: true, 
-      transferred: topStrategies,
-      count: topStrategies.length 
+    const fixDetails = {
+      type: 'knowledge_transfer',
+      changes: [{
+        sourceDomain: sourceDomain,
+        targetDomain: targetDomain,
+        strategies: topStrategies
+      }],
+      beforeAfter: { // Conceptual representation
+        file: 'StrategyOptimizer.js (knowledge)',
+        original: `Strategies in ${targetDomain}: (prior state)`,
+        modified: `Strategies in ${targetDomain}: (after transfer of ${topStrategies.join(', ')})`
+      }
     };
+
+    if (this.fixProposalSystem) {
+      await this.fixProposalSystem.generateProposalFromObservations(
+        { description: proposalDescription, context: { sourceDomain, targetDomain, maturity: this.state.maturityLevel } },
+        {
+          title: proposalTitle,
+          description: proposalDescription,
+          confidence: this.state.maturityLevel, // Confidence scales with maturity
+          risk: 1 - this.state.maturityLevel,    // Risk reduces with maturity
+          safetyApproved: true, // Assuming knowledge transfer is safe
+          fix: fixDetails
+        }
+      );
+      console.log(`[MetaLearner] 📝 Proposed knowledge transfer: ${proposalTitle}`);
+      return { success: true, proposed: true };
+    } else {
+      // Fallback: apply directly if no proposal system
+      console.log(`[MetaLearner] 🔄 Applying knowledge transfer directly: ${sourceDomain} -> ${targetDomain} (No Fix Proposal System)`);
+      for (const strategy of topStrategies) {
+        this.strategyOptimizer.recordOutcome(targetDomain, strategy, {
+          success: true,
+          reward: 0.5,
+          context: { transfer: true, source: sourceDomain }
+        });
+      }
+      return { success: true, transferred: topStrategies, count: topStrategies.length };
+    }
   }
 
   /**

@@ -1,0 +1,65 @@
+{
+  "traceId": "rc_ce4aa551ddab",
+  "ts": "2025-12-23T13:54:34.874Z",
+  "query": "Nothing, I was just checking the C.",
+  "meta": {},
+  "candidates": [
+    {
+      "source": "PROMETHEUS",
+      "text": "Acknowledged. Awaiting further instructions.\n",
+      "confidence": 0.85,
+      "role": "prometheus"
+    },
+    {
+      "source": "LOGOS",
+      "text": "Understood. Awaiting further instructions or data for analysis. My systems are online and ready for processing.\n",
+      "confidence": 0.85,
+      "role": "logos"
+    },
+    {
+      "source": "AURORA",
+      "text": "Okay. Copy that.\n",
+      "confidence": 0.85,
+      "role": "aurora"
+    }
+  ],
+  "fused": {
+    "text": "Understood. Awaiting further instructions or data for analysis. My systems are online and ready for processing.\n",
+    "weights": [
+      {
+        "source": "PROMETHEUS",
+        "norm": 0.32432432432432434,
+        "conf": 0.85
+      },
+      {
+        "source": "LOGOS",
+        "norm": 0.35135135135135126,
+        "conf": 0.85
+      },
+      {
+        "source": "AURORA",
+        "norm": 0.32432432432432434,
+        "conf": 0.85
+      }
+    ],
+    "confidence": 0.8499999999999999,
+    "provenance": [
+      {
+        "source": "PROMETHEUS",
+        "snippet": "Acknowledged. Awaiting further instructions.\n",
+        "confidence": 0.85
+      },
+      {
+        "source": "LOGOS",
+        "snippet": "Understood. Awaiting further instructions or data for analysis. My systems are online and ready for processing.\n",
+        "confidence": 0.85
+      },
+      {
+        "source": "AURORA",
+        "snippet": "Okay. Copy that.\n",
+        "confidence": 0.85
+      }
+    ]
+  },
+  "iter": 0
+}

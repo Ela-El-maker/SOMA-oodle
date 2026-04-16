@@ -1,0 +1,65 @@
+{
+  "traceId": "rc_69ca72a0a8b6",
+  "ts": "2025-12-17T21:53:48.841Z",
+  "query": "Can you hear me now?",
+  "meta": {},
+  "candidates": [
+    {
+      "source": "PROMETHEUS",
+      "text": "Yes. I can hear you.\n",
+      "confidence": 0.85,
+      "role": "prometheus"
+    },
+    {
+      "source": "LOGOS",
+      "text": "As a large language model, I do not have the capability of \"hearing\" in the way a human or a device with a microphone does. I process text-based input.\n\nTherefore, the answer to your question \"Can you hear me now?\" is:\n\nNo, I cannot \"hear\" you in the literal sense. I can process and understand the text you have provided.\n",
+      "confidence": 0.85,
+      "role": "logos"
+    },
+    {
+      "source": "AURORA",
+      "text": "Yes, I can hear you. How can I help you today?\n",
+      "confidence": 0.85,
+      "role": "aurora"
+    }
+  ],
+  "fused": {
+    "text": "As a large language model, I do not have the capability of \"hearing\" in the way a human or a device with a microphone does. I process text-based input.\n\nTherefore, the answer to your question \"Can you hear me now?\" is:\n\nNo, I cannot \"hear\" you in the literal sense. I can process and understand the text you have provided.\n",
+    "weights": [
+      {
+        "source": "PROMETHEUS",
+        "norm": 0.32432432432432434,
+        "conf": 0.85
+      },
+      {
+        "source": "LOGOS",
+        "norm": 0.35135135135135126,
+        "conf": 0.85
+      },
+      {
+        "source": "AURORA",
+        "norm": 0.32432432432432434,
+        "conf": 0.85
+      }
+    ],
+    "confidence": 0.8499999999999999,
+    "provenance": [
+      {
+        "source": "PROMETHEUS",
+        "snippet": "Yes. I can hear you.\n",
+        "confidence": 0.85
+      },
+      {
+        "source": "LOGOS",
+        "snippet": "As a large language model, I do not have the capability of \"hearing\" in the way a human or a device with a microphone does. I process text-based input.\n\nTherefore, the answer to your question \"Can you",
+        "confidence": 0.85
+      },
+      {
+        "source": "AURORA",
+        "snippet": "Yes, I can hear you. How can I help you today?\n",
+        "confidence": 0.85
+      }
+    ]
+  },
+  "iter": 0
+}

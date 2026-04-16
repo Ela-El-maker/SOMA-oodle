@@ -15,6 +15,7 @@ import { setupWebSocket } from '../server/loaders/websocket.js';
 import { loadLimbicSystem } from '../server/loaders/limbic.js';
 import { loadTradingSafety } from '../server/loaders/trading-safety.js';
 import { loadEssentialSystems, loadExtendedSystems } from '../server/loaders/extended.js';
+import { loadCOSSystems } from '../server/loaders/cos.js';
 import { BrainBridge } from '../server/BrainBridge.js';
 import { registry } from '../server/SystemRegistry.js';
 
@@ -49,14 +50,16 @@ export class SomaBootstrapV2 {
             if (this.system.knowledgeGraph) registry.markReady('KnowledgeGraph');
 
             // PHASE 2.1: Wrap QuadBrain in BrainBridge
-            // BrainBridge is a drop-in proxy: Phase 1 = direct (immediate), Phase 2 = worker thread.
-            // The worker starts in the background — no delay to core boot.
             if (this.system.quadBrain) {
                 const bridge = new BrainBridge(this.system.quadBrain);
                 this.system.quadBrain = bridge;
                 registry.markLoading('BrainWorker');
-                // Start worker non-blocking — falls back to direct if it fails
-                bridge.startWorker()
+                
+                // Get tools manifest to pass to worker
+                const toolsManifest = this.system.toolRegistry?.getToolsManifest() || [];
+
+                // Start worker non-blocking
+                bridge.startWorker({ toolsManifest })
                     .then(() => registry.markReady('BrainWorker'))
                     .catch(err => {
                         registry.markFailed('BrainWorker', err);
@@ -64,6 +67,10 @@ export class SomaBootstrapV2 {
                     });
                 console.log('[SOMA V2] BrainBridge active — worker starting in background');
             }
+
+            // PHASE 2.3: Cognitive Operating System (COS) - CNS & Perception
+            const cos = await loadCOSSystems(this.system);
+            this.system = { ...this.system, ...cos };
 
             // PHASE 2.5: Limbic System (Body & Soul)
             const limbic = await loadLimbicSystem(this.system);
@@ -92,11 +99,14 @@ export class SomaBootstrapV2 {
 
             // PHASE 6: API Routes
             try {
-                loadRoutes(app, this.system);
+                await loadRoutes(app, this.system);
             } catch (routeError) {
                 console.error('[SOMA V2] ⚠️ Route loading error (non-fatal):', routeError.message);
-                console.error('[SOMA V2] Core health/status endpoints still active');
             }
+
+            // PHASE 6.5: ASI Hardening (Atomic Parallel Awakening)
+            // Removed await to prevent event-loop deadlocks during boot
+            this._loadHardenedASI(this.system);
 
             // Ensure ToolRegistry always has live system reference
             if (this.system.toolRegistry) {
@@ -104,33 +114,34 @@ export class SomaBootstrapV2 {
             }
 
             // ═══ MARK SYSTEM READY ═══
-            // Dashboard, WebSocket, and all routes are now live.
-            // Extended arbiters load in the background below.
             this.system.ready = true;
             console.log('\n[SOMA V2] ✅ CORE ONLINE - Dashboard & API Ready');
-
-            // PHASE 4.1: Essential ASI Arbiters (loads 60s after boot)
-            // ~12 core learning/fragment/memory arbiters. Light enough to not block event loop.
-            // These power the learning pipeline, fragment brains, and curiosity systems.
-            setTimeout(() => this._loadEssentialBackground(this.system), 60000);
-
-            // PHASE 4.2: Extended Specialist Arbiters (loads 90s after boot)
-            // Loads heartbeat, identity/personas, skills, tool creator, agentic systems, etc.
-            // Default ON. Set SOMA_LOAD_EXTENDED=false to disable.
-            if (process.env.SOMA_LOAD_EXTENDED !== 'false') {
-                setTimeout(() => this._loadExtendedBackground(this.system), 90000);
-            } else {
-                console.log('[SOMA V2] Extended arbiters disabled (SOMA_LOAD_EXTENDED=false)');
-            }
-
-            // NOTE: Persona loading is handled by loadExtendedSystems (Phase G).
-            // No separate Phase 7 needed.
 
             return this.system;
 
         } catch (error) {
             console.error('\n[SOMA V2] ❌ CRITICAL BOOTSTRAP FAILURE:', error);
             throw error;
+        }
+    }
+
+    async _loadHardenedASI(system) {
+        try {
+            console.log('[SOMA V2] 🧠 Initiating ASI Hardening sequence (Parallel)...');
+            await loadEssentialSystems(system);
+            
+            if (process.env.SOMA_LOAD_EXTENDED !== 'false') {
+                console.log('[SOMA V2] 🔄 Loading extended arbiters (Tier 2)...');
+                const extended = await loadExtendedSystems(system);
+                for (const [key, value] of Object.entries(extended)) {
+                    if (value != null && !system[key]) {
+                        system[key] = value;
+                    }
+                }
+            }
+            console.log('[SOMA V2] 🔱 ASI Capability Layer: FULLY SYNCHRONIZED');
+        } catch (e) {
+            console.error('[SOMA V2] ❌ ASI Hardening failed:', e.message);
         }
     }
 

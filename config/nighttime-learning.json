@@ -25,6 +25,11 @@
             "type": "update_journal",
             "arbiter": "NighttimeLearningOrchestrator",
             "params": {}
+          },
+          {
+            "type": "system_health_maintenance",
+            "arbiter": "NighttimeLearningOrchestrator",
+            "params": {}
           }
         ]
       },
@@ -73,6 +78,11 @@
               "archiveOlderThan": 604800000,
               "compressThreshold": 0.3
             }
+          },
+          {
+            "type": "deep_memory_cleanup",
+            "arbiter": "NighttimeLearningOrchestrator",
+            "params": {}
           },
           {
             "type": "export_training_data",

@@ -1,6 +1,7 @@
 import { useState, useRef, useEffect, useCallback } from 'react';
 import { initElevenLabs, textToSpeech, isElevenLabsEnabled } from '../utils/elevenLabsTTS';
 import { reasonWithSoma, checkSomaHealth, formatResponseForSpeech, SomaCognitiveStream } from '../utils/somaClient';
+import { getSharedSessionId } from '../utils/sharedSession';
 
 // Audio configuration constants
 const OUTPUT_SAMPLE_RATE = 24000;
@@ -13,108 +14,253 @@ const lerp = (start, end, factor) => {
 // Helper to calculate volume from an analyser node
 const calculateVolume = (analyser, frequencyData) => {
   analyser.getByteFrequencyData(frequencyData);
-
-  const voiceBins = frequencyData.slice(1, 32);
+  
+  const voiceBins = frequencyData.slice(1, 32); 
   let max = 0;
   for (let i = 0; i < voiceBins.length; i++) {
     if (voiceBins[i] > max) {
-      max = voiceBins[i];
+        max = voiceBins[i];
     }
   }
-
-  const normalized = Math.min(1, max / 200);
+  
+  const normalized = Math.min(1, max / 200); 
   return normalized;
 };
 
-export function useSomaAudio() {
+// Validate transcription quality to filter noise/gibberish
+const isValidTranscription = (text) => {
+  if (text.length < 5) return false;
+
+  const lowerText = text.toLowerCase().trim();
+  const words = lowerText.split(/\s+/).filter(w => w.length > 0);
+  
+  // Require at least 2 words or a longer single word
+  if (words.length < 2 && lowerText.length < 8) {
+    return false;
+  }
+
+  // Check for common Whisper hallucination artifacts
+  const commonArtifacts = [
+    'thank you', 'thank you.', 'thank you so much', 'thanks for watching',
+    'thanks for listening', 'subscribe', 'like and subscribe', 'please subscribe',
+    'see you next time', 'see you in the next video', 'bye bye', 'goodbye',
+    'good night', 'good morning', 'you', 'bye', 'thank', 'oh', 'hello',
+    'okay', 'ok', 'yeah', 'yes', 'no', 'um', 'uh', 'hmm', 'huh', 'ah', 'so',
+    'and', 'the', 'i\'m sorry', 'sorry', '[blank_audio]', '[silence]',
+    '(upbeat music)', '(gentle music)', '(music)', '(music playing)',
+    '(soft music)', '(laughing)', '(applause)', '(silence)', '(no audio)',
+    '...', 'you know', 'i mean', 'all right', 'alright',
+  ];
+
+  if (commonArtifacts.includes(lowerText)) {
+    return false;
+  }
+
+  // Filter exact matches of common artifacts
+  const hallucPrefixes = ['thank you', 'thanks for', 'please subscribe', 'like and', 'see you'];
+  if (hallucPrefixes.some(p => lowerText.startsWith(p))) {
+    return false;
+  }
+
+  // Filter text in parentheses/brackets (Whisper annotations)
+  if (/^\s*[\(\[].*[\)\]]\s*$/.test(text)) {
+    return false;
+  }
+  
+  return true;
+};
+
+// Voice Activity Detection - distinguish speech from background noise
+const detectVoiceActivity = (analyser, frequencyData) => {
+  analyser.getByteFrequencyData(frequencyData);
+  
+  const fftSize = analyser.fftSize;
+  const sampleRate = analyser.context.sampleRate;
+  const binWidth = sampleRate / fftSize;
+  
+  const voiceFundamentalStart = Math.floor(85 / binWidth);
+  const voiceFundamentalEnd = Math.floor(255 / binWidth);
+  const voiceFormantStart = Math.floor(300 / binWidth);
+  const voiceFormantEnd = Math.floor(3400 / binWidth);
+  const noiseBandEnd = Math.floor(80 / binWidth);
+  
+  let fundamentalEnergy = 0;
+  let formantEnergy = 0;
+  let noiseEnergy = 0;
+  let totalEnergy = 0;
+  
+  for (let i = 0; i < frequencyData.length; i++) {
+    const energy = frequencyData[i];
+    totalEnergy += energy;
+    
+    if (i >= voiceFundamentalStart && i <= voiceFundamentalEnd) {
+      fundamentalEnergy += energy;
+    }
+    if (i >= voiceFormantStart && i <= voiceFormantEnd) {
+      formantEnergy += energy;
+    }
+    if (i <= noiseBandEnd) {
+      noiseEnergy += energy;
+    }
+  }
+  
+  const avgTotal = totalEnergy / frequencyData.length;
+  const avgFundamental = fundamentalEnergy / (voiceFundamentalEnd - voiceFundamentalStart + 1);
+  const avgFormant = formantEnergy / (voiceFormantEnd - voiceFormantStart + 1);
+  const avgNoise = noiseEnergy / (noiseBandEnd + 1);
+  
+  const hasEnoughEnergy = avgTotal > 5;
+  const voiceStrongerThanNoise = (avgFundamental + avgFormant) / 2 > avgNoise * 1.2;
+  const hasVoiceCharacteristics = avgFundamental > 8 && avgFormant > 5;
+  
+  return hasEnoughEnergy && voiceStrongerThanNoise && hasVoiceCharacteristics;
+};
+
+export function useSomaAudio(onResponse) {
   const [isConnected, setIsConnected] = useState(false);
-  const [volume, setVolume] = useState(0); // AI Volume (Output)
-  const [inputVolume, setInputVolume] = useState(0); // User Volume (Input)
+  const [volume, setVolume] = useState(0); 
+  const [inputVolume, setInputVolume] = useState(0); 
   const [isTalking, setIsTalking] = useState(false);
   const [isListening, setIsListening] = useState(false);
   const [isThinking, setIsThinking] = useState(false);
   const [somaHealthy, setSomaHealthy] = useState(false);
   const [systemStatus, setSystemStatus] = useState({
     somaBackend: 'disconnected',
-    whisperServer: 'native', // Using Native Browser API
+    whisperServer: 'disconnected',
     elevenLabs: 'disabled',
   });
-
-  // Refs for audio context and processing
+  
+  // Refs
+  const onResponseRef = useRef(onResponse);
+  useEffect(() => { onResponseRef.current = onResponse; }, [onResponse]);
+  
   const audioContextRef = useRef(null);
   const inputContextRef = useRef(null);
   const analyserRef = useRef(null);
   const inputAnalyserRef = useRef(null);
   const streamRef = useRef(null);
+  const sourcesRef = useRef(new Set());
   const animationFrameRef = useRef(null);
   const currentVolumeRef = useRef(0);
   const currentInputVolumeRef = useRef(0);
-  const conversationIdRef = useRef(`conv_${Date.now()}`);
+  const conversationIdRef = useRef(getSharedSessionId());
   const cognitiveStreamRef = useRef(null);
   const elevenLabsVoiceIdRef = useRef(null);
-  const recognitionRef = useRef(null); // Web Speech API ref
-
-  const isUserInterrupting = useRef(false);
+  const mediaRecorderRef = useRef(null);
+  const audioChunksRef = useRef([]);
   const isSpeaking = useRef(false);
+  const isUserInterrupting = useRef(false);
+  const speakQueueRef = useRef(Promise.resolve());
+  const voiceHistoryRef = useRef([]);           // conversation memory across turns
+  const wakeWordRecRef = useRef(null);          // Web Speech rec for wake word mode
+  const isInWakeWordModeRef = useRef(false);    // true = listening for "hey soma"
+  const isConnectedRef = useRef(false);         // closure-safe mirror of isConnected state
+  const [wakeWordActive, setWakeWordActive] = useState(false);
 
-  // Pre-cached acknowledgment audio buffers for instant playback
+  // Keep isConnectedRef in sync so wake word handler always sees current state
+  useEffect(() => { isConnectedRef.current = isConnected; }, [isConnected]);
+
   const acknowledgmentCacheRef = useRef(new Map());
+  const useWebSpeechRef = useRef(false);       // true when Whisper is down
+  const webSpeechRecRef = useRef(null);        // SpeechRecognition instance
 
-  // Poll SOMA backend until ready (handles 3-min initialization)
+  // Transcribe audio using local Whisper
+  const transcribeAudio = async (audioBlob) => {
+    try {
+      console.log('🎤 Transcribing with Whisper...');
+
+      const formData = new FormData();
+      formData.append('audio', audioBlob, 'recording.webm');
+
+      const response = await fetch('http://localhost:5002/transcribe', {
+          method: 'POST',
+          body: formData,
+          signal: AbortSignal.timeout(10000)
+      });
+
+      if (!response.ok) {
+          throw new Error(`Whisper API Error: ${response.statusText}`);
+      }
+
+      const result = await response.json();
+
+      if (!result.success || !result.text) {
+        throw new Error('Invalid transcription response');
+      }
+
+      const transcript = result.text.trim();
+
+      if (!transcript || !isValidTranscription(transcript)) {
+          console.log('⚠️ Skipping transcription:', transcript);
+          return;
+      }
+      
+      console.log('📝 Heard:', transcript);
+      await processWithSoma(transcript);
+
+    } catch (e) {
+      console.error('🎤 Transcription error:', e.message || e);
+    }
+  };
+
+  const checkWhisperHealth = async () => {
+    try {
+      const response = await fetch('http://localhost:5002/health', {
+        method: 'GET',
+        signal: AbortSignal.timeout(2000),
+      });
+      return response.ok;
+    } catch (error) {
+      return false;
+    }
+  };
+
+  const checkSomaHealthLocal = async () => {
+    try {
+      // Use the project-standard /health endpoint — 8s timeout to survive heavy boot load
+      const response = await fetch('/health', {
+        method: 'GET',
+        signal: AbortSignal.timeout(8000),
+      });
+      return response.ok;
+    } catch {
+      return false;
+    }
+  };
+
   const waitForSomaBackend = async () => {
-    const maxAttempts = 40; // 40 attempts * 5 seconds = 3.3 minutes
-    const delayMs = 5000; // Check every 5 seconds
-
+    const maxAttempts = 30;
+    const delayMs = 5000;
+    
     for (let attempt = 1; attempt <= maxAttempts; attempt++) {
-      console.log(`[${attempt}/${maxAttempts}] Checking SOMA backend...`);
-
-      setSystemStatus(prev => ({
-        ...prev,
-        somaBackend: 'initializing',
-      }));
-
-      const healthy = await checkSomaHealth();
-
+      setSystemStatus(prev => ({ ...prev, somaBackend: 'initializing' }));
+      const healthy = await checkSomaHealthLocal();
+      
       if (healthy) {
-        console.log('✅ SOMA backend is ready!');
-        setSystemStatus(prev => ({
-          ...prev,
-          somaBackend: 'connected',
-        }));
+        setSystemStatus(prev => ({ ...prev, somaBackend: 'connected' }));
         setSomaHealthy(true);
         return true;
       }
-
+      
       if (attempt < maxAttempts) {
-        console.log(`⏳ SOMA backend not ready. Retrying in ${delayMs / 1000}s...`);
         await new Promise(resolve => setTimeout(resolve, delayMs));
       }
     }
-
-    console.error('❌ SOMA backend failed to start after 3+ minutes');
-    setSystemStatus(prev => ({
-      ...prev,
-      somaBackend: 'error',
-    }));
+    
+    setSystemStatus(prev => ({ ...prev, somaBackend: 'error' }));
     return false;
   };
 
-  // Initialize and connect
   const connect = useCallback(async () => {
     try {
       console.log('🔌 Connecting to SOMA...');
-
-      // Check SOMA health with polling
+      
       const backendReady = await waitForSomaBackend();
-
-      if (!backendReady) {
-        throw new Error('SOMA backend failed to initialize.');
-      }
-
-      // Initialize ElevenLabs
+      if (!backendReady) throw new Error('SOMA backend failed to initialize.');
+      
       let elevenLabsKey = null;
       let elevenLabsVoiceId = null;
-
+      
       if (window.electronAPI) {
         elevenLabsKey = await window.electronAPI.getElevenLabsApiKey();
         elevenLabsVoiceId = await window.electronAPI.getElevenLabsVoiceId();
@@ -122,118 +268,38 @@ export function useSomaAudio() {
         elevenLabsKey = import.meta.env.VITE_ELEVENLABS_API_KEY;
         elevenLabsVoiceId = import.meta.env.VITE_ELEVENLABS_VOICE_ID;
       }
-
+      
       const elevenLabsInitialized = initElevenLabs(elevenLabsKey);
       elevenLabsVoiceIdRef.current = elevenLabsVoiceId;
+      setSystemStatus(prev => ({ ...prev, elevenLabs: elevenLabsInitialized ? 'enabled' : 'fallback' }));
+      
+      const whisperHealthy = await checkWhisperHealth();
+      const hasSpeechRecognition = !!(window.SpeechRecognition || window.webkitSpeechRecognition);
+      useWebSpeechRef.current = !whisperHealthy && hasSpeechRecognition;
+      setSystemStatus(prev => ({
+        ...prev,
+        whisperServer: whisperHealthy ? 'ready' : (hasSpeechRecognition ? 'fallback' : 'error')
+      }));
+      
+      audioContextRef.current = new (window.AudioContext || window.webkitAudioContext)({ sampleRate: OUTPUT_SAMPLE_RATE });
+      inputContextRef.current = new (window.AudioContext || window.webkitAudioContext)({ sampleRate: 16000 });
 
-      if (!elevenLabsInitialized) {
-        console.warn('⚠️ ElevenLabs not available - will use browser speech synthesis');
-        setSystemStatus(prev => ({ ...prev, elevenLabs: 'fallback' }));
-      } else {
-        setSystemStatus(prev => ({ ...prev, elevenLabs: 'enabled' }));
-
-        // Pre-cache common acknowledgments
-        (async () => {
-          const commonAcks = ['Mm-hmm.', 'Yeah?', 'Okay.', 'Right.', 'Got it.'];
-          for (const ack of commonAcks) {
-            try {
-              const result = await textToSpeech(ack, audioContextRef.current, elevenLabsVoiceId || undefined, { energy: 0.5, stability: 0.6 });
-              if (result.success && result.audioBuffer) {
-                acknowledgmentCacheRef.current.set(ack, result.audioBuffer);
-              }
-            } catch (e) {
-              // Ignore cache errors
-            }
-          }
-        })();
-      }
-
-      // Setup Audio Contexts
-      audioContextRef.current = new (window.AudioContext || window.webkitAudioContext)({
-        sampleRate: OUTPUT_SAMPLE_RATE,
-      });
-
-      inputContextRef.current = new (window.AudioContext || window.webkitAudioContext)({
-        sampleRate: 16000,
-      });
-
-      // Setup Output Analyser (for Orb visualization)
       const analyser = audioContextRef.current.createAnalyser();
       analyser.fftSize = 256;
-      analyser.smoothingTimeConstant = 0.1;
       analyserRef.current = analyser;
       analyser.connect(audioContextRef.current.destination);
 
-      // Get Microphone Access for Visualization
-      try {
-        const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-        streamRef.current = stream;
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      streamRef.current = stream;
 
-        // Setup Input Analyser (for User Volume visualization)
-        if (inputContextRef.current) {
-          const inputAnalyser = inputContextRef.current.createAnalyser();
-          inputAnalyser.fftSize = 256;
-          inputAnalyser.smoothingTimeConstant = 0.1;
-          inputAnalyserRef.current = inputAnalyser;
-
-          const source = inputContextRef.current.createMediaStreamSource(stream);
-          source.connect(inputAnalyser);
-        }
-      } catch (err) {
-        console.warn('Microphone access for visualization failed:', err);
-      }
-
-      // Initialize Web Speech API
-      const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
-      if (SpeechRecognition) {
-        const recognition = new SpeechRecognition();
-        recognition.continuous = false; // We restart manually to handle state better
-        recognition.interimResults = false;
-        recognition.lang = 'en-US';
-
-        recognition.onstart = () => {
-          console.log('🎤 Voice recognition active');
-          setIsListening(true);
-        };
-
-        recognition.onresult = (event) => {
-          const transcript = event.results[0][0].transcript;
-          if (transcript.trim()) {
-            console.log('🗣️ Heard:', transcript);
-            processWithSoma(transcript);
-          }
-        };
-
-        recognition.onend = () => {
-          // Auto-restart if we are supposed to be listening and not talking/thinking
-          setIsListening(false);
-        };
-
-        recognition.onerror = (event) => {
-          console.warn('Voice recognition error:', event.error);
-          setIsListening(false);
-        };
-
-        recognitionRef.current = recognition;
-        setSystemStatus(prev => ({ ...prev, whisperServer: 'native' }));
-      } else {
-        console.error('❌ Web Speech API not supported in this browser');
-        setSystemStatus(prev => ({ ...prev, whisperServer: 'error' }));
-      }
-
-      // Connect to SOMA cognitive stream
-      try {
-        const cogStream = new SomaCognitiveStream();
-        await cogStream.connect();
-        cognitiveStreamRef.current = cogStream;
-      } catch (error) {
-        console.warn('Could not connect to cognitive stream:', error);
-      }
-
+      const inputAnalyser = inputContextRef.current.createAnalyser();
+      inputAnalyser.fftSize = 256;
+      inputAnalyserRef.current = inputAnalyser;
+      const source = inputContextRef.current.createMediaStreamSource(stream);
+      source.connect(inputAnalyser);
+      
       setIsConnected(true);
-      console.log('✅ Connected to SOMA');
-
-      // Start Visualizer Loop
+      
       const updateVolume = () => {
         if (analyserRef.current) {
           const dataArray = new Uint8Array(analyserRef.current.frequencyBinCount);
@@ -245,212 +311,521 @@ export function useSomaAudio() {
         if (inputAnalyserRef.current) {
           const dataArray = new Uint8Array(inputAnalyserRef.current.frequencyBinCount);
           const rawInputVol = calculateVolume(inputAnalyserRef.current, dataArray);
-
-          currentInputVolumeRef.current = lerp(currentInputVolumeRef.current, rawInputVol, 0.2);
+          const isVoice = detectVoiceActivity(inputAnalyserRef.current, dataArray);
+          const filteredVol = isVoice ? rawInputVol : 0;
+          currentInputVolumeRef.current = lerp(currentInputVolumeRef.current, filteredVol, 0.2);
           setInputVolume(currentInputVolumeRef.current);
-
-          // Interrupt logic
-          if (isTalking && rawInputVol > 0.3) {
-            console.log('🚫 User interruption detected');
-            isUserInterrupting.current = true;
-            stopSpeaking();
-          }
         }
 
         animationFrameRef.current = requestAnimationFrame(updateVolume);
       };
       updateVolume();
-
+      
     } catch (error) {
       console.error('Connection failed:', error);
       setIsConnected(false);
     }
   }, []);
 
-  // Manage Listen State
+  // Recording loop effect — uses Whisper if available, falls back to browser SpeechRecognition
   useEffect(() => {
-    // If connected and not talking/thinking, we should be listening
-    const shouldListen = isConnected && !isTalking && !isThinking;
+    let recordingTimeout;
+    let isActive = true;
 
-    if (shouldListen) {
-      // Debounce start to avoid rapid restarts
-      const timer = setTimeout(() => {
-        try {
-          // Only start if not already started
-          if (recognitionRef.current) {
-            recognitionRef.current.start();
-          }
-        } catch (e) {
-          // Ignore "already started" errors
+    // ── Branch A: Web Speech API fallback (no Whisper) ──────────────────
+    if (isConnected && useWebSpeechRef.current) {
+      const SpeechRec = window.SpeechRecognition || window.webkitSpeechRecognition;
+      if (!SpeechRec) return;
+
+      const rec = new SpeechRec();
+      rec.continuous = true;
+      rec.interimResults = false;
+      rec.lang = 'en-US';
+      webSpeechRecRef.current = rec;
+
+      rec.onresult = (event) => {
+        if (!isActive || !isConnected || isTalking) return;
+        const transcript = event.results[event.results.length - 1][0].transcript.trim();
+        if (isValidTranscription(transcript)) {
+          console.log('📝 Web Speech heard:', transcript);
+          processWithSoma(transcript);
         }
-      }, 100);
-      return () => clearTimeout(timer);
-    } else {
-      // Stop listening
-      try {
-        if (recognitionRef.current) {
-          recognitionRef.current.stop();
+      };
+      rec.onstart  = () => { if (isActive) setIsListening(true);  };
+      rec.onend    = () => {
+        setIsListening(false);
+        // Auto-restart unless we stopped intentionally
+        if (isActive && isConnected && !isTalking) {
+          try { rec.start(); } catch (e) {}
         }
-      } catch (e) {
-        // Ignore
-      }
-    }
-  }, [isConnected, isTalking, isThinking]);
+      };
+      rec.onerror  = (e) => { if (e.error !== 'no-speech') console.warn('SpeechRec error:', e.error); };
 
-  // Play audio buffer
-  const playAudio = async (audioBuffer) => {
-    if (!audioContextRef.current) return;
+      try { rec.start(); } catch (e) {}
 
-    // Resume context if suspended
-    if (audioContextRef.current.state === 'suspended') {
-      await audioContextRef.current.resume();
+      return () => {
+        isActive = false;
+        try { rec.stop(); } catch (e) {}
+        webSpeechRecRef.current = null;
+        setIsListening(false);
+      };
     }
 
-    const source = audioContextRef.current.createBufferSource();
-    source.buffer = audioBuffer;
-    source.connect(analyserRef.current);
-    source.connect(audioContextRef.current.destination);
+    // ── Branch B: Whisper (MediaRecorder → POST to localhost:5002) ───────
+    const runRecordingLoop = async () => {
+      if (!isActive || !isConnected || !streamRef.current) return;
 
-    return new Promise((resolve) => {
-      source.onended = resolve;
-      source.start(0);
-    });
-  };
-
-  // Stop speaking immediately
-  const stopSpeaking = () => {
-    if (audioContextRef.current) {
-      // Disconnect/cancel logic if easy
-    }
-    window.speechSynthesis.cancel();
-    isSpeaking.current = false;
-    setIsTalking(false);
-  };
-
-  // Speak text
-  const speakText = async (text) => {
-    if (!text) return;
-    setIsTalking(true);
-
-    // Check cache for short common phrases (latency booster)
-    if (acknowledgmentCacheRef.current.has(text) && isElevenLabsEnabled()) {
-      try {
-        await playAudio(acknowledgmentCacheRef.current.get(text));
-        setIsTalking(false);
-        return;
-      } catch (e) {
-        console.warn('Cache play failed, falling back');
-      }
-    }
-
-    // Try ElevenLabs
-    if (isElevenLabsEnabled()) {
-      try {
-        const result = await textToSpeech(text, audioContextRef.current, elevenLabsVoiceIdRef.current);
-        if (result.success && result.audioBuffer) {
-          await playAudio(result.audioBuffer);
-          setIsTalking(false);
+      // Interruption check
+      if (isTalking && inputAnalyserRef.current) {
+        const dataArray = new Uint8Array(inputAnalyserRef.current.frequencyBinCount);
+        const rawInputVol = calculateVolume(inputAnalyserRef.current, dataArray);
+        if (rawInputVol > 0.3) {
+          stopSpeaking();
+          await new Promise(r => setTimeout(r, 800));
+        } else {
+          setTimeout(() => runRecordingLoop(), 500);
           return;
         }
-      } catch (e) {
-        console.warn('ElevenLabs failed:', e);
       }
+
+      // VAD Trigger
+      if (inputAnalyserRef.current) {
+        const dataArray = new Uint8Array(inputAnalyserRef.current.frequencyBinCount);
+        if (!detectVoiceActivity(inputAnalyserRef.current, dataArray)) {
+          if (isActive && isConnected && !isTalking) setTimeout(() => runRecordingLoop(), 200);
+          return;
+        }
+      }
+
+      try {
+        audioChunksRef.current = [];
+        const mimeType = MediaRecorder.isTypeSupported('audio/webm;codecs=opus') ? 'audio/webm;codecs=opus' : '';
+        const mediaRecorder = new MediaRecorder(streamRef.current, mimeType ? { mimeType } : {});
+        mediaRecorderRef.current = mediaRecorder;
+
+        mediaRecorder.ondataavailable = (event) => {
+          if (event.data.size > 0) audioChunksRef.current.push(event.data);
+        };
+
+        mediaRecorder.onstop = async () => {
+          setIsListening(false);
+          if (audioChunksRef.current.length > 0) {
+            const audioBlob = new Blob(audioChunksRef.current, { type: 'audio/webm;codecs=opus' });
+            if (audioBlob.size > 500 && isActive && isConnected && !isTalking) {
+              await transcribeAudio(audioBlob);
+            }
+          }
+          if (isActive && isConnected && !isTalking) setTimeout(() => runRecordingLoop(), 500);
+        };
+
+        mediaRecorder.start(200);
+        setIsListening(true);
+
+        // Silence-based end-of-speech detection: stop after 1.5s of silence, max 10s
+        let lastVoiceAt = Date.now();
+        const SILENCE_THRESHOLD_MS = 1500;
+        const MAX_RECORDING_MS = 10000;
+
+        const silenceWatcher = setInterval(() => {
+          if (!inputAnalyserRef.current || mediaRecorder.state !== 'recording') {
+            clearInterval(silenceWatcher);
+            return;
+          }
+          const dataArray = new Uint8Array(inputAnalyserRef.current.frequencyBinCount);
+          if (detectVoiceActivity(inputAnalyserRef.current, dataArray)) {
+            lastVoiceAt = Date.now();
+          } else if (Date.now() - lastVoiceAt > SILENCE_THRESHOLD_MS) {
+            clearInterval(silenceWatcher);
+            clearTimeout(recordingTimeout);
+            if (isActive && mediaRecorder.state === 'recording') mediaRecorder.stop();
+          }
+        }, 100);
+
+        recordingTimeout = setTimeout(() => {
+          clearInterval(silenceWatcher);
+          if (isActive && mediaRecorder.state === 'recording') mediaRecorder.stop();
+        }, MAX_RECORDING_MS);
+
+      } catch (e) {
+        if (isActive && isConnected && !isTalking) setTimeout(() => runRecordingLoop(), 2000);
+      }
+    };
+
+    if (isConnected && !isTalking) {
+      setTimeout(() => { if (isActive && isConnected) runRecordingLoop(); }, 1000);
     }
 
-    // Fallback to Browser TTS
-    return new Promise((resolve) => {
-      const utterance = new SpeechSynthesisUtterance(text);
-      utterance.onend = () => {
-        setIsTalking(false);
+    return () => {
+      isActive = false;
+      clearTimeout(recordingTimeout);
+      if (mediaRecorderRef.current && mediaRecorderRef.current.state === 'recording') {
+        try { mediaRecorderRef.current.stop(); } catch (e) {}
+      }
+    };
+  }, [isConnected, isTalking]);
+
+  const generateAcknowledgment = (query) => {
+    const lower = query.toLowerCase();
+    if (lower.includes('?') || lower.startsWith('how') || lower.startsWith('what') || lower.startsWith('why') || lower.startsWith('when') || lower.startsWith('where') || lower.startsWith('who')) {
+      return ['Hmm.', 'Let me think on that.', 'One sec.', 'Yeah...', 'Interesting.'][Math.floor(Math.random() * 5)];
+    }
+    return ['Yeah.', 'Right.', 'On it.', 'Okay.', 'Got it.'][Math.floor(Math.random() * 5)];
+  };
+
+  const processWithSoma = async (query) => {
+    try {
+      if (onResponseRef.current) {
+        onResponseRef.current({ role: 'user', text: query, timestamp: Date.now() });
+      }
+
+      // Play acknowledgment immediately while stream starts
+      const acknowledgment = generateAcknowledgment(query);
+      speakText(acknowledgment); // intentionally not awaited — overlap with stream startup
+
+      setIsThinking(true);
+      let fullResponse = '';
+      let firstSentenceReceived = false;
+
+      try {
+        const response = await fetch('/api/soma/chat/stream', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            message: query,
+            history: voiceHistoryRef.current,
+            sessionId: conversationIdRef.current
+          })
+        });
+
+        if (!response.ok) throw new Error(`Stream error: ${response.status}`);
+
+        const reader = response.body.getReader();
+        const decoder = new TextDecoder();
+        let streamBuffer = '';
+
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+
+          streamBuffer += decoder.decode(value, { stream: true });
+          const lines = streamBuffer.split('\n');
+          streamBuffer = lines.pop(); // keep incomplete last line
+
+          for (const line of lines) {
+            if (!line.startsWith('data:')) continue;
+            const raw = line.slice(5).trim();
+            if (!raw) continue;
+            try {
+              const event = JSON.parse(raw);
+              if (event.sentence) {
+                const clean = formatResponseForSpeech(event.sentence);
+                if (clean) {
+                  fullResponse += clean + ' ';
+                  if (!firstSentenceReceived) {
+                    firstSentenceReceived = true;
+                    setIsThinking(false);
+                  }
+                  speakWithNaturalPacing(clean); // queue each sentence as it arrives
+                }
+              }
+            } catch { /* malformed event */ }
+          }
+        }
+      } catch (streamErr) {
+        // Stream failed — fall back to regular chat
+        console.warn('[Voice] Stream failed, falling back:', streamErr.message);
+        const result = await reasonWithSoma(query, conversationIdRef.current, { voiceMode: true });
+        setIsThinking(false);
+        if (result.success && result.response) {
+          fullResponse = result.response;
+          await speakWithNaturalPacing(formatResponseForSpeech(fullResponse));
+        } else {
+          await speakText('I lost my train of thought. Can you say that again?');
+          return;
+        }
+      }
+
+      setIsThinking(false);
+
+      const trimmedResponse = fullResponse.trim();
+      if (onResponseRef.current && trimmedResponse) {
+        onResponseRef.current({ role: 'soma', text: trimmedResponse, timestamp: Date.now() });
+      }
+
+      // Update conversation memory (keep last 10 turns = 20 messages)
+      voiceHistoryRef.current = [
+        ...voiceHistoryRef.current,
+        { role: 'user', content: query },
+        { role: 'assistant', content: trimmedResponse }
+      ].slice(-20);
+
+    } catch (error) {
+      setIsThinking(false);
+      await speakText('Something went wrong on my end.');
+    }
+  };
+
+  const speakWithNaturalPacing = (text) => {
+    const run = async () => {
+      isSpeaking.current = true;
+      try {
+        const sentences = text.match(/[^.!?]+[.!?]+/g) || [text];
+        for (let i = 0; i < sentences.length; i++) {
+          const sentence = sentences[i].trim();
+          if (isUserInterrupting.current) {
+            isUserInterrupting.current = false;
+            return;
+          }
+          await speakText(sentence);
+          if (i < sentences.length - 1) {
+            await new Promise(r => setTimeout(r, sentence.includes('?') ? 400 : 250));
+          }
+        }
+      } finally {
+        isSpeaking.current = false;
+      }
+    };
+    // Queue: each call waits for the previous to finish — no two voices at once
+    speakQueueRef.current = speakQueueRef.current.then(run, run);
+    return speakQueueRef.current;
+  };
+
+  const stopSpeaking = useCallback(() => {
+    sourcesRef.current.forEach(source => {
+      try { source.stop(); source.disconnect(); } catch (e) {}
+    });
+    sourcesRef.current.clear();
+    if ('speechSynthesis' in window) speechSynthesis.cancel();
+    setIsTalking(false);
+    isUserInterrupting.current = true;
+  }, []);
+
+  const speakText = async (text) => {
+    if (!audioContextRef.current || !analyserRef.current) return;
+
+    setIsTalking(true);
+    const ctx = audioContextRef.current;
+    let audioBuffer = null;
+
+    // ── 🔱 Tier 1: Project Siren (Paula Proxy - Port 8081) ─────────────────
+    try {
+        const sirenRes = await fetch('http://localhost:8081/v1/tts', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ text, voice: 'paula' }),
+            signal: AbortSignal.timeout(45000)
+        });
+        if (sirenRes.ok) {
+            const arrayBuffer = await sirenRes.arrayBuffer();
+            audioBuffer = await ctx.decodeAudioData(arrayBuffer);
+        }
+    } catch (e) {
+        console.warn('[Vocal] Project Siren offline, trying fallbacks...');
+    }
+
+    // ── Tier 2: ElevenLabs ──────────────────────────────────────────
+    if (!audioBuffer && isElevenLabsEnabled()) {
+      try {
+        const result = await textToSpeech(text, ctx, elevenLabsVoiceIdRef.current);
+        if (result.success) audioBuffer = result.audioBuffer;
+      } catch (e) { /* fall through to browser TTS */ }
+    }
+
+    // ── Tier 3: Browser Fallback (Strict Female Persona Lock) ─────────
+    if (!audioBuffer) {
+      await new Promise((resolve) => {
+        const utterance = new SpeechSynthesisUtterance(text);
+        
+        // Mandatory Voice Load Wait
+        const setVoice = () => {
+            const voices = window.speechSynthesis.getVoices();
+            // Filter for Samantha (Mac), Aria/Zira (Win), or any high-quality US Female
+            const femaleVoice = voices.find(v => 
+                (v.name.includes('Samantha') || v.name.includes('Aria') || v.name.includes('Zira') || v.name.toLowerCase().includes('female') || v.name.includes('Natural')) && 
+                v.lang.includes('en-US') && 
+                !v.name.includes('en-GB') && 
+                !v.name.toLowerCase().includes('george') &&
+                !v.name.toLowerCase().includes('male')
+            );
+            if (femaleVoice) {
+                utterance.voice = femaleVoice;
+                console.log(`[Vocal] Persona Lock: ${femaleVoice.name}`);
+            } else {
+                console.warn('[Vocal] Stricter persona lock failed, using first available female-tuned voice.');
+                const backupFemale = voices.find(v => v.name.toLowerCase().includes('female') || v.lang.includes('en-US'));
+                if (backupFemale) utterance.voice = backupFemale;
+            }
+            
+            utterance.pitch = 1.18; // Keep her characteristic slight high pitch
+            utterance.rate = 1.05;
+            utterance.volume = 1.0;
+        };
+
+        if (window.speechSynthesis.getVoices().length === 0) {
+            window.speechSynthesis.onvoiceschanged = () => {
+                setVoice();
+                window.speechSynthesis.speak(utterance);
+            };
+        } else {
+            setVoice();
+            window.speechSynthesis.speak(utterance);
+        }
+
+        utterance.onend  = () => { setIsTalking(false); resolve(); };
+        utterance.onerror = () => { setIsTalking(false); resolve(); };
+      });
+      return;
+    }
+
+    await new Promise((resolve) => {
+      const source = ctx.createBufferSource();
+      source.buffer = audioBuffer;
+      source.connect(analyserRef.current);
+      source.onended = () => {
+        sourcesRef.current.delete(source);
+        if (sourcesRef.current.size === 0) setIsTalking(false);
         resolve();
       };
-      utterance.onerror = () => {
-        setIsTalking(false);
-        resolve();
-      };
-      window.speechSynthesis.speak(utterance);
+      source.start(0);
+      sourcesRef.current.add(source);
     });
   };
 
-  // Generate natural acknowledgment
-  const generateAcknowledgment = (query) => {
-    const lowerQuery = query.toLowerCase();
+  // ── Wake word: "hey soma" / "soma" ───────────────────────────────────────
+  const WAKE_PATTERNS = /\b(hey\s*soma|soma|hay\s*soma|hey\s*sofa)\b/i;
 
-    if (lowerQuery.includes('?') || lowerQuery.startsWith('can you') || lowerQuery.startsWith('could you')) {
-      return ['Good question.', 'Let me see.', 'Hmm.', 'One moment.'][Math.floor(Math.random() * 4)];
-    }
+  const startWakeWordListening = useCallback(() => {
+    const SpeechRec = window.SpeechRecognition || window.webkitSpeechRecognition;
+    if (!SpeechRec || isInWakeWordModeRef.current) return;
 
-    return ['Sure.', 'Okay.', 'Right.', 'Got it.'][Math.floor(Math.random() * 4)];
-  };
+    isInWakeWordModeRef.current = true;
+    setWakeWordActive(true);
 
-  // Process query
-  const processWithSoma = async (query) => {
-    try {
-      // 1. Acknowledge
-      const acknowledgment = generateAcknowledgment(query);
+    const rec = new SpeechRec();
+    rec.continuous = true;
+    rec.interimResults = true;
+    rec.lang = 'en-US';
+    wakeWordRecRef.current = rec;
 
-      // Don't await acknowledgment fully to start fetching in parallel, 
-      // but visualization needs state updates.
-      speakText(acknowledgment);
+    rec.onresult = async (event) => {
+      for (let i = event.resultIndex; i < event.results.length; i++) {
+        const transcript = event.results[i][0].transcript;
+        if (WAKE_PATTERNS.test(transcript)) {
+          stopWakeWordListening();
+          console.log('[WakeWord] Activated — transcript:', transcript);
 
-      // 2. Think & Fetch
-      setIsThinking(true);
+          // Connect mic + audio pipeline if not already active
+          if (!isConnectedRef.current) {
+            try { await connect(); } catch { /* mic may already be connecting */ }
+          }
 
-      // Stop listening while thinking
-      if (recognitionRef.current) recognitionRef.current.stop();
+          // Ask SOMA to generate a natural greeting via the streaming endpoint
+          try {
+            const greetRes = await fetch('/api/soma/chat/stream', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                message: '[WAKE_WORD] Barry just said your name to get your attention. Respond with a natural, genuine greeting — 1-2 spoken sentences, be yourself. No preamble, no "Certainly", just speak naturally.',
+                history: voiceHistoryRef.current.slice(-4),
+                sessionId: conversationIdRef.current
+              }),
+              signal: AbortSignal.timeout(8000)
+            });
 
-      const result = await reasonWithSoma(query, conversationIdRef.current);
-      setIsThinking(false);
-
-      if (!result.success || !result.response) {
-        await speakText('Sorry, I checked out for a second. Can you say that again?');
-        return;
+            if (greetRes.ok) {
+              const reader = greetRes.body.getReader();
+              const decoder = new TextDecoder();
+              let buf = '';
+              while (true) {
+                const { done, value } = await reader.read();
+                if (done) break;
+                buf += decoder.decode(value, { stream: true });
+                const lines = buf.split('\n');
+                buf = lines.pop();
+                for (const line of lines) {
+                  if (!line.startsWith('data:')) continue;
+                  const raw = line.slice(5).trim();
+                  if (!raw) continue;
+                  try {
+                    const ev = JSON.parse(raw);
+                    if (ev.sentence) speakWithNaturalPacing(ev.sentence);
+                  } catch {}
+                }
+              }
+            } else {
+              speakText('Yeah?').catch(() => {});
+            }
+          } catch {
+            speakText('Yeah?').catch(() => {});
+          }
+          return;
+        }
       }
+    };
 
-      // 3. Speak Response
-      const textToSpeak = formatResponseForSpeech(result.response);
-      await speakText(textToSpeak);
+    rec.onend = () => {
+      // Auto-restart unless we intentionally stopped
+      if (isInWakeWordModeRef.current) {
+        setTimeout(() => {
+          if (isInWakeWordModeRef.current && wakeWordRecRef.current === rec) {
+            try { rec.start(); } catch { /* already started */ }
+          }
+        }, 300);
+      }
+    };
 
-    } catch (error) {
-      console.error('Error processing:', error);
-      setIsThinking(false);
-      await speakText('Something went wrong.');
+    rec.onerror = (e) => {
+      if (e.error !== 'no-speech' && e.error !== 'aborted') {
+        console.warn('[WakeWord] Error:', e.error);
+      }
+    };
+
+    try { rec.start(); } catch { /* browser may need gesture first */ }
+  }, []);
+
+  const stopWakeWordListening = useCallback(() => {
+    isInWakeWordModeRef.current = false;
+    setWakeWordActive(false);
+    if (wakeWordRecRef.current) {
+      try { wakeWordRecRef.current.stop(); } catch {}
+      wakeWordRecRef.current = null;
     }
-  };
-
-  // External API to send text query (e.g. from chatbox)
-  const sendTextQuery = useCallback((text) => {
-    processWithSoma(text);
   }, []);
 
   const disconnect = useCallback(() => {
-    setIsConnected(false);
-    if (streamRef.current) {
-      streamRef.current.getTracks().forEach(track => track.stop());
-    }
-    if (audioContextRef.current) {
-      audioContextRef.current.close();
-    }
-    if (inputContextRef.current) {
-      inputContextRef.current.close();
-    }
-    if (recognitionRef.current) {
-      recognitionRef.current.stop();
-    }
+    stopWakeWordListening();
+    if (mediaRecorderRef.current && mediaRecorderRef.current.state === 'recording') mediaRecorderRef.current.stop();
+    if (webSpeechRecRef.current) { try { webSpeechRecRef.current.stop(); } catch (e) {} webSpeechRecRef.current = null; }
+    if (cognitiveStreamRef.current) { cognitiveStreamRef.current.disconnect(); cognitiveStreamRef.current = null; }
+    if (audioContextRef.current) { audioContextRef.current.close(); audioContextRef.current = null; }
+    if (inputContextRef.current) { inputContextRef.current.close(); inputContextRef.current = null; }
+    if (streamRef.current) { streamRef.current.getTracks().forEach(t => t.stop()); streamRef.current = null; }
+    if (animationFrameRef.current) cancelAnimationFrame(animationFrameRef.current);
+    sourcesRef.current.forEach(s => { try { s.stop(); } catch (e) {} });
+    sourcesRef.current.clear();
     window.speechSynthesis.cancel();
-  }, []);
+    speakQueueRef.current = Promise.resolve();
+    isSpeaking.current = false;
+    isUserInterrupting.current = false;
+    voiceHistoryRef.current = [];
+    setIsConnected(false);
+    setIsTalking(false);
+    setIsListening(false);
+    setVolume(0);
+    setInputVolume(0);
+    setWakeWordActive(false);
+    setSystemStatus({ somaBackend: 'disconnected', whisperServer: 'disconnected', elevenLabs: 'disabled' });
+  }, [stopWakeWordListening]);
+
+  const sendTextQuery = useCallback((text) => processWithSoma(text), []);
+
+  // Unmount cleanup — stop mic, close audio contexts, cancel rAF loop
+  useEffect(() => () => disconnect(), [disconnect]);
 
   return {
-    isConnected,
-    connect,
-    disconnect,
-    volume,
-    isTalking,
-    isListening,
-    isThinking,
-    systemStatus,
-    sendTextQuery,
-    somaHealthy,
-    inputVolume
+    isConnected, connect, disconnect, volume, inputVolume,
+    isTalking, isListening, isThinking, systemStatus,
+    sendTextQuery, somaHealthy, speakText,
+    wakeWordActive, startWakeWordListening, stopWakeWordListening
   };
 }

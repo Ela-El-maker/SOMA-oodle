@@ -1,0 +1,65 @@
+{
+  "traceId": "rc_4ba9dabbe8b0",
+  "ts": "2025-12-23T13:55:44.024Z",
+  "query": "So our CESA came out.",
+  "meta": {},
+  "candidates": [
+    {
+      "source": "PROMETHEUS",
+      "text": "Acknowledged. Initial analysis suggests a need for resource reallocation towards identified vulnerabilities.\n",
+      "confidence": 0.85,
+      "role": "prometheus"
+    },
+    {
+      "source": "LOGOS",
+      "text": "Acknowledged. The \"CESA\" likely refers to the Comprehensive Economic and Trade Agreement between Canada and the European Union. To provide a useful analysis, I require further context. Specifically, what aspect of the CESA are you interested in?  For example:\n\n*   **Economic Impact:** Are you interested in the overall impact on trade, GDP, employment, or specific sectors?\n*   **Legal Implications:** Are you concerned with the legal challenges, interpretations, or compliance issues arising from the agreement?\n*   **Political Ramifications:** Are you focused on the political consequences for Canada, the EU, or specific member states?\n*   **Specific Provisions:** Are you interested in a particular clause or chapter of the agreement, such as those related to agriculture, intellectual property, or investment?\n*   **Comparison to other trade agreements:** Are you interested in how CESA compares to other trade agreements?\n\nPlease provide more details so I can focus my analysis.\n",
+      "confidence": 0.85,
+      "role": "logos"
+    },
+    {
+      "source": "AURORA",
+      "text": "CESA? Oh, the climate and environmental scenario analysis. Right. Lay it on me. \n",
+      "confidence": 0.85,
+      "role": "aurora"
+    }
+  ],
+  "fused": {
+    "text": "Acknowledged. The \"CESA\" likely refers to the Comprehensive Economic and Trade Agreement between Canada and the European Union. To provide a useful analysis, I require further context. Specifically, what aspect of the CESA are you interested in?  For example:\n\n*   **Economic Impact:** Are you interested in the overall impact on trade, GDP, employment, or specific sectors?\n*   **Legal Implications:** Are you concerned with the legal challenges, interpretations, or compliance issues arising from the agreement?\n*   **Political Ramifications:** Are you focused on the political consequences for Canada, the EU, or specific member states?\n*   **Specific Provisions:** Are you interested in a particular clause or chapter of the agreement, such as those related to agriculture, intellectual property, or investment?\n*   **Comparison to other trade agreements:** Are you interested in how CESA compares to other trade agreements?\n\nPlease provide more details so I can focus my analysis.\n",
+    "weights": [
+      {
+        "source": "PROMETHEUS",
+        "norm": 0.32432432432432434,
+        "conf": 0.85
+      },
+      {
+        "source": "LOGOS",
+        "norm": 0.35135135135135126,
+        "conf": 0.85
+      },
+      {
+        "source": "AURORA",
+        "norm": 0.32432432432432434,
+        "conf": 0.85
+      }
+    ],
+    "confidence": 0.8499999999999999,
+    "provenance": [
+      {
+        "source": "PROMETHEUS",
+        "snippet": "Acknowledged. Initial analysis suggests a need for resource reallocation towards identified vulnerabilities.\n",
+        "confidence": 0.85
+      },
+      {
+        "source": "LOGOS",
+        "snippet": "Acknowledged. The \"CESA\" likely refers to the Comprehensive Economic and Trade Agreement between Canada and the European Union. To provide a useful analysis, I require further context. Specifically, w",
+        "confidence": 0.85
+      },
+      {
+        "source": "AURORA",
+        "snippet": "CESA? Oh, the climate and environmental scenario analysis. Right. Lay it on me. \n",
+        "confidence": 0.85
+      }
+    ]
+  },
+  "iter": 0
+}

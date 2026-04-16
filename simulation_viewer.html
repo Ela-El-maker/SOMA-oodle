@@ -1,0 +1,391 @@
+    <style>
+        body { margin: 0; background: #050505; color: #0f0; font-family: 'Consolas', 'Courier New', monospace; overflow: hidden; }
+        
+        #container { 
+            position: relative; 
+            width: 100vw; 
+            height: 100vh; 
+            display: flex; 
+            justify-content: center; 
+            align-items: center;
+            background: radial-gradient(circle at center, #111 0%, #000 100%);
+        }
+        
+        canvas { 
+            /* Responsive Scaling - Fits entire 800x600 world into view */
+            max-width: 90vw;
+            max-height: 80vh;
+            width: auto;
+            height: auto;
+            box-shadow: 0 0 20px rgba(0, 255, 0, 0.2); 
+            border: 1px solid #1a1a1a; 
+            background: #000;
+        }
+        
+        #hud {
+            position: absolute;
+            top: 20px;
+            left: 20px;
+            pointer-events: none;
+            z-index: 20;
+        }
+        
+        .stat-box {
+            background: rgba(0, 20, 0, 0.8);
+            border-left: 2px solid #0f0;
+            padding: 10px 15px;
+            margin-bottom: 10px;
+            backdrop-filter: blur(4px);
+        }
+        
+        .stat-label { font-size: 10px; color: #448844; text-transform: uppercase; letter-spacing: 1px; }
+        .stat-value { font-size: 18px; color: #ccffcc; font-weight: bold; text-shadow: 0 0 5px rgba(0, 255, 0, 0.5); }
+        
+        #controls-bar {
+            position: absolute;
+            bottom: 20px;
+            left: 50%;
+            transform: translateX(-50%);
+            display: flex;
+            gap: 10px;
+            z-index: 20;
+        }
+
+        .btn {
+            background: rgba(0, 30, 0, 0.9);
+            border: 1px solid #0f0;
+            color: #0f0;
+            padding: 8px 16px;
+            font-family: inherit;
+            font-size: 12px;
+            cursor: pointer;
+            text-transform: uppercase;
+            transition: all 0.2s;
+        }
+        
+        .btn:hover { background: rgba(0, 60, 0, 1); box-shadow: 0 0 10px #0f0; }
+        .btn.active { background: #0f0; color: #000; }
+        
+        #connection-status {
+            position: absolute;
+            top: 20px;
+            right: 20px;
+            font-size: 12px;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            z-index: 20;
+        }
+        
+        .dot { width: 8px; height: 8px; border-radius: 50%; background: #333; }
+        .dot.connected { background: #0f0; box-shadow: 0 0 8px #0f0; }
+        .dot.disconnected { background: #f00; box-shadow: 0 0 8px #f00; }
+
+        #neural-log {
+            position: absolute;
+            bottom: 80px;
+            right: 20px;
+            width: 250px;
+            height: 150px;
+            overflow-y: auto;
+            background: rgba(0, 10, 0, 0.9);
+            border: 1px solid #333;
+            padding: 10px;
+            font-size: 10px;
+            color: #aaa;
+            pointer-events: none;
+            z-index: 20;
+        }
+        #neural-log div { margin-bottom: 4px; }
+        #neural-log .highlight { color: #fff; font-weight: bold; }
+
+        .scanlines {
+            position: fixed;
+            top: 0; left: 0; width: 100%; height: 100%;
+            background: linear-gradient(to bottom, rgba(255,255,255,0), rgba(255,255,255,0) 50%, rgba(0,0,0,0.1) 50%, rgba(0,0,0,0.1));
+            background-size: 100% 4px;
+            pointer-events: none;
+            z-index: 10;
+            opacity: 0.3;
+        }
+    </style>
+</head>
+<body>
+    <div class="scanlines"></div>
+    
+    <div id="connection-status">
+        <div id="status-dot" class="dot disconnected"></div>
+        <span id="status-text">OFFLINE</span>
+    </div>
+
+    <div id="hud">
+        <div class="stat-box">
+            <div class="stat-label">Mission Objective</div>
+            <div class="stat-value" id="task-val">INITIALIZING</div>
+        </div>
+        <div class="stat-box">
+            <div class="stat-label">Performance Score</div>
+            <div class="stat-value" id="score-val">0</div>
+        </div>
+        <div class="stat-box">
+            <div class="stat-label">Agent Velocity</div>
+            <div class="stat-value" id="velocity-val">0.00</div>
+        </div>
+    </div>
+
+    <div id="container">
+        <canvas id="simCanvas" width="800" height="600"></canvas>
+    </div>
+
+    <div id="controls-bar" style="display: none;">
+        <!-- Hidden controls, manual is default -->
+    </div>
+
+    <div id="neural-log">
+        <div>System initialized.</div>
+        <div>Waiting for neural telemetry...</div>
+    </div>
+
+    <script>
+        const canvas = document.getElementById('simCanvas');
+        const ctx = canvas.getContext('2d');
+        const statusDot = document.getElementById('status-dot');
+        const statusText = document.getElementById('status-text');
+        const neuralLog = document.getElementById('neural-log');
+        
+        // Auto-focus canvas for immediate keyboard control
+        window.addEventListener('focus', () => canvas.focus());
+        canvas.focus();
+        
+        let lastInputTime = 0;
+        
+        // Connect to the SimulationArbiter WebSocket
+        const ws = new WebSocket('ws://localhost:8081');
+        
+        let bodies = [];
+        let particles = [];
+        let score = 0;
+        let currentTask = '';
+        let lastTime = 0;
+
+        // Input state
+        const keys = { w: false, a: false, s: false, d: false, ArrowUp: false, ArrowLeft: false, ArrowDown: false, ArrowRight: false };
+
+        function log(msg, highlight = false) {
+            const div = document.createElement('div');
+            div.innerText = `> ${msg}`;
+            if (highlight) div.className = 'highlight';
+            neuralLog.appendChild(div);
+            neuralLog.scrollTop = neuralLog.scrollHeight;
+            if (neuralLog.children.length > 20) neuralLog.removeChild(neuralLog.firstChild);
+        }
+
+        ws.onopen = () => {
+            statusDot.className = 'dot connected';
+            statusText.innerText = 'LINK ESTABLISHED';
+            statusText.style.color = '#0f0';
+            log('Connected to Physics Engine', true);
+        };
+
+        ws.onclose = () => {
+            statusDot.className = 'dot disconnected';
+            statusText.innerText = 'LINK SEVERED';
+            statusText.style.color = '#f00';
+            log('Connection lost.', true);
+        };
+
+        ws.onmessage = (event) => {
+            const msg = JSON.parse(event.data);
+            
+            if (msg.type === 'world_update') {
+                bodies = msg.bodies;
+                score = msg.score;
+                currentTask = msg.task;
+                
+                // Update HUD
+                document.getElementById('task-val').innerText = currentTask ? currentTask.toUpperCase().replace('_', ' ') : 'EXPLORING';
+                document.getElementById('score-val').innerText = score;
+                
+                // Find agent to update velocity
+                const agent = bodies.find(b => b.label === 'soma_agent');
+                if (agent) {
+                    const vel = Math.sqrt(agent.velocity.x**2 + agent.velocity.y**2).toFixed(2);
+                    document.getElementById('velocity-val').innerText = vel;
+                }
+            } else if (msg.type === 'event') {
+                if (msg.eventType === 'win') {
+                    spawnParticles(400, 300, '#0f0', 50); // Celebration confetti
+                    log(`GOAL REACHED! Score: ${msg.data.score}`, true);
+                }
+            }
+        };
+
+        // Input Handling - Seamless Manual Override
+        window.addEventListener('keydown', (e) => {
+            if (keys.hasOwnProperty(e.key) || keys.hasOwnProperty(e.key.toLowerCase())) {
+                keys[e.key] = true;
+                lastInputTime = Date.now();
+                
+                // Show visual feedback for manual control
+                document.getElementById('status-text').innerText = 'MANUAL OVERRIDE';
+                document.getElementById('status-text').style.color = '#ff0055';
+            }
+            if (e.key.toLowerCase() === 'r') {
+                ws.send(JSON.stringify({ type: 'reset' }));
+                log('Resetting simulation environment...');
+            }
+        });
+
+        window.addEventListener('keyup', (e) => {
+            if (keys.hasOwnProperty(e.key) || keys.hasOwnProperty(e.key.toLowerCase())) {
+                keys[e.key] = false;
+            }
+        });
+
+        // Control Loop (Send commands at 60fps for smoothness)
+        setInterval(() => {
+            if (ws.readyState !== 1) return;
+
+            // Auto-revert to AI status if no input for 2 seconds
+            if (Date.now() - lastInputTime > 2000 && document.getElementById('status-text').innerText === 'MANUAL OVERRIDE') {
+                 document.getElementById('status-text').innerText = 'LINK ESTABLISHED';
+                 document.getElementById('status-text').style.color = '#0f0';
+            }
+
+            let x = 0;
+            let y = 0;
+            // Physics-based force application (Acceleration control)
+            const force = 0.008; // Tuned for responsive but weighty feel
+
+            if (keys.w || keys.ArrowUp) y -= force * 2; // Jump/Thrust
+            if (keys.a || keys.ArrowLeft) x -= force;
+            if (keys.s || keys.ArrowDown) y += force;
+            if (keys.d || keys.ArrowRight) x += force;
+
+            // Only send if there is active input
+            if (x !== 0 || y !== 0) {
+                ws.send(JSON.stringify({ type: 'control', x, y }));
+            }
+        }, 16); // 60fps update rate
+
+        // Render Loop
+        function loop(timestamp) {
+            const dt = timestamp - lastTime;
+            lastTime = timestamp;
+
+            // Clear
+            ctx.fillStyle = '#111';
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+            // Draw Grid
+            drawGrid();
+
+            // Draw Bodies
+            bodies.forEach(body => drawBody(body));
+
+            // Draw Particles
+            updateAndDrawParticles();
+
+            requestAnimationFrame(loop);
+        }
+
+        function drawGrid() {
+            ctx.strokeStyle = '#222';
+            ctx.lineWidth = 1;
+            const gridSize = 50;
+            
+            ctx.beginPath();
+            for (let x = 0; x <= canvas.width; x += gridSize) {
+                ctx.moveTo(x, 0);
+                ctx.lineTo(x, canvas.height);
+            }
+            for (let y = 0; y <= canvas.height; y += gridSize) {
+                ctx.moveTo(0, y);
+                ctx.lineTo(canvas.width, y);
+            }
+            ctx.stroke();
+        }
+
+        function drawBody(body) {
+            ctx.beginPath();
+            if (body.vertices && body.vertices.length > 0) {
+                ctx.moveTo(body.vertices[0].x, body.vertices[0].y);
+                for (let i = 1; i < body.vertices.length; i++) {
+                    ctx.lineTo(body.vertices[i].x, body.vertices[i].y);
+                }
+                ctx.closePath();
+            }
+
+            // Glow Effect
+            ctx.shadowBlur = 15;
+            
+            if (body.label === 'soma_agent') {
+                ctx.fillStyle = '#ff0055';
+                ctx.shadowColor = '#ff0055';
+            } else if (body.label === 'cargo') {
+                ctx.fillStyle = '#00aaff';
+                ctx.shadowColor = '#00aaff';
+            } else if (body.label === 'target_zone') {
+                ctx.fillStyle = 'rgba(0, 255, 0, 0.2)';
+                ctx.strokeStyle = '#0f0';
+                ctx.lineWidth = 2;
+                ctx.setLineDash([5, 5]);
+                ctx.stroke();
+                ctx.setLineDash([]);
+                ctx.shadowColor = '#0f0';
+            } else if (body.label.includes('wall') || body.label === 'ground') {
+                ctx.fillStyle = '#222';
+                ctx.strokeStyle = '#444';
+                ctx.lineWidth = 2;
+                ctx.stroke();
+                ctx.shadowBlur = 0;
+            } else if (body.label === 'click_box' || body.label === 'obstacle') {
+                ctx.fillStyle = '#cc8800';
+                ctx.shadowColor = '#cc8800';
+            } else {
+                ctx.fillStyle = '#555';
+                ctx.shadowBlur = 0;
+            }
+
+            if (body.label !== 'target_zone') {
+                ctx.fill();
+            }
+            
+            ctx.shadowBlur = 0; // Reset
+        }
+
+        function spawnParticles(x, y, color, count) {
+            for (let i = 0; i < count; i++) {
+                particles.push({
+                    x, y,
+                    vx: (Math.random() - 0.5) * 10,
+                    vy: (Math.random() - 0.5) * 10,
+                    life: 1.0,
+                    color
+                });
+            }
+        }
+
+        function updateAndDrawParticles() {
+            for (let i = particles.length - 1; i >= 0; i--) {
+                const p = particles[i];
+                p.x += p.vx;
+                p.y += p.vy;
+                p.life -= 0.02;
+                
+                if (p.life <= 0) {
+                    particles.splice(i, 1);
+                    continue;
+                }
+
+                ctx.globalAlpha = p.life;
+                ctx.fillStyle = p.color;
+                ctx.fillRect(p.x, p.y, 3, 3);
+                ctx.globalAlpha = 1.0;
+            }
+        }
+
+        requestAnimationFrame(loop);
+    </script>
+</body>
+</html>

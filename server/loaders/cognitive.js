@@ -22,6 +22,7 @@ import messageBroker from '../../core/MessageBroker.js';
 const GoalPlannerModule = require('../../arbiters/GoalPlannerArbiter.cjs');
 const BeliefSystemModule = require('../../arbiters/BeliefSystemArbiter.cjs');
 const LearningVelocityTrackerModule = require('../../arbiters/LearningVelocityTracker.cjs');
+const SteveArbiter = require('../../arbiters/SteveArbiter.cjs');
 const ExecutiveCortexArbiter = require('../../arbiters/ExecutiveCortexArbiter.js').ExecutiveCortexArbiter || require('../../arbiters/ExecutiveCortexArbiter.js').default || require('../../arbiters/ExecutiveCortexArbiter.js');
 const SensoryCortexArbiter = require('../../arbiters/SensoryCortexArbiter.js').SensoryCortexArbiter || require('../../arbiters/SensoryCortexArbiter.js').default || require('../../arbiters/SensoryCortexArbiter.js');
 const ImmuneCortexArbiter = require('../../arbiters/ImmuneCortexArbiter.js').ImmuneCortexArbiter || require('../../arbiters/ImmuneCortexArbiter.js').default || require('../../arbiters/ImmuneCortexArbiter.js');
@@ -70,6 +71,7 @@ export async function loadCognitiveSystems(toolRegistry = null) {
             onInitialize: async () => {},
             remember: async () => ({ success: false, error: 'Memory offline' }),
             recall: async () => ({ results: [] }),
+            getRecentColdMemories: (_limit = 20) => [],
             getMemoryStats: () => ({ hot: { size: 0 }, warm: { size: 0 }, cold: { size: 0 } })
         };
     }
@@ -167,7 +169,12 @@ export async function loadCognitiveSystems(toolRegistry = null) {
     system.museEngine = new MuseEngine({ name: 'MuseEngine', messageBroker, quadBrain });
     system.analytics = new PerformanceAnalytics({ rootPath: process.cwd() });
     system.velocityTracker = new LearningVelocityTracker(messageBroker, { name: 'VelocityTracker' });
-    system.simulation = new SimulationArbiter({ name: 'Simulation', messageBroker });
+    // Gate physics simulation — it feeds UniversalImpulser which wrote 57k files and spiked to 2GB RAM
+    if (process.env.SOMA_LOAD_SIMULATION === 'true') {
+        system.simulation = new SimulationArbiter({ name: 'Simulation', messageBroker });
+    } else {
+        console.log('      🎮 Physics Simulation: SKIPPED (set SOMA_LOAD_SIMULATION=true to enable)');
+    }
 
     await Promise.all([
         initIfPossible(system.goalPlanner, 'GoalPlanner'),
@@ -175,8 +182,16 @@ export async function loadCognitiveSystems(toolRegistry = null) {
         initIfPossible(system.museEngine, 'MuseEngine'),
         initIfPossible(system.analytics, 'PerformanceAnalytics'),
         initIfPossible(system.velocityTracker, 'VelocityTracker'),
-        initIfPossible(system.simulation, 'Simulation')
+        ...(system.simulation ? [initIfPossible(system.simulation, 'Simulation')] : [])
     ]);
+
+    // Wire goalPlanner into the brain so goal state is available inside every reason() call.
+    // cognitive.js creates quadBrain before goalPlanner, so we set it after the fact.
+    // reason() reads this.goalPlanner lazily — no restart needed.
+    if (system.goalPlanner) {
+        quadBrain.goalPlanner = system.goalPlanner;
+        console.log('      🔗 GoalPlanner → QuadBrain (goals now feed into every response)');
+    }
 
     // 6. LEGACY ALIASES
     system.mnemonicArbiter = mnemonicArbiter;
@@ -186,7 +201,24 @@ export async function loadCognitiveSystems(toolRegistry = null) {
     system.worldModel = worldModel;
     system.knowledgeGraph = knowledgeGraph;
     system.knowledge = knowledgeGraph;
-    system.steveArbiter = system.executiveCortex;
+
+    // 6b. REAL STEVE — SteveArbiter.cjs needs an orchestrator with quadBrain in its population.
+    //     The old alias (system.executiveCortex) didn't have processChat/listTools/executeTool.
+    try {
+        const steveOrchestrator = {
+            population: new Map([['quadBrain', quadBrain]]),
+            transmitters: null  // hybridSearch wired in extended.js after HybridSearchArbiter loads
+        };
+        system.steveArbiter = new SteveArbiter(messageBroker, {
+            orchestrator: steveOrchestrator,
+            learningPipeline: null  // LearningPipeline wired in extended.js
+        });
+        await system.steveArbiter.initialize();
+        console.log('      ✅ SteveArbiter ready (processChat + tools online)');
+    } catch (steveErr) {
+        console.error('[Cognitive] ⚠️ SteveArbiter failed, falling back to ExecutiveCortex:', steveErr.message);
+        system.steveArbiter = system.executiveCortex;
+    }
 
     // 7. EARLY OUTCOME TRACKER — available from boot so chat can record outcomes immediately
     //    Extended loading will later create the full LearningPipeline which supersedes this.

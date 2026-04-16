@@ -1,0 +1,76 @@
+{
+  "traceId": "rc_882875713e24",
+  "ts": "2025-12-22T02:06:29.967Z",
+  "query": "hello",
+  "meta": {
+    "conversationHistory": [
+      {
+        "role": "user",
+        "parts": [
+          {
+            "text": "hello"
+          }
+        ]
+      }
+    ]
+  },
+  "candidates": [
+    {
+      "source": "PROMETHEUS",
+      "text": "Greetings. What knowledge do you seek?\n",
+      "confidence": 0.85,
+      "role": "prometheus"
+    },
+    {
+      "source": "LOGOS",
+      "text": "The query \"hello\" is a simple greeting.  From a purely analytical perspective, it's a string literal.  There's no code to analyze, no complex logic to dissect.  It's a starting point for a conversation or interaction.  Without further context, there's little more to say.\n",
+      "confidence": 0.85,
+      "role": "logos"
+    },
+    {
+      "source": "AURORA",
+      "text": "Hello! How can I help you today?\n",
+      "confidence": 0.85,
+      "role": "aurora"
+    }
+  ],
+  "fused": {
+    "text": "The query \"hello\" is a simple greeting.  From a purely analytical perspective, it's a string literal.  There's no code to analyze, no complex logic to dissect.  It's a starting point for a conversation or interaction.  Without further context, there's little more to say.\n",
+    "weights": [
+      {
+        "source": "PROMETHEUS",
+        "norm": 0.32432432432432434,
+        "conf": 0.85
+      },
+      {
+        "source": "LOGOS",
+        "norm": 0.35135135135135126,
+        "conf": 0.85
+      },
+      {
+        "source": "AURORA",
+        "norm": 0.32432432432432434,
+        "conf": 0.85
+      }
+    ],
+    "confidence": 0.8499999999999999,
+    "provenance": [
+      {
+        "source": "PROMETHEUS",
+        "snippet": "Greetings. What knowledge do you seek?\n",
+        "confidence": 0.85
+      },
+      {
+        "source": "LOGOS",
+        "snippet": "The query \"hello\" is a simple greeting.  From a purely analytical perspective, it's a string literal.  There's no code to analyze, no complex logic to dissect.  It's a starting point for a conversatio",
+        "confidence": 0.85
+      },
+      {
+        "source": "AURORA",
+        "snippet": "Hello! How can I help you today?\n",
+        "confidence": 0.85
+      }
+    ]
+  },
+  "iter": 0
+}

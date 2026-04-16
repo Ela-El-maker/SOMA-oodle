@@ -28,7 +28,7 @@ export class SOMArbiterV2_TriBrain extends EventEmitter {
     
     // Ollama local model configuration (Priority 1 with local-first mode)
     this.ollamaEndpoint = config.ollamaEndpoint || 'http://localhost:11434/api/generate';
-    this.ollamaModel = config.ollamaModel || 'soma:latest';  // Default to trained SOMA model
+    this.ollamaModel = config.ollamaModel || 'gemma3:4b';  // Default to trained SOMA model
     this.ollamaAvailable = false;
 
     // LocalModelManager integration (for fine-tuned SOMA models)
@@ -115,7 +115,7 @@ export class SOMArbiterV2_TriBrain extends EventEmitter {
     console.log(`[${this.name}] Brain configuration (priority order):`);
     
     // Show priority chain for each brain
-    const localModel = this.localModelManager?.getCurrentModel() || this.ollamaModel || 'soma:latest';
+    const localModel = this.localModelManager?.getCurrentModel() || this.ollamaModel || 'gemma3:4b';
     
     if (this.useLocalFirst) {
       console.log(`  🏆 TIER 1 (PRIMARY): Local SOMA Model`);

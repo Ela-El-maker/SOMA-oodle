@@ -1,15 +1,88 @@
 import { BaseArbiterV4, ArbiterRole, ArbiterCapability } from './BaseArbiter.js';
 import messageBroker from '../core/MessageBroker.cjs';
-import { SwarmEngine, SwarmTask, Artifact } from './EngineeringSwarmRuntime.js';
+import { SwarmEngine, SwarmTask } from './EngineeringSwarmRuntime.js';
+import { CommandPolicyEngine } from '../core/CommandPolicyEngine.js';
+import { SwarmPatchTransaction } from '../core/SwarmPatchTransaction.js';
+import { validateSchema } from '../core/SchemaValidator.js';
+import blackboard from '../core/Blackboard.js';
+import maintenanceBridge from '../core/MaintenanceBridge.js';
 import path from 'path';
 import fs from 'fs/promises';
 import crypto from 'crypto';
 
+// Files the swarm must never autonomously modify — matches SelfModificationPipeline list
+const IMMUTABLE_PATHS = [
+    'server/routes/somaRoutes.js',
+    'launcher_ULTRA.mjs',
+    'start_production.bat',
+    'clean_restart.bat',
+    'core/SomaBootstrapV2.js',
+    'core/SelfModificationPipeline.js',
+    'server/loaders/',
+    'config/',
+    'ecosystem.config.cjs',
+];
+
+export const DebateSchema = {
+    type: "object",
+    properties: {
+        architect: { type: "string" },
+        maintainer: { type: "string" },
+        security: { type: "string" },
+        consensus: { type: "string" }
+    },
+    required: ["architect", "maintainer", "security", "consensus"]
+};
+
+export const PatchSchema = {
+    type: "object",
+    properties: {
+        patch: {
+            type: "object",
+            properties: {
+                files: {
+                    type: "array",
+                    items: {
+                        type: "object",
+                        properties: {
+                            path: { type: "string" },
+                            // full_rewrite mode: provide complete file content
+                            content: { type: "string" },
+                            // surgical mode: provide targeted old→new replacements (preferred for large files)
+                            edits: {
+                                type: "array",
+                                items: {
+                                    type: "object",
+                                    properties: {
+                                        old: { type: "string" },
+                                        new: { type: "string" }
+                                    },
+                                    required: ["old", "new"]
+                                }
+                            }
+                        },
+                        required: ["path"]
+                        // Note: either 'content' or 'edits' must be present — enforced at runtime by SwarmPatchTransaction
+                    }
+                }
+            },
+            required: ["files"]
+        }
+    },
+    required: ["patch"]
+};
+
 /**
- * EngineeringSwarmArbiter (Beyond Belief Edition)
+ * EngineeringSwarmArbiter (Upgrade Pack Edition)
  * 
- * Replaces simple self-modification with a 100% Agentic, non-simulated runtime.
- * "We don't simulate code. We execute it."
+ * Replaces simple self-modification with a robust, autonomous engineering swarm.
+ * Features:
+ * - Security: CommandPolicyEngine blocks dangerous shell commands.
+ * - Atomicity: SwarmPatchTransaction ensures multi-file edits are transactional with rollback.
+ * - Reliability: Schema validation ensures machine-readable reasoning and code patches.
+ * - Verification: Execution pipeline runs real-world tests to verify changes.
+ * - Cybernetics: PlanMonitor logic with automatic pivot/retry on test failure.
+ * - Intent: Permanent 'North Star' preservation across the reasoning chain.
  */
 export class EngineeringSwarmArbiter extends BaseArbiterV4 {
   constructor(opts = {}) {
@@ -22,211 +95,423 @@ export class EngineeringSwarmArbiter extends BaseArbiterV4 {
         ArbiterCapability.WRITE_FILES,
         ArbiterCapability.EXECUTE_CODE,
         ArbiterCapability.MODIFY_CODE,
-        ArbiterCapability.SELF_HEALING
+        ArbiterCapability.SELF_HEALING,
+        ArbiterCapability.SECURITY_AUDIT
       ]
     });
 
     this.quadBrain = opts.quadBrain || null;
+    this.mnemonicArbiter = opts.mnemonicArbiter || null;
     this.rootPath = opts.rootPath || process.cwd();
-    this.runtime = new SwarmEngine({ 
+    this.commandPolicy = new CommandPolicyEngine();
+    this.optimizer = opts.swarmOptimizer || null;
+    this.runtime = new SwarmEngine({
         workspace: path.join(this.rootPath, '.soma', 'swarm_vault'),
-        logger: this.auditLogger 
+        logger: this.auditLogger
     });
+
+    // Cross-session failure context: filepath → { error, timestamp }
+    // Prevents the "Meeseeks Loop" where the swarm repeats the same broken approach
+    // across independent modifyCode() calls. Cleared on success, persists on final failure.
+    this._persistentFailureLog = new Map();
+  }
+
+  setOptimizer(optimizer) {
+    this.optimizer = optimizer;
   }
 
   async onInitialize() {
     await this.runtime.initialize();
-    this.auditLogger.info('🚀 Engineering Swarm (BEYOND BELIEF) Online', { 
-      concurrency: this.runtime.concurrency,
-      mode: 'Live Agentic Execution'
+
+    // Register with MessageBroker so goal assignments via sendMessage({to:'EngineeringSwarmArbiter'}) work
+    try {
+      messageBroker.registerArbiter('EngineeringSwarmArbiter', {
+        instance: this,
+        type: 'engineering',
+        role: 'architect',
+        capabilities: ['modify_code', 'self_healing', 'engineering']
+      });
+    } catch (e) {
+      // Already registered or broker unavailable — non-fatal
+    }
+
+    this.auditLogger.info('🚀 Engineering Swarm (UPGRADED) Online', {
+      mode: 'Verified Transactional Execution'
     });
   }
 
   /**
-   * Main Entry Point for Code Transformation
+   * Handle direct messages from MessageBroker (sendMessage({to:'EngineeringSwarmArbiter'})).
+   * Primary use: goal_assigned from GoalPlannerArbiter.
    */
-  async modifyCode(filepath, request) {
-    this.auditLogger.info(`⚡ [EngSwarm] Transformer sequence started for ${filepath}`);
+  async handleMessage(envelope = {}) {
+    const { type, payload } = envelope;
+
+    if (type !== 'goal_assigned') {
+      return { success: true, message: 'acknowledged' };
+    }
+
+    const { goalId, goal } = payload || {};
+    if (!goalId || !goal) return { success: false, error: 'Invalid goal_assigned payload' };
+
+    this.auditLogger.info(`[EngSwarm] ⚡ Goal assigned: "${goal.title}" (${goalId.slice(0, 8)})`);
+
+    // Prioritize file path from metadata (Sovereign Assembly protocol)
+    let filepath = goal.metadata?.filePath;
+
+    // Fallback: Extract from description if metadata is missing
+    if (!filepath) {
+        const fileMatch = (goal.description || '').match(/[\w./\\-]+\.(js|cjs|mjs|ts|jsx|tsx|json|py)/i);
+        if (fileMatch) filepath = fileMatch[0];
+    }
+
+    if (!filepath) {
+      // Non-code goal — update progress to show it was acknowledged
+      this.auditLogger.warn(`[EngSwarm] Goal "${goal.title}" has no file target — cannot execute via modifyCode`);
+      messageBroker.sendMessage({
+        from: 'EngineeringSwarmArbiter', to: 'GoalPlannerArbiter',
+        type: 'update_goal_progress',
+        payload: { goalId, progress: 5, metadata: { note: 'Accepted by swarm but no file target' } }
+      }).catch(() => {});
+      return { success: true, message: 'Goal acknowledged, no file target' };
+    }
+
+    // Run modifyCode in the background — do NOT block handleMessage
+    (async () => {
+      try {
+        const result = await this.modifyCode(filepath, `${goal.title}: ${goal.description}`);
+        if (result?.success) {
+          messageBroker.sendMessage({
+            from: 'EngineeringSwarmArbiter', to: 'GoalPlannerArbiter',
+            type: 'update_goal_progress',
+            payload: { goalId, progress: 100, metadata: { sessionId: result.sessionId, duration: result.duration } }
+          }).catch(() => {});
+          this.auditLogger.info(`[EngSwarm] ✅ Goal "${goal.title}" completed (${result.duration}s)`);
+        } else {
+          // Use swarm_goal_failed (not cancel_goal) so GoalPlannerArbiter can
+          // apply retry escalation rather than just silently deferring the goal.
+          messageBroker.sendMessage({
+            from: 'EngineeringSwarmArbiter', to: 'GoalPlannerArbiter',
+            type: 'swarm_goal_failed',
+            payload: { goalId, reason: result?.error || 'unknown' }
+          }).catch(() => {});
+          this.auditLogger.warn(`[EngSwarm] ❌ Goal "${goal.title}" failed: ${result?.error}`);
+        }
+      } catch (err) {
+        this.auditLogger.error(`[EngSwarm] Goal execution exception: ${err.message}`);
+      }
+    })();
+
+    return { success: true, message: 'goal execution started', filepath };
+  }
+
+  /**
+   * Main Entry Point for Autonomous Engineering
+   * Orchestrates the research, plan, debate, and synthesis cycle.
+   */
+  async modifyCode(filepath, request, onProgress = null) {
+    const normPath = (filepath || '').replace(/\\/g, '/');
+    const blocked = IMMUTABLE_PATHS.find(p => normPath.includes(p.replace(/\\/g, '/')));
+    if (blocked) {
+      this.auditLogger.warn(`[EngSwarm] 🚫 BLOCKED modifyCode on "${filepath}" — matches protected path "${blocked}"`);
+      return { success: false, error: `Protected path: ${blocked} — only Barry can modify this file` };
+    }
+
+    if (!this.quadBrain) {
+      this.auditLogger.error('[EngSwarm] Cannot modifyCode — quadBrain is null (QuadBrain not yet ready)');
+      return { success: false, error: 'quadBrain not initialized — try again after system is fully booted' };
+    }
+    const emit = (phase, message) => { if (onProgress) onProgress(phase, message); };
+
+    this.auditLogger.info(`⚡ [EngSwarm] Engineering loop started for ${filepath}`);
     const sessionStartTime = Date.now();
     const sessionId = `swarm_${crypto.randomBytes(4).toString('hex')}`;
 
+    // ─── STATE INITIALIZATION (Intent Preservation) ───
+    // Inject cross-session failure context so the swarm never repeats a known-broken approach
+    const priorFailure = this._persistentFailureLog.get(normPath);
+    const priorIsRecent = priorFailure && (Date.now() - priorFailure.timestamp) < 86400000;
+    const priorError = priorIsRecent
+        ? `[PRIOR SESSION — ${priorFailure.attempts} attempt(s) — ${new Date(priorFailure.timestamp).toISOString()}]\n${priorFailure.error}`
+        : null; // stale after 24h — fresh eyes beat stale context
+
+    const swarmState = {
+        sessionId,
+        filepath,
+        northStar: request, // The persistent goal
+        attempts: 0,
+        maxAttempts: 2,
+        lastError: priorError  // null on first-ever attempt, prior error on retry
+    };
+
+    if (priorError) {
+        this.auditLogger.warn(`[EngSwarm] ⚠️ Prior failure context injected for ${filepath}: "${priorError.slice(0, 80)}"`);
+    }
+
+    // Initialize Blackboard for this session
+    blackboard.reset(sessionId);
+    blackboard.post('insights', { type: 'initial_request', content: request });
+
+    while (swarmState.attempts < swarmState.maxAttempts) {
+        swarmState.attempts++;
+        this.auditLogger.info(`[Swarm] Phase Loop: Attempt ${swarmState.attempts}/${swarmState.maxAttempts}`);
+        emit('attempt', `Attempt ${swarmState.attempts}/${swarmState.maxAttempts}`);
+
+        try {
+            // 1. RESEARCH - Understand the context
+            emit('research', `Reading ${filepath} and understanding context...`);
+            const research = await this.runResearch(filepath, swarmState.northStar);
+            blackboard.post('insights', { type: 'research_complete', filepath, size: research.content.length });
+
+            // 2. PLAN - Generate verification commands (With Cybernetic context)
+            emit('plan', 'Generating verification plan...');
+            const plan = await this.generatePlan(swarmState, research);
+            blackboard.post('codeTargets', { type: 'verification_plan', commands: plan.map(p => p.command) });
+
+            // 3. DEBATE - Technical adversarial reasoning (With North Star)
+            emit('debate', 'Running adversarial technical debate...');
+            const debate = await this.runDebate(swarmState, research);
+            blackboard.post('insights', { type: 'debate_consensus', content: debate.consensus });
+
+            // 4. SYNTHESIS - Drafting the final code patch
+            emit('synthesis', 'Synthesizing final patch...');
+            const verdict = await this.runSynthesis(swarmState, research, debate);
+            blackboard.post('codeTargets', { type: 'final_patch', files: verdict.patch.files.map(f => f.path) });
+
+            // 5. TRANSACTION - Multi-file safety layer
+            const transaction = new SwarmPatchTransaction(this.rootPath);
+
+            try {
+                emit('apply', `Applying patch to ${verdict.patch.files.length} file(s)...`);
+                this.auditLogger.info(`[Swarm] Applying patch transaction...`);
+                await transaction.applyPatch(verdict.patch);
+
+                // 6. VERIFICATION (Real-world Plan Monitor)
+                emit('verify', 'Running verification commands...');
+                const verification = await this.verifyPatch(verdict.patch, plan);
+
+                if (!verification.passed) {
+                    throw new Error(`Verification FAILED: ${verification.error}`);
+                }
+
+                // Finalize changes
+                transaction.commit();
+                blackboard.post('insights', { type: 'task_complete', status: 'success' });
+                this.auditLogger.success(`[Swarm] ✅ SUCCESS: ${filepath} updated and verified on attempt ${swarmState.attempts}.`);
+
+                const duration = ((Date.now() - sessionStartTime) / 1000).toFixed(1);
+                const experienceData = { sessionId, filepath, request, success: true, duration, consensus: debate.consensus };
+
+                if (this.optimizer) this.optimizer.record(experienceData);
+                await this._logToExperienceLedger(experienceData);
+
+                // Success — wipe failure context so next call starts clean
+                this._persistentFailureLog.delete(normPath);
+
+                return { success: true, sessionId, duration, verdict };
+
+            } catch (transErr) {
+                this.auditLogger.warn(`[Swarm] 🔄 CYBERNETIC PIVOT: Verification failed on attempt ${swarmState.attempts}. Rolling back and retrying with error context.`);
+                emit('pivot', `Attempt ${swarmState.attempts} failed — rolling back and retrying: ${transErr.message}`);
+                await transaction.rollback();
+                swarmState.lastError = transErr.message;
+                blackboard.post('risks', { type: 'attempt_failed', attempt: swarmState.attempts, error: transErr.message });
+
+                if (swarmState.attempts >= swarmState.maxAttempts) {
+                    throw transErr; // Out of attempts
+                }
+                // Loop continues for the retry pivot
+            }
+
+        } catch (err) {
+            const duration = ((Date.now() - sessionStartTime) / 1000).toFixed(1);
+            const errorData = { sessionId, filepath, request, success: false, error: err.message, duration };
+
+            if (this.optimizer) this.optimizer.record(errorData);
+            // Publish failure to broker — was previously silent; GoalPlannerArbiter
+            // and SwarmOptimizer both subscribe to swarm.experience for feedback loops.
+            await this._logToExperienceLedger(errorData);
+            blackboard.post('insights', { type: 'task_aborted', error: err.message });
+            this.auditLogger.error(`[Swarm] ❌ ENGINEERING ABORTED after ${swarmState.attempts} attempts: ${err.message}`);
+
+            // Persist failure context so the NEXT call to modifyCode() for this file
+            // starts with awareness of what already failed (Stateful Failure Recovery).
+            // Slice to 500 chars — err.message already contains verification stderr via the chain:
+            // verifyPatch returns { error: stderr } → thrown as "Verification FAILED: <stderr>"
+            this._persistentFailureLog.set(normPath, {
+                error:     err.message.slice(0, 500),
+                attempts:  swarmState.attempts,
+                timestamp: Date.now()
+            });
+
+            return { success: false, error: err.message };
+        }
+    }
+  }
+
+  async runResearch(filepath, request) {
+    this.auditLogger.info(`[Researcher] Analyzing ${filepath}...`);
+    const fullPath = path.resolve(this.rootPath, filepath);
+    const content = await fs.readFile(fullPath, 'utf8');
+    
+    return {
+        timestamp: Date.now(),
+        filepath,
+        content,
+        request
+    };
+  }
+
+  async generatePlan(state, context) {
+    const prompt = `[NORTH STAR]: ${state.northStar}
+    [PREVIOUS ERROR]: ${state.lastError || "None - Initial Attempt"}
+    
+    You are the RALPH VERIFIER (Autonomous Stress-Tester).
+    Context File: ${context.filepath}
+    
+    TASK: Generate a robust validation plan to prove the code patch is functionally correct and structurally safe.
+    Instead of just checking syntax, write a command that executes an autonomous test.
+    If you need to test logic, you can instruct the system to run a dynamically generated test script or use an existing test runner.
+    
+    Return ONLY a JSON array of commands to execute. Ensure they return exit code 0 on success, and >0 on failure.
+    [{ "command": "node --check ${context.filepath} && npm test" }]`;
+
+    const result = await this.quadBrain.reason(prompt, { brain: 'LOGOS' });
+    const jsonMatch = result.text.match(/\[[\s\S]*\]/s);
+    if (!jsonMatch) throw new Error(`Planner produced unparseable plan: ${result.text}`);
+    
     try {
-        // 1. RESEARCH & INTERACTIVE EXPLORATION
-        const researchData = await this._runDeepResearcher(filepath);
-        
-        // 2. AGENTIC PLANNING (Brain-generated shell tasks)
-        const swarmTasks = await this._generateAgenticPlan(request, researchData);
-        this.auditLogger.debug(`[Swarm] Generated ${swarmTasks.length} real-world execution tasks.`);
-
-        // 3. ADVERSARIAL SWARM DEBATE
-        const consensus = await this._runAdversarialDebate(request, researchData);
-        
-        // 4. LEAD DEV SYNTHESIS & DRAFTING
-        const verdict = await this._runLeadDevSynthesis(request, researchData, consensus);
-        if (!verdict.approved) {
-            throw new Error(`Lead Dev blocked modification: ${verdict.reasoning}`);
-        }
-
-        // 5. PARALLEL EXECUTION & REAL-WORLD VERIFICATION
-        const verification = await this._executeAndVerify(filepath, verdict.code, swarmTasks);
-        
-        if (verification.passed) {
-            // COMMIT TO PRODUCTION
-            await fs.writeFile(path.resolve(this.rootPath, filepath), verdict.code, 'utf8');
-            this.auditLogger.success(`[Swarm] ✅ TRANSACTION COMMITTED: ${filepath} updated and verified.`);
-        } else {
-            throw new Error(`Verification FAILED: ${verification.error}`);
-        }
-
-        const duration = ((Date.now() - sessionStartTime) / 1000).toFixed(1);
-
-        // 6. PERSISTENCE (Experience Ledger)
-        await this._logToExperienceLedger({
-            sessionId,
-            filepath,
-            request,
-            success: true,
-            duration
+        const tasks = JSON.parse(jsonMatch[0]);
+        tasks.forEach(t => {
+            if (t.command) this.commandPolicy.validate(t.command);
         });
+        return tasks;
+    } catch (e) {
+        throw new Error(`Failed to parse plan JSON: ${e.message}`);
+    }
+  }
 
-        return { success: true, sessionId, duration, verification, finalCode: verdict.code };
+  async runDebate(state, context) {
+    this.auditLogger.info(`[Swarm] Running Structured Debate...`);
+    const prompt = `[NORTH STAR]: ${state.northStar}
+    [PREVIOUS ERROR]: ${state.lastError || "None"}
+    
+    Debate this engineering change for FILE: ${context.filepath}
+    
+    Return ONLY JSON matching this schema:
+    { "architect": "...", "maintainer": "...", "security": "...", "consensus": "..." }`;
 
+    const result = await this.quadBrain.reason(prompt, { brain: 'AURORA' });
+    const jsonMatch = result.text.match(/\{[\s\S]*\}/s);
+    if (!jsonMatch) throw new Error(`Swarm produced unparseable debate: ${result.text}`);
+    
+    try {
+        const parsed = JSON.parse(jsonMatch[0]);
+        return validateSchema(DebateSchema, parsed);
+    } catch (e) {
+        throw new Error(`Failed to parse debate JSON: ${e.message}`);
+    }
+  }
+
+  async runSynthesis(state, context, debate) {
+    this.auditLogger.info(`[LeadDev] Synthesizing final patch...`);
+    const prompt = `[NORTH STAR]: ${state.northStar}
+    [CONSENSUS]: ${debate.consensus}
+    [PREVIOUS ERROR]: ${state.lastError || "None"}
+
+    Produce final code patch for ORIGINAL FILE: ${context.filepath}
+
+    PATCH FORMAT RULES (AEGIS Protocol — read carefully):
+    - If the file is large (>100 lines) or already exists: use SURGICAL edits.
+      Surgical format: { "path": "...", "edits": [{ "old": "exact string", "new": "replacement" }] }
+      Each "old" must be an EXACT verbatim substring of the current file. Copy it character-for-character.
+      Make the "old" string unique enough (include 1-2 surrounding lines of context) to avoid ambiguity.
+    - If the file is new or small (<100 lines): full rewrite is acceptable.
+      Full rewrite format: { "path": "...", "content": "entire file content" }
+    - NEVER use full_rewrite on large existing files. The AEGIS guard will block it if you delete routes or functions.
+    - You may mix modes: different files in the same patch can use different formats.
+
+    Return ONLY JSON:
+    { "patch": { "files": [{ "path": "...", "edits": [{ "old": "...", "new": "..." }] }] } }`;
+
+    const result = await this.quadBrain.reason(prompt, { brain: 'LOGOS' });
+    const jsonMatch = result.text.match(/\{[\s\S]*\}/s);
+    if (!jsonMatch) throw new Error(`Lead Dev produced unparseable patch: ${result.text}`);
+    
+    try {
+        const parsed = JSON.parse(jsonMatch[0]);
+        return validateSchema(PatchSchema, parsed);
+    } catch (e) {
+        throw new Error(`Failed to parse patch JSON: ${e.message}`);
+    }
+  }
+
+  async verifyPatch(patch, tasks) {
+    this.auditLogger.info(`[Ralph] 🛡️ Running autonomous verification loop...`);
+    
+    for (const task of tasks) {
+        this.commandPolicy.validate(task.command);
+        const taskObj = new SwarmTask({
+            description: 'Ralph Verification Task',
+            command: task.command,
+            cwd: this.rootPath
+        });
+        
+        // runTasks returns the artifact ledger (array of Artifacts)
+        const ledgerLengthBefore = this.runtime.artifactLedger.length;
+        await this.runtime.runTasks([taskObj]);
+        
+        // Examine artifacts produced by this specific task
+        const newArtifacts = this.runtime.artifactLedger.slice(ledgerLengthBefore);
+        const errorArtifacts = newArtifacts.filter(a => a.metadata?.isError || a.metadata?.exitCode !== 0);
+        
+        // If task status isn't 'done' (0 exit code) or there are error logs
+        if (taskObj.status !== 'done' || errorArtifacts.length > 0) {
+            const errorLogs = errorArtifacts.map(a => a.content).join('\n');
+            const failMsg = errorLogs || `Task crashed with status: ${taskObj.status}`;
+            this.auditLogger.error(`[Ralph] Verification failed on command: ${task.command}`);
+            return { passed: false, error: failMsg };
+        }
+    }
+
+    return { passed: true };
+  }
+
+  /**
+   * Out-of-Body Self-Surgery
+   * Steps outside the current process to modify core files via external MAX.
+   */
+  async performSelfSurgery(filepath, request) {
+    this.auditLogger.info(`🩹 [Swarm] Initiating Out-of-Body Self-Surgery for ${filepath}`);
+    
+    try {
+        // 1. Delegate to the bridge
+        const delegation = await maintenanceBridge.delegateToExternalMax(filepath, request);
+        
+        if (delegation.success) {
+            this.auditLogger.success(`🚀 [Swarm] Task handed off to external maintenance runner (PID: ${delegation.pid})`);
+            return {
+                success: true,
+                message: "Self-surgery initiated. The system will be updated and potentially restarted by the external runner.",
+                pid: delegation.pid
+            };
+        } else {
+            throw new Error("Delegation to external runner failed.");
+        }
     } catch (err) {
-        this.auditLogger.error(`[Swarm] ❌ TRANSFORMATION ABORTED: ${err.message}`);
+        this.auditLogger.error(`❌ [Swarm] Self-surgery failed: ${err.message}`);
         return { success: false, error: err.message };
     }
   }
 
-  /**
-   * Deep Researcher: Uses real file access and shell to understand context
-   */
-  async _runDeepResearcher(filepath) {
-    this.auditLogger.info(`[Researcher] Sifting through ${filepath} context...`);
-    const fullPath = path.resolve(this.rootPath, filepath);
-    
-    const content = await fs.readFile(fullPath, 'utf8');
-    const stats = await fs.stat(fullPath);
-    
-    // Find neighbors
-    const dir = path.dirname(filepath);
-    const neighbors = await fs.readdir(path.resolve(this.rootPath, dir));
-
-    return {
-        filepath,
-        content,
-        neighbors,
-        stats: { size: stats.size, modified: stats.mtime }
-    };
-  }
-
-  /**
-   * Agentic Plan: Asks the Brain to generate REAL shell commands needed for verification
-   */
-  async _generateAgenticPlan(request, context) {
-    if (!this.quadBrain) return [];
-
-    const prompt = `You are the SWARM PLANNER. We need to verify changes to ${context.filepath}.
-    Based on the file and the request ("${request}"), generate a list of real shell commands to run.
-    Include:
-    1. Syntax checks (e.g. node --check)
-    2. Dependency checks (e.g. grep)
-    3. Linting if applicable.
-    
-    Respond ONLY with a JSON array: [{ "description": "...", "command": "...", "priority": 1-10 }]`;
-
-    const result = await this.quadBrain.reason(prompt, { brain: 'LOGOS' });
-    try {
-        const jsonMatch = result.text.match(/\[.*\]/s);
-        const taskSpecs = JSON.parse(jsonMatch[0]);
-        return taskSpecs.map(s => new SwarmTask({ ...s, cwd: this.rootPath }));
-    } catch (e) {
-        this.auditLogger.warn(`[Planner] Failed to parse agentic plan. Falling back to default.`);
-        return [new SwarmTask({ description: 'Default Check', command: `node --check "${context.filepath}"`, cwd: this.rootPath })];
-    }
-  }
-
-  async _runAdversarialDebate(request, context) {
-    this.auditLogger.info(`[Swarm] Initiating Adversarial Debate...`);
-    const prompt = `You are the Engineering Swarm.
-    REQUEST: "${request}"
-    FILE: ${context.filepath}
-    CODE:
-    ${context.content}
-
-    Provide a technical debate between ARCHITECT (Performance), MAINTAINER (Safety), and SECURITY.
-    Output a consensus report.`;
-
-    const result = await this.quadBrain.reason(prompt, { brain: 'AURORA' });
-    return result.text;
-  }
-
-  async _runLeadDevSynthesis(request, context, debate) {
-    this.auditLogger.info(`[LeadDev] Drafting final implementation...`);
-    const prompt = `You are the LEAD DEV. Synthesize the debate and provide the final code.
-    DEBATE: ${debate}
-    ORIGINAL CODE:
-    ${context.content}
-
-    Return JSON: { "approved": true, "code": "...", "reasoning": "..." }`;
-
-    const result = await this.quadBrain.reason(prompt, { brain: 'LOGOS' });
-    try {
-        const jsonMatch = result.text.match(/\{.*\}/s);
-        return JSON.parse(jsonMatch[0]);
-    } catch (e) {
-        throw new Error("Lead Dev produced unparseable results.");
-    }
-  }
-
-  /**
-   * Execution & Verification: The Non-Simulated Phase
-   */
-  async _executeAndVerify(filepath, newCode, tasks) {
-    this.auditLogger.info(`[Tester] 🛡️ Starting Non-Simulated Verification...`);
-    
-    const tempFile = `${filepath}.v_belief.tmp`;
-    const fullPath = path.resolve(this.rootPath, tempFile);
-    
-    try {
-        // 1. Write the "Theory" to disk
-        await fs.writeFile(fullPath, newCode, 'utf8');
-
-        // 2. Execute the Agentic Plan (Parallel real shell commands)
-        const artifacts = await this.runtime.runTasks(tasks);
-        
-        // 3. Manual Syntax Check (The absolute line)
-        const syntaxCheck = await this.runtime._executeTask(new SwarmTask({
-            description: 'Final Syntax Guard',
-            command: `node --check "${tempFile}"`,
-            cwd: this.rootPath
-        }));
-
-        const passed = syntaxCheck.task.status === 'done';
-        
-        await fs.unlink(fullPath);
-
-        return {
-            passed,
-            artifacts: artifacts.slice(-5),
-            error: passed ? null : "The code failed syntax verification in the real world."
-        };
-
-    } catch (e) {
-        return { passed: false, error: e.message };
-    }
-  }
-
-  /**
-   * Experience Ledger: Persist the "Soul" of the Swarm into SQLite
-   */
   async _logToExperienceLedger(data) {
-    if (this.messageBroker) {
-        await this.messageBroker.publish('swarm.experience', data);
+    if (messageBroker && typeof messageBroker.publish === 'function') {
+        await messageBroker.publish('swarm.experience', data);
     }
-    // Also store in warm memory for retrieval
-    if (this.quadBrain && this.quadBrain.mnemonic) {
-        await this.quadBrain.mnemonic.remember(
-            `Engineering Swarm Transformation of ${data.filepath}: ${data.request}. Result: ${data.success ? 'Success' : 'Failure'}`,
+    const mnemonic = this.mnemonicArbiter || this.quadBrain?.mnemonic;
+    if (mnemonic && typeof mnemonic.remember === 'function') {
+        await mnemonic.remember(
+            `Engineering Swarm: ${data.request} on ${data.filepath}. Result: ${data.success ? 'success' : 'failure'}`,
             { type: 'swarm_experience', ...data }
         );
     }

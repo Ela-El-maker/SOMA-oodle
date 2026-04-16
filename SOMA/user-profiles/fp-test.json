@@ -1,0 +1,19 @@
+{
+  "userId": "test",
+  "sessions": 2,
+  "totalMessages": 2,
+  "avgMsgLength": 1,
+  "questionRatio": 0,
+  "vocabRichness": 1,
+  "avgWordLength": 5,
+  "typicalStyle": "declarative-articulate",
+  "hourHistogram": {
+    "12": 1,
+    "13": 1
+  },
+  "topicFreq": {},
+  "recentTopics": [],
+  "lastSeen": 1773421952515,
+  "lastUpdated": 1773421952515,
+  "createdAt": 1773331397949
+}

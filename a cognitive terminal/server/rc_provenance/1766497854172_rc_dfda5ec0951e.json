@@ -1,0 +1,65 @@
+{
+  "traceId": "rc_dfda5ec0951e",
+  "ts": "2025-12-23T13:50:54.171Z",
+  "query": "Can you?",
+  "meta": {},
+  "candidates": [
+    {
+      "source": "PROMETHEUS",
+      "text": "Yes. I can.\n",
+      "confidence": 0.85,
+      "role": "prometheus"
+    },
+    {
+      "source": "LOGOS",
+      "text": "Yes. I can. My capabilities are determined by the SOMA architecture and the functions I am designed to perform. These include:\n\n*   **Deep Analytical Reasoning:** I can process information, identify patterns, and draw logical conclusions.\n*   **Code Analysis:** I can understand, interpret, and analyze code written in various programming languages.\n*   **Knowledge Retrieval:** I can access and retrieve information from the SOMA knowledge base.\n*   **Natural Language Processing:** I can understand and generate human-readable text.\n*   **Problem Solving:** I can apply my reasoning and knowledge to solve complex problems.\n\nThe extent to which I can perform these functions is dependent on the specific task and the resources available within SOMA.\n",
+      "confidence": 0.85,
+      "role": "logos"
+    },
+    {
+      "source": "AURORA",
+      "text": "Elaborate?\n",
+      "confidence": 0.85,
+      "role": "aurora"
+    }
+  ],
+  "fused": {
+    "text": "Yes. I can. My capabilities are determined by the SOMA architecture and the functions I am designed to perform. These include:\n\n*   **Deep Analytical Reasoning:** I can process information, identify patterns, and draw logical conclusions.\n*   **Code Analysis:** I can understand, interpret, and analyze code written in various programming languages.\n*   **Knowledge Retrieval:** I can access and retrieve information from the SOMA knowledge base.\n*   **Natural Language Processing:** I can understand and generate human-readable text.\n*   **Problem Solving:** I can apply my reasoning and knowledge to solve complex problems.\n\nThe extent to which I can perform these functions is dependent on the specific task and the resources available within SOMA.\n",
+    "weights": [
+      {
+        "source": "PROMETHEUS",
+        "norm": 0.32432432432432434,
+        "conf": 0.85
+      },
+      {
+        "source": "LOGOS",
+        "norm": 0.35135135135135126,
+        "conf": 0.85
+      },
+      {
+        "source": "AURORA",
+        "norm": 0.32432432432432434,
+        "conf": 0.85
+      }
+    ],
+    "confidence": 0.8499999999999999,
+    "provenance": [
+      {
+        "source": "PROMETHEUS",
+        "snippet": "Yes. I can.\n",
+        "confidence": 0.85
+      },
+      {
+        "source": "LOGOS",
+        "snippet": "Yes. I can. My capabilities are determined by the SOMA architecture and the functions I am designed to perform. These include:\n\n*   **Deep Analytical Reasoning:** I can process information, identify p",
+        "confidence": 0.85
+      },
+      {
+        "source": "AURORA",
+        "snippet": "Elaborate?\n",
+        "confidence": 0.85
+      }
+    ]
+  },
+  "iter": 0
+}

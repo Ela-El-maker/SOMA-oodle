@@ -1,0 +1,16 @@
+{
+  "timestamp": 1766565098379,
+  "category": "self_improvement",
+  "session": "nighttime_learning",
+  "metrics": {
+    "totalSessions": 5,
+    "successfulSessions": 4,
+    "failedSessions": 0,
+    "conceptsLearned": 1,
+    "memoriesStored": 0,
+    "spaceSaved": 0,
+    "insightsGenerated": 4,
+    "lastSessionTime": 1766565000024,
+    "totalKnowledgeBytes": null
+  }
+}

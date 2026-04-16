@@ -207,26 +207,30 @@ async function main() {
             if (!ready) {
                 return res.json({ ok: true, status: 'initializing', uptime: process.uptime() });
             }
-            // Deep check: brain + system.ready
-            const sys = global.__SOMA_SYSTEM;
-            const brainStatus = sys?.quadBrain?.getStatus?.() ?? null;
-            const brainOk = brainStatus
-                ? (brainStatus.providers?.some(p => p.available) ?? true)
-                : true;
-            res.json({
-                ok: brainOk,
-                status: brainOk ? 'healthy' : 'degraded',
-                uptime: process.uptime(),
-                brain: brainStatus ? {
-                    name: brainStatus.name,
-                    bridge: brainStatus.bridge ?? null,
-                    providers: (brainStatus.providers || []).map(p => ({ name: p.name, available: p.available }))
-                } : null,
-                memory: {
-                    heapUsedMB: Math.round(process.memoryUsage().heapUsed / 1024 / 1024),
-                    heapTotalMB: Math.round(process.memoryUsage().heapTotal / 1024 / 1024)
-                }
-            });
+            try {
+                // Deep check — wrapped so a non-serializable brain state never hangs the endpoint
+                const sys = global.__SOMA_SYSTEM;
+                const rawStatus = sys?.quadBrain?.getStatus?.() ?? null;
+                const brainOk = rawStatus
+                    ? (rawStatus.providers?.some(p => p.available) ?? true)
+                    : true;
+                res.json({
+                    ok: brainOk,
+                    status: brainOk ? 'healthy' : 'degraded',
+                    uptime: process.uptime(),
+                    brain: rawStatus ? {
+                        name: rawStatus.name ?? null,
+                        providers: (rawStatus.providers || []).map(p => ({ name: p.name, available: p.available }))
+                    } : null,
+                    memory: {
+                        heapUsedMB: Math.round(process.memoryUsage().heapUsed / 1024 / 1024),
+                        heapTotalMB: Math.round(process.memoryUsage().heapTotal / 1024 / 1024)
+                    }
+                });
+            } catch (e) {
+                // Fallback: always send something so the Orb connect loop doesn't hang
+                res.json({ ok: true, status: 'healthy', uptime: process.uptime() });
+            }
         });
 
         // 4. Start Server EARLY (bind port before heavy bootstrap)

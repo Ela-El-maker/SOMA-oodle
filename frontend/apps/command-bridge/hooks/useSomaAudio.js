@@ -613,7 +613,7 @@ export function useSomaAudio(onResponse) {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ text, voice: 'paula' }),
-            signal: AbortSignal.timeout(5000)
+            signal: AbortSignal.timeout(45000)
         });
         if (sirenRes.ok) {
             const arrayBuffer = await sirenRes.arrayBuffer();

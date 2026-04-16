@@ -1041,16 +1041,33 @@ const SomaCommandBridge = () => {
   useEffect(() => { isTalkingRef.current = isTalking; }, [isTalking]);
   const isListeningRef = useRef(false);
   useEffect(() => { isListeningRef.current = isListening; }, [isListening]);
+  const pendingGreetingRef = useRef(null); // queues greeting if orb not ready yet
 
   useEffect(() => {
     const onProactiveSpeak = (payload) => {
-      if (!isOrbConnectedRef.current || isTalkingRef.current || isListeningRef.current) return;
       const text = payload.message || payload.text;
-      if (text && speakTextRef.current) speakTextRef.current(text);
+      if (!text) return;
+      if (!isOrbConnectedRef.current || isTalkingRef.current || isListeningRef.current) {
+        // Orb not ready — hold the greeting until Neural Link connects
+        pendingGreetingRef.current = text;
+        return;
+      }
+      if (speakTextRef.current) speakTextRef.current(text);
     };
     somaBackend.on('soma_proactive', onProactiveSpeak);
     return () => somaBackend.off('soma_proactive', onProactiveSpeak);
   }, []);
+
+  // Speak queued greeting the moment Neural Link comes up
+  useEffect(() => {
+    if (!isOrbConnected || !pendingGreetingRef.current) return;
+    const text = pendingGreetingRef.current;
+    pendingGreetingRef.current = null;
+    // Short delay so AudioContext finishes initializing
+    setTimeout(() => {
+      if (speakTextRef.current && !isTalkingRef.current) speakTextRef.current(text);
+    }, 800);
+  }, [isOrbConnected]);
 
   // 6. User presence signal — throttled activity ping so SOMA knows the user is on-page
   useEffect(() => {

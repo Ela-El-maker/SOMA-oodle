@@ -7,9 +7,7 @@ const SomaStatusStrip = ({
   lastToolUsed,
   isSomaBusy,
   isConnected,
-  sidebarCollapsed,
-  wakeWordActive,
-  onWakeWordToggle
+  sidebarCollapsed
 }) => {
   const tension = tensionLevel || 0;
   const isUrgent = tension >= 70;
@@ -48,22 +46,6 @@ const SomaStatusStrip = ({
             {fullTickerText}
           </span>
         </div>
-
-        {/* Wake word toggle */}
-        {onWakeWordToggle && (
-          <button
-            onClick={onWakeWordToggle}
-            title={wakeWordActive ? 'Wake word active — say "Hey SOMA"' : 'Enable wake word'}
-            className={`ml-3 flex-shrink-0 flex items-center gap-1 px-2 py-0.5 rounded-full text-[9px] font-mono border transition-all ${
-              wakeWordActive
-                ? 'border-emerald-500/50 text-emerald-400 bg-emerald-500/10 animate-pulse'
-                : 'border-white/10 text-zinc-600 hover:border-white/20 hover:text-zinc-400'
-            }`}
-          >
-            <span>{wakeWordActive ? '◉' : '◎'}</span>
-            <span>{wakeWordActive ? 'SOMA' : 'wake'}</span>
-          </button>
-        )}
 
         {/* Tension readout */}
         <span className={`ml-2 flex-shrink-0 font-mono text-[9px] ${isUrgent ? 'text-amber-400' : 'text-zinc-600'}`}>

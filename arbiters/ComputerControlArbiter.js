@@ -114,17 +114,26 @@ export class ComputerControlArbiter extends BaseArbiter {
 
   async captureScreen(options = {}) {
     try {
-      console.log(`[${this.name}] Capturing screen...`);
-
       const buffer = await screenshot({ format: 'png' });
 
       const filename = `screen_${Date.now()}.png`;
-      const savePath = path.join(process.cwd(), '.soma', 'vision_temp', filename);
+      const visionDir = path.join(process.cwd(), '.soma', 'vision_temp');
+      const savePath = path.join(visionDir, filename);
 
-      fs.mkdirSync(path.dirname(savePath), { recursive: true });
+      fs.mkdirSync(visionDir, { recursive: true });
       fs.writeFileSync(savePath, buffer);
 
-      console.log(`[${this.name}] Screen captured: ${savePath}`);
+      // Rolling cleanup — keep only the 5 most recent frames.
+      // Vision only ever needs the current frame; old ones are dead weight.
+      try {
+        const files = fs.readdirSync(visionDir)
+          .filter(f => f.startsWith('screen_') && f.endsWith('.png'))
+          .map(f => ({ name: f, mtime: fs.statSync(path.join(visionDir, f)).mtimeMs }))
+          .sort((a, b) => b.mtime - a.mtime); // newest first
+        for (const old of files.slice(5)) {
+          try { fs.unlinkSync(path.join(visionDir, old.name)); } catch { /* already gone */ }
+        }
+      } catch { /* cleanup failure is never fatal */ }
 
       return {
         success: true,

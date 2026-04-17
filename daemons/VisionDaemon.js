@@ -135,7 +135,8 @@ export class VisionDaemon extends BaseDaemon {
                 if (analysis.success) {
                     this.metrics.analysisCount++;
                     this.metrics.lastAnalysisMs = Date.now() - t0;
-                    this.lastPerception = analysis;
+                    // Include imagePath in lastPerception so perceptionRoutes /vision/last exposes it
+                    this.lastPerception = { ...analysis, imagePath, channel: this.channel };
                     this.perceptionCount++;
 
                     // 4. Emit Perception Signal
@@ -207,7 +208,7 @@ export class VisionDaemon extends BaseDaemon {
             if (analysis.success) {
                 this.metrics.analysisCount++;
                 this.metrics.lastAnalysisMs = Date.now() - t0;
-                this.lastPerception = analysis;
+                this.lastPerception = { ...analysis, imagePath: capture.imagePath, channel: this.channel };
                 this.perceptionCount++;
 
                 this.emitSignal('vision.action.verified', {

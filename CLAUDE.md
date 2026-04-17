@@ -282,6 +282,19 @@ This is what prevents **arbiter storms** as the arbiter count grows (currently 1
 ### Low
 - **DaemonManager watchdog is in-process** — if Node.js crashes entirely, the watchdog dies with it. For true resilience, daemons should be supervised by a process manager (PM2, systemd). The watchdog handles in-process crashes only.
 - **SignalCompressor flushes on timeout only** — if a signal type gets one signal and then nothing for 1s, it flushes normally. If the system is idle for >1s between signals of the same type, compression doesn't happen. This is fine at current scale but worth knowing.
+- **NEMESIS quality gate needs pre-computed index** — current implementation calls the brain for eval, which adds 4-8s per response. The right architecture: NEMESIS builds a rolling text database of known-bad response patterns (hallucinations, wrong facts, protocol violations) at startup and on each caught error. Evaluation becomes a <1ms index lookup, not an LLM call. NEMESIS already has agentic awareness of what it's looking for — it just needs to stop asking the brain and start checking its own knowledge. Full redesign deferred; current 4s cap on simple chat is acceptable for now.
+- **Boot greeting is forced behavior** — the 4s delayed WebSocket greeting is a code-imposed action, not SOMA's own initiative. SOMA should be a free agent: if she has something to say she'll say it; if she doesn't she won't. Forced greetings are the same pattern every chatbot does ("Hi I'm your helpful AI!") which is exactly what SOMA is not. Remove the forced greeting and let proactive behavior emerge naturally from SOMA's drives (CuriosityEngine, GoalPlanner, etc.). This is a broader agency question — SOMA's proactivity should come from her own perception of the environment, not from "send a message 4s after connect" code.
+
+### Deferred Design: Ethereal Memory Layer
+SOMA's current memory is too literal — explicit recall of stored facts. Human memory doesn't work this way. Consider a third memory tier between warm (vector recall) and cold (SQLite):
+
+**Ethereal tier** — memories that don't surface as explicit recall but influence reasoning tone, creativity, and associative leaps. These are things experienced but not "important enough" to consciously recall. In humans: the background hum of yesterday's conversations, ambient moods, half-remembered ideas. They create unexpected connections and push reasoning in novel directions without being explicitly cited.
+
+Implementation sketch:
+- After each conversation, run a lightweight "dream pass" — extract 3-5 low-salience concepts and store them in a lightweight ring buffer (last 48h, max 200 entries)
+- Don't inject them as `[MEMORY]` blocks; instead blend them as soft biases on ThoughtNetwork node weights — they shift which synthesized concepts SOMA considers "relevant" without naming them explicitly
+- The result: SOMA's reasoning feels colored by recent experience without her quoting yesterday's conversation back at you
+- This layer intentionally decays fast (48h TTL) — it's ephemeral by design, like working memory fading into sleep
 
 ---
 

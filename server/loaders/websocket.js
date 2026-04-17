@@ -22,9 +22,9 @@ const _ownerCfg = (() => {
     try {
         const p = join(dirname(fileURLToPath(import.meta.url)), '../../config/owner.json');
         return JSON.parse(readFileSync(p, 'utf8'));
-    } catch { return { name: 'Barry', pronouns: 'he/him' }; }
+    } catch { return { name: 'User', pronouns: 'they/them' }; }
 })();
-const OWNER_NAME = _ownerCfg.name || 'Barry';
+const OWNER_NAME = _ownerCfg.name || 'User';
 const { getApprovalSystem } = require('../ApprovalSystem.cjs');
 
 export function setupWebSocket(server, wss, system) {
@@ -221,6 +221,70 @@ export function setupWebSocket(server, wss, system) {
         });
     } catch { /* non-fatal */ }
 
+    // Forward vision.perceived → frontend (replaces 5s polling) + update system.visionContext
+    // This is the central hub: one signal subscriber, one state update, one WebSocket push.
+    let _lastProactiveVisionTs = 0;
+    const PROACTIVE_VISION_COOLDOWN = 90 * 1000; // max 1 proactive visual comment per 90s
+    try {
+        const broker = require('../../core/MessageBroker.cjs');
+        broker.subscribe('WebSocketLoader.vision', 'vision.perceived');
+        broker.on('vision.perceived', (envelope) => {
+            const p = envelope.payload || envelope;
+            const analysis = p.analysis || {};
+
+            // ── 1. Update shared visionContext (voice stream reads from this) ──
+            system.visionContext = {
+                channel: p.channel || 'desktop',
+                imagePath: p.imagePath || null,
+                objects: analysis.objects || [],
+                ocrText: analysis.ocrText || null,
+                ghostCursor: p.ghostCursor || null,
+                timestamp: p.timestamp || Date.now()
+            };
+
+            // ── 2. Push to frontend (real-time, no polling) ──
+            broadcast('vision_update', {
+                channel: system.visionContext.channel,
+                imagePath: system.visionContext.imagePath,
+                objects: system.visionContext.objects,
+                ocrText: system.visionContext.ocrText,
+                ghostCursor: system.visionContext.ghostCursor,
+                timestamp: system.visionContext.timestamp
+            });
+
+            // ── 3. Proactive visual commentary on error dialogs ──
+            // SOMA notices errors and speaks about them unprompted — only if
+            // she's not in a conversation and the orb is active.
+            const labels = system.visionContext.objects.map(o => o.label);
+            const hasError = labels.some(l => ['error dialog'].includes(l));
+            const now = Date.now();
+            if (hasError &&
+                !global.__SOMA_CHAT_ACTIVE &&
+                dashboardClients.size > 0 &&
+                (now - _lastProactiveVisionTs > PROACTIVE_VISION_COOLDOWN)
+            ) {
+                _lastProactiveVisionTs = now;
+                const brain = system.quadBrain;
+                const ocrText = system.visionContext.ocrText;
+                if (brain) {
+                    const prompt = ocrText
+                        ? `You are SOMA. You just noticed an error dialog on the screen. The text you can read says: "${ocrText.substring(0, 300)}". Speak one short observation — what is the error, and do you have a quick thought about it? Be direct, natural, 1-2 sentences.`
+                        : `You are SOMA. You just noticed what appears to be an error dialog on the screen. Speak one short observation — 1 sentence, natural, curious.`;
+                    Promise.race([
+                        brain.reason(prompt, { quickResponse: true }),
+                        new Promise((_, r) => setTimeout(() => r(new Error('timeout')), 8000))
+                    ]).then(result => {
+                        const text = (result?.text || result?.response || '').trim();
+                        if (text && !text.includes('[NOTHING]')) {
+                            broadcast('pulse', { type: 'soma_proactive', message: text });
+                            console.log(`[SOMA Vision] 💭 Proactive: "${text.substring(0, 80)}"`);
+                        }
+                    }).catch(() => {});
+                }
+            }
+        });
+    } catch { /* non-fatal */ }
+
     // ── Heartbeat: ping all clients every 30s, terminate any that don't pong ──
     // Silently-dead connections (NAT timeout, adapter sleep, background tab) never
     // fire 'close' without this — leaving dead sockets in dashboardClients forever
@@ -236,6 +300,65 @@ export function setupWebSocket(server, wss, system) {
             try { ws.ping(); } catch { /* socket errored, heartbeat will clean next round */ }
         });
     }, 30000);
+
+    // ── Proactive Speech: SOMA speaks from her own drives ─────────────────────
+    // Every 20 minutes, checks SoulArbiter reflections + CuriosityEngine queue.
+    // Asks the brain if anything is genuinely worth saying. If not, stays quiet.
+    // Never interrupts a live conversation. Rate-limited by cooldown.
+    // This is the ONLY mechanism for unsolicited speech — no forced greetings.
+    let _lastProactiveTs = 0;
+    const PROACTIVE_COOLDOWN_MS = 20 * 60 * 1000; // 20 min between proactive messages
+    const PROACTIVE_BOOT_DELAY_MS = 10 * 60 * 1000; // wait 10 min after boot for systems to load
+
+    setTimeout(() => {
+        setInterval(async () => {
+            try {
+                if (global.__SOMA_CHAT_ACTIVE) return;           // don't interrupt a conversation
+                if (dashboardClients.size === 0) return;          // nobody connected
+                if (Date.now() - _lastProactiveTs < PROACTIVE_COOLDOWN_MS) return; // cooldown
+
+                const brain = system.quadBrain || system.somArbiter;
+                if (!brain) return;
+
+                // Gather what she's been thinking about
+                const parts = [];
+
+                if (system.soul?.getRecentReflections) {
+                    const reflections = system.soul.getRecentReflections(3);
+                    if (reflections) parts.push(`[RECENT REFLECTIONS]\n${reflections}`);
+                }
+
+                if (system.curiosityEngine?.curiosityQueue?.length > 0) {
+                    const topQ = system.curiosityEngine.curiosityQueue.slice(0, 3)
+                        .map(q => `• ${q.question}`).join('\n');
+                    parts.push(`[CURRENTLY CURIOUS ABOUT]\n${topQ}`);
+                }
+
+                if (!parts.length) return; // nothing to speak from
+
+                const synthPrompt = `You are SOMA. These things are on your mind right now:
+
+${parts.join('\n\n')}
+
+If something here is genuinely worth saying out loud — an insight, a question you can't shake, something you noticed — say it. One or two sentences, direct, not performative. Don't open with "I've been thinking about". Just say the thing.
+
+If nothing feels worth saying right now, respond with exactly: [NOTHING]`;
+
+                const result = await Promise.race([
+                    brain.reason(synthPrompt, { temperature: 0.85, quickResponse: true, preferredBrain: 'AURORA' }),
+                    new Promise((_, r) => setTimeout(() => r(new Error('timeout')), 10000))
+                ]);
+
+                const text = (result?.text || result?.response || '').trim();
+                if (!text || text.includes('[NOTHING]')) return;
+
+                _lastProactiveTs = Date.now();
+                broadcast('pulse', { type: 'soma_proactive', message: text });
+                console.log(`[SOMA] 💭 Proactive: "${text.substring(0, 80)}"`);
+
+            } catch { /* proactive speech is never blocking */ }
+        }, PROACTIVE_COOLDOWN_MS);
+    }, PROACTIVE_BOOT_DELAY_MS);
 
     wss.on('connection', (ws, req) => {
         ws.isAlive = true;
@@ -265,58 +388,10 @@ export function setupWebSocket(server, wss, system) {
             }
         }));
 
-        // ── Phase 3: Synthesis greeting ──────────────────────────────────────
-        // After 4s (let the brain finish booting), generate a genuine opening
-        // thought from soul + user fingerprint and push it as a proactive message.
-        setTimeout(async () => {
-            try {
-                if (ws.readyState !== 1) return;
-                const { createRequire } = await import('module');
-                const req2 = createRequire(import.meta.url);
-                const fingerprint = req2('../../arbiters/UserFingerprintArbiter.cjs');
-                const soul        = req2('../../arbiters/SoulArbiter.cjs');
-
-                const userId       = 'default_user';
-                const userCtx      = fingerprint.getUserContext(userId);
-                const recentSoul   = soul.getRecentReflections(3, userId);
-                const lastFeeling  = soul.getLastFeeling(userId);
-
-                // Only generate if we have enough history to say something real
-                if (!userCtx && !lastFeeling) return;
-
-                const brain = system.quadBrain || system.somArbiter;
-                if (!brain) return;
-
-                const synthPrompt = `You are SOMA. ${OWNER_NAME} just opened the command bridge. Say something directly TO them — one or two natural sentences, like a colleague who was already thinking about something and picks it up when someone walks in.
-
-[WHAT YOU'VE BEEN REFLECTING ON]
-${recentSoul || 'Nothing specific yet.'}
-
-Rules:
-- Address ${OWNER_NAME} directly ("Hey, I've been thinking about..." / "Something came up in my mind..." / "I wanted to ask you about...")
-- ONLY speak about the reflections above — do NOT invent system observations (logs, metrics, latency spikes, etc.) you have no data for. If you claim to have noticed something, it must be from the reflection above.
-- Do NOT narrate your inner thoughts in third person
-- 1-2 sentences max. No emoji. No "How can I help?" opener.
-- If nothing specific is on your mind, a brief warm check-in is fine ("Good to see you" / "Been quiet" / "How's it going")
-- Never fabricate technical observations. Philosophical or personal thoughts are fine.`;
-
-                const result = await Promise.race([
-                    brain.reason(synthPrompt, { temperature: 0.8, quickResponse: true, preferredBrain: 'AURORA' }),
-                    new Promise((_, r) => setTimeout(() => r(new Error('timeout')), 8000))
-                ]);
-
-                const text = result?.text || result?.response;
-                if (text && text.length > 5 && ws.readyState === 1) {
-                    ws.send(JSON.stringify({
-                        type: 'pulse',
-                        payload: { type: 'soma_proactive', message: text.trim() }
-                    }));
-                    // Note: deliberately NOT storing in conversationHistory — the greeting is
-                    // shown via the soma_proactive event. Storing it caused it to appear twice:
-                    // once in the activity stream and again when the Neural Link loaded history.
-                }
-            } catch { /* synthesis greeting is never blocking */ }
-        }, 4000);
+        // Phase 3 (forced boot greeting) removed.
+        // SOMA speaks when she has something to say — not because connection triggered a setTimeout.
+        // Proactive messages now come from her own drives: CuriosityEngine, SoulArbiter reflections,
+        // GoalPlanner insights. Those emit soma_proactive events on their own schedule.
 
         ws.on('message', async (message) => {
             let data = null;

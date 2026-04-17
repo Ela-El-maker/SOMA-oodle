@@ -1,6 +1,6 @@
 import { useState, useRef, useEffect, useCallback } from 'react';
 import { initElevenLabs, textToSpeech, isElevenLabsEnabled } from '../utils/elevenLabsTTS';
-import { reasonWithSoma, checkSomaHealth, formatResponseForSpeech, SomaCognitiveStream } from '../utils/somaClient';
+import { reasonWithSoma, formatResponseForSpeech } from '../utils/somaClient';
 import { getSharedSessionId } from '../utils/sharedSession';
 
 // Audio configuration constants
@@ -116,13 +116,14 @@ const detectVoiceActivity = (analyser, frequencyData) => {
   return hasEnoughEnergy && voiceStrongerThanNoise && hasVoiceCharacteristics;
 };
 
-export function useSomaAudio(onResponse) {
+export function useSomaAudio(onResponse, visionContextRef = null) {
   const [isConnected, setIsConnected] = useState(false);
-  const [volume, setVolume] = useState(0); 
-  const [inputVolume, setInputVolume] = useState(0); 
+  const [volume, setVolume] = useState(0);
+  const [inputVolume, setInputVolume] = useState(0);
   const [isTalking, setIsTalking] = useState(false);
   const [isListening, setIsListening] = useState(false);
   const [isThinking, setIsThinking] = useState(false);
+  const [lastTranscript, setLastTranscript] = useState('');
   const [somaHealthy, setSomaHealthy] = useState(false);
   const [systemStatus, setSystemStatus] = useState({
     somaBackend: 'disconnected',
@@ -474,8 +475,34 @@ export function useSomaAudio(onResponse) {
 
   const processWithSoma = async (query) => {
     try {
+      setLastTranscript(query);
+
       if (onResponseRef.current) {
         onResponseRef.current({ role: 'user', text: query, timestamp: Date.now() });
+      }
+
+      // Build vision-enriched query — inject what SOMA currently sees
+      // The backend also injects vision context from system.visionContext,
+      // but we add it here too so it's part of the user message for context tracking.
+      let enrichedQuery = query;
+      const vc = visionContextRef?.current;
+      if (vc?.lastPerception?.objects?.length) {
+        const perception = vc.lastPerception;
+        const channel = vc.channel || perception.channel || 'desktop';
+        const channelDesc = channel === 'webcam' ? 'webcam (physical room)' : 'desktop (screen)';
+
+        // Natural-language object list — avoid raw CLIP label recitation
+        const topObjects = perception.objects
+          .slice(0, 4)
+          .map(o => o.label)
+          .join(', ');
+
+        let visionNote = `[VISION via ${channelDesc}: ${topObjects}`;
+        if (perception.ocrText) {
+          visionNote += ` — screen text: "${perception.ocrText.substring(0, 200)}"`;
+        }
+        visionNote += ']';
+        enrichedQuery = `${visionNote}\n\n${query}`;
       }
 
       // Play acknowledgment immediately while stream starts
@@ -491,7 +518,7 @@ export function useSomaAudio(onResponse) {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
-            message: query,
+            message: enrichedQuery,
             history: voiceHistoryRef.current,
             sessionId: conversationIdRef.current
           })
@@ -534,7 +561,7 @@ export function useSomaAudio(onResponse) {
       } catch (streamErr) {
         // Stream failed — fall back to regular chat
         console.warn('[Voice] Stream failed, falling back:', streamErr.message);
-        const result = await reasonWithSoma(query, conversationIdRef.current, { voiceMode: true });
+        const result = await reasonWithSoma(enrichedQuery, conversationIdRef.current, { voiceMode: true });
         setIsThinking(false);
         if (result.success && result.response) {
           fullResponse = result.response;
@@ -691,8 +718,8 @@ export function useSomaAudio(onResponse) {
     });
   };
 
-  // ── Wake word: "hey soma" / "soma" ───────────────────────────────────────
-  const WAKE_PATTERNS = /\b(hey\s*soma|soma|hay\s*soma|hey\s*sofa)\b/i;
+  // ── Wake word: require "hey soma" — "soma" alone false-positives constantly ─
+  const WAKE_PATTERNS = /\b(hey\s*soma|hay\s*soma|hey\s*sofa)\b/i;
 
   const startWakeWordListening = useCallback(() => {
     const SpeechRec = window.SpeechRecognition || window.webkitSpeechRecognition;
@@ -822,9 +849,29 @@ export function useSomaAudio(onResponse) {
   // Unmount cleanup — stop mic, close audio contexts, cancel rAF loop
   useEffect(() => () => disconnect(), [disconnect]);
 
+  // Periodic Whisper re-check (every 60s) — auto-upgrade from browser STT if Whisper comes online
+  useEffect(() => {
+    if (!isConnected || !useWebSpeechRef.current) return; // only run when on fallback
+    const timer = setInterval(async () => {
+      const healthy = await checkWhisperHealth();
+      if (healthy) {
+        console.log('[Voice] Whisper came online — switching from browser STT');
+        useWebSpeechRef.current = false;
+        setSystemStatus(prev => ({ ...prev, whisperServer: 'ready' }));
+        // Stop browser STT so the recording loop effect re-evaluates on next reconnect
+        if (webSpeechRecRef.current) {
+          try { webSpeechRecRef.current.stop(); } catch (e) {}
+          webSpeechRecRef.current = null;
+        }
+        clearInterval(timer);
+      }
+    }, 60000);
+    return () => clearInterval(timer);
+  }, [isConnected]);
+
   return {
     isConnected, connect, disconnect, volume, inputVolume,
-    isTalking, isListening, isThinking, systemStatus,
+    isTalking, isListening, isThinking, lastTranscript, systemStatus,
     sendTextQuery, somaHealthy, speakText,
     wakeWordActive, startWakeWordListening, stopWakeWordListening
   };

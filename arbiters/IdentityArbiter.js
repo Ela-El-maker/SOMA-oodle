@@ -32,6 +32,44 @@ export class IdentityArbiter extends BaseArbiterV4 {
         this.mnemonic = config.mnemonic;
         this.microAgentPool = config.microAgentPool;
         this.activePersona = null;
+
+        // High-level context staged for the next interaction
+        this._stagedContexts = new Map(); // domain -> { summary, timestamp }
+        this._contextTTL = 5 * 60 * 1000; // 5 min
+    }
+
+    /**
+     * Stage high-level context (e.g., from visual perception)
+     */
+    stageContext(domain, summary) {
+        if (!domain || !summary) return;
+        this._stagedContexts.set(domain, { summary, timestamp: Date.now() });
+        console.log(`[IdentityArbiter] 🧠 Context staged for domain: ${domain}`);
+    }
+
+    /**
+     * Get a consolidated summary of all valid staged contexts
+     */
+    getStagedContextSummary() {
+        const now = Date.now();
+        const parts = [];
+
+        for (const [domain, entry] of this._stagedContexts.entries()) {
+            if (now - entry.timestamp > this._contextTTL) {
+                this._stagedContexts.delete(domain);
+                continue;
+            }
+            parts.push(`[CONTEXT: ${domain.toUpperCase()}]\n${entry.summary}`);
+        }
+
+        return parts.length > 0 ? parts.join('\n\n') : null;
+    }
+
+    /**
+     * Clear all staged contexts
+     */
+    clearStagedContext() {
+        this._stagedContexts.clear();
     }
 
     async initialize() {

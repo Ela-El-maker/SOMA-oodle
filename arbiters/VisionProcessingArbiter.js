@@ -161,11 +161,17 @@ export class VisionProcessingArbiter extends EventEmitter {
     await this._ensureModel();
     console.log(`[${this.name}] 🔍 Detecting objects (threshold: ${threshold})`);
 
-    // Common UI and physical objects for screen understanding
+    // Common UI, physical objects, and people for combined desktop+webcam understanding
     const candidateLabels = [
-      'window', 'button', 'text', 'icon', 'menu', 'sidebar', 'toolbar', 
+      // Desktop / UI
+      'window', 'button', 'text', 'icon', 'menu', 'sidebar', 'toolbar',
       'terminal', 'browser', 'code editor', 'error dialog', 'chat', 'graph', 'chart',
-      'human', 'face', 'hand', 'desk', 'computer', 'keyboard', 'mouse'
+      // People / user
+      'person', 'human', 'face', 'portrait', 'hand',
+      // Room / environment
+      'desk', 'computer', 'keyboard', 'mouse', 'monitor',
+      'room', 'office', 'bedroom', 'living room', 'wall', 'window', 'door', 'furniture',
+      'bookshelf', 'lamp', 'chair', 'ceiling'
     ];
 
     console.log(`[${this.name}] Classifying image with labels:`, candidateLabels);
@@ -194,55 +200,24 @@ export class VisionProcessingArbiter extends EventEmitter {
       const highValueTargets = ['terminal', 'code editor', 'error dialog', 'text'];
       const foundTarget = objects.find(obj => highValueTargets.includes(obj.label));
 
-      if (foundTarget) {
+      if (foundTarget && this.quadBrain) {
           console.log(`[${this.name}] 🧠 High-value target detected (${foundTarget.label}). Initiating Cognitive Zoom (OCR)...`);
           try {
-              // Read and base64-encode the frame for multimodal API call
-              const imageBuffer = await fs.readFile(imagePathOrURL);
-              const base64Image = imageBuffer.toString('base64');
-              const mimeType = imagePathOrURL.endsWith('.png') ? 'image/png' : 'image/jpeg';
-
-              const apiKey = process.env.DEEPSEEK_API_KEY;
-              if (!apiKey) throw new Error('No DEEPSEEK_API_KEY set');
-
-              const response = await fetch('https://api.deepseek.com/v1/chat/completions', {
-                  method: 'POST',
-                  headers: {
-                      'Content-Type': 'application/json',
-                      'Authorization': `Bearer ${apiKey}`
-                  },
-                  body: JSON.stringify({
-                      model: 'deepseek-chat',
-                      messages: [{
-                          role: 'user',
-                          content: [
-                              {
-                                  type: 'image_url',
-                                  image_url: { url: `data:${mimeType};base64,${base64Image}` }
-                              },
-                              {
-                                  type: 'text',
-                                  text: `You are performing OCR on a screenshot. A ${foundTarget.label} was detected. Extract ALL visible text exactly as written — code, error messages, stack traces, labels. Return only the raw extracted text, no commentary.`
-                              }
-                          ]
-                      }],
-                      max_tokens: 500
-                  }),
-                  signal: AbortSignal.timeout(8000)
-              });
-
-              if (response.ok) {
-                  const data = await response.json();
-                  ocrText = data.choices?.[0]?.message?.content || null;
+              // Delegate to QuadBrain (DeepSeek-Vision or multimodal fallback)
+              // This is asynchronous and managed by the CNS
+              const ocrResult = await this.quadBrain.reason(
+                  `You are performing Cognitive Zoom on a screenshot. A ${foundTarget.label} was detected. Please read and extract the text, code, or error message from it exactly as written. If there is a SyntaxError or stack trace, provide it fully. Return only the raw text.`,
+                  { images: [imagePathOrURL], mode: 'fast' }
+              );
+              
+              if (ocrResult) {
+                  ocrText = ocrResult.text || (typeof ocrResult === 'string' ? ocrResult : null);
                   if (ocrText) {
-                      console.log(`[${this.name}] 📝 OCR: ${ocrText.substring(0, 100).replace(/\n/g, ' ')}...`);
+                      console.log(`[${this.name}] 📝 OCR Extracted: ${ocrText.substring(0, 100).replace(/\n/g, ' ')}...`);
                   }
-              } else {
-                  // Model doesn't support vision yet — skip silently (no hallucination)
-                  console.warn(`[${this.name}] ⚠️ Cognitive Zoom skipped: API returned ${response.status} (model may not support vision)`);
               }
           } catch (ocrErr) {
-              console.warn(`[${this.name}] ⚠️ Cognitive Zoom failed:`, ocrErr.message);
+              console.warn(`[${this.name}] ⚠️ Cognitive Zoom (OCR) failed:`, ocrErr.message);
           }
       }
 
@@ -385,6 +360,44 @@ export class VisionProcessingArbiter extends EventEmitter {
       console.error(`[${this.name}] Error getting similarity:`, error.message);
       return { success: false, error: error.message };
     }
+  }
+
+  /**
+   * Convert a raw perception result into a natural-language visual summary.
+   * Used by voice stream injection so SOMA doesn't recite raw CLIP label strings.
+   */
+  buildNaturalDescription(perception) {
+    if (!perception || !perception.objects?.length) return null;
+
+    const objects = perception.objects;
+    const channel = perception.channel || 'desktop';
+    const labels = objects.map(o => o.label);
+
+    // People detection
+    const hasPersonLabels = labels.some(l => ['person', 'human', 'face', 'portrait'].includes(l));
+    // Room detection
+    const roomLabels = ['room', 'office', 'bedroom', 'living room', 'desk', 'furniture', 'bookshelf', 'lamp', 'chair'];
+    const hasRoom = labels.some(l => roomLabels.includes(l));
+    // Desktop content
+    const desktopLabels = ['terminal', 'browser', 'code editor', 'error dialog', 'chat', 'graph', 'chart'];
+    const desktopContent = labels.filter(l => desktopLabels.includes(l));
+
+    const parts = [];
+    if (channel === 'webcam') {
+      if (hasPersonLabels) parts.push('she can see a person — likely Barry');
+      if (hasRoom) {
+        const roomType = labels.find(l => ['office', 'bedroom', 'living room'].includes(l));
+        parts.push(roomType ? `the room appears to be a ${roomType}` : 'she can see the room around her');
+      }
+    } else {
+      if (desktopContent.length) {
+        parts.push(`the screen shows: ${desktopContent.join(', ')}`);
+      } else if (labels.length) {
+        const top = objects.slice(0, 3).map(o => o.label).join(', ');
+        parts.push(`the screen shows: ${top}`);
+      }
+    }
+    return parts.length ? parts.join('; ') : null;
   }
 
   /**

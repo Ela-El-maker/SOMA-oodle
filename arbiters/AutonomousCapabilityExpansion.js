@@ -167,7 +167,70 @@ Can we accomplish this? If not, what's missing? Respond JSON:
       return { success: true, name: arbiterName };
     } catch (e) {
       this.logger.error(`[${this.name}] ❌ Integration of ${arbiterName} failed: ${e.message}`);
-      return { success: false, error: e.message };
+      return { 
+          success: false, 
+          error: e.message, 
+          stack: e.stack,
+          filePath,
+          arbiterName 
+      };
+    }
+  }
+
+  /**
+   * Start the autonomous scan loop — checks every intervalMs for dormant
+   * arbiters on disk that aren't loaded, and emits a signal so SOMA can
+   * decide whether to integrate them.
+   *
+   * Does NOT auto-integrate — that would load arbitrary files blindly.
+   * Instead, emits 'capability.dormant.discovered' so GoalPlannerArbiter
+   * or a human can approve integration.
+   */
+  startAutonomousScan(systemRef, intervalMs = 20 * 60 * 1000) {
+    if (this._scanInterval) return; // already running
+    this._systemRef = systemRef;
+
+    // Initial scan after 2 min (let system finish booting first)
+    setTimeout(() => this._runScan(), 2 * 60 * 1000);
+
+    this._scanInterval = setInterval(() => this._runScan(), intervalMs);
+    this.logger.info(`[${this.name}] 🔍 Autonomous scan started — every ${Math.round(intervalMs / 60000)} min`);
+  }
+
+  async _runScan() {
+    try {
+      const activeNames = this._systemRef?.arbiters
+        ? [...this._systemRef.arbiters.keys()]
+        : [];
+
+      const dormant = await this.scanDormantArbiters(activeNames);
+      if (!dormant.length) return;
+
+      // Skip obvious non-arbiter files
+      const skippable = ['index', 'BaseArbiter', 'BaseArbiterV2', 'BaseArbiterV3', 'BaseArbiterV4'];
+      const candidates = dormant.filter(n => !skippable.some(s => n.toLowerCase() === s.toLowerCase()));
+
+      if (!candidates.length) return;
+
+      this.logger.info(`[${this.name}] 🌱 ${candidates.length} dormant capabilities: ${candidates.slice(0, 5).join(', ')}${candidates.length > 5 ? '...' : ''}`);
+
+      // Emit signal — GoalPlannerArbiter can pick this up and create an integration goal
+      if (this.messageBroker) {
+        this.messageBroker.publish('AutonomousCapabilityExpansion', 'capability.dormant.discovered', {
+          candidates,
+          count: candidates.length,
+          timestamp: Date.now()
+        }).catch(() => {});
+      }
+    } catch (e) {
+      this.logger.error?.(`[${this.name}] Scan error: ${e.message}`);
+    }
+  }
+
+  stopAutonomousScan() {
+    if (this._scanInterval) {
+      clearInterval(this._scanInterval);
+      this._scanInterval = null;
     }
   }
 

@@ -206,6 +206,8 @@ router.get('/vision/last', (req, res) => {
             success: true,
             channel: vision.channel,
             lastPerception: vision.lastPerception,
+            // imagePath at top level for easy access (also lives inside lastPerception after fix)
+            imagePath: vision.lastPerception?.imagePath || null,
             ghostCursor: vision.ghostCursor,
             timestamp: Date.now()
         });

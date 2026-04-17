@@ -34,5 +34,5 @@ echo.
 echo   Access the dashboard at: http://localhost:3001
 echo.
 
-node --max-old-space-size=4096 launcher_ULTRA.mjs
+node --max-old-space-size=4096 --expose-gc launcher_ULTRA.mjs
 pause

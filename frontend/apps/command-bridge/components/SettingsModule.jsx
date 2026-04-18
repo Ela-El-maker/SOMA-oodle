@@ -20,7 +20,9 @@ const SettingsModule = ({
     setEmergencyStop,
     auditLogs,
     arbiters,
-    isConnected
+    isConnected,
+    wakeWordActive,
+    onWakeWordToggle
 }) => {
     const [activeDomain, setActiveDomain] = useState('authority');
     const [isSettingsLocked, setIsSettingsLocked] = useState(true);
@@ -110,7 +112,7 @@ const SettingsModule = ({
             case 'authority':
                 return <AuthorityDomain arbiters={arbiters} isLocked={isSettingsLocked} onChange={handleSettingChange} isConnected={isConnected} />;
             case 'cognition':
-                return <CognitionDomain personality={personality} setPersonality={setPersonality} isLocked={isSettingsLocked} onChange={handleSettingChange} isConnected={isConnected} />;
+                return <CognitionDomain personality={personality} setPersonality={setPersonality} isLocked={isSettingsLocked} onChange={handleSettingChange} isConnected={isConnected} wakeWordActive={wakeWordActive} onWakeWordToggle={onWakeWordToggle} />;
             case 'memory':
                 return <MemoryDomain isLocked={isSettingsLocked} onChange={handleSettingChange} />;
             case 'safety':
@@ -271,8 +273,34 @@ const AuthorityDomain = ({ arbiters, isLocked, onChange, isConnected }) => (
     </div>
 );
 
-const CognitionDomain = ({ personality, setPersonality, isConnected }) => (
+const CognitionDomain = ({ personality, setPersonality, isConnected, wakeWordActive, onWakeWordToggle }) => (
     <div className="space-y-6">
+        <SectionCard title="Voice Interface" description="Configure SOMA's listening and speech activation behaviour.">
+            <div className="space-y-4">
+                <div className="flex items-start justify-between">
+                    <div className="mr-4">
+                        <div className="text-sm font-medium text-zinc-300">Wake Word Detection</div>
+                        <div className="text-xs text-zinc-500 mt-0.5 leading-snug">
+                            Listen passively for <span className="font-mono text-zinc-400">"Hey SOMA"</span> to activate voice without clicking Neural Link.
+                            Uses your browser's speech API — no audio is recorded when idle.
+                        </div>
+                    </div>
+                    <div
+                        onClick={onWakeWordToggle}
+                        className={`w-11 h-6 rounded-full flex-shrink-0 p-1 transition-colors cursor-pointer ${wakeWordActive ? 'bg-emerald-600' : 'bg-zinc-700'}`}
+                    >
+                        <div className={`bg-white h-4 w-4 rounded-full shadow-sm transform transition-transform ${wakeWordActive ? 'translate-x-5' : 'translate-x-0'}`} />
+                    </div>
+                </div>
+                {wakeWordActive && (
+                    <div className="flex items-center gap-2 px-3 py-2 rounded-lg bg-emerald-500/10 border border-emerald-500/20">
+                        <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse flex-shrink-0" />
+                        <span className="text-[11px] text-emerald-400 font-mono uppercase tracking-wider">Listening for "Hey SOMA"</span>
+                    </div>
+                )}
+            </div>
+        </SectionCard>
+
         <SectionCard title="Active Persona & Mood" description="Current emotional state and personality profile of SOMA.">
             <CharacterCard enabled={isConnected} />
         </SectionCard>

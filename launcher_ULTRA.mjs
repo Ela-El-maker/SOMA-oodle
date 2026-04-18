@@ -234,12 +234,23 @@ async function main() {
         });
 
         // 4. Start Server EARLY (bind port before heavy bootstrap)
-        server.listen(PORT, '127.0.0.1', () => {
+        server.listen(PORT, '0.0.0.0', () => {
             logSync(`[SERVER] Active on port ${PORT}`);
-            cLog('SERVER', `SOMA Core online at http://127.0.0.1:${PORT}`);
+            cLog('SERVER', `SOMA Core online at http://0.0.0.0:${PORT}`);
             cLog('BACKEND', `REST API Active on /health`);
             cLog('BACKEND', `WebSocket Server Active on /ws`);
         });
+
+        // 🧠 MEMORY MANAGEMENT: Periodic GC if available
+        if (global.gc) {
+            setInterval(() => {
+                const usage = process.memoryUsage();
+                if (usage.heapUsed > 1500 * 1024 * 1024) { // > 1.5GB
+                    cLog('SYSTEM', '🧤 High memory detected, triggering manual GC...');
+                    global.gc();
+                }
+            }, 60000);
+        }
 
         // 5. Bootstrap - Register Routes AFTER listening
         cLog('BOOTSTRAP', 'Initializing SOMA systems and routes...');

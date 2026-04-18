@@ -79,9 +79,9 @@ class SomaBackend {
     console.log('[SomaBackend] WebSocket URL:', this.wsUrl);
 
     try {
-      // Try REST API first — 3s timeout so a slow/starting server doesn't hang the retry loop
+      // Try REST API first — 8s timeout (increased from 3s) so a slow/starting server doesn't hang the retry loop
       const healthCtrl = new AbortController();
-      const healthTimer = setTimeout(() => healthCtrl.abort(), 3000);
+      const healthTimer = setTimeout(() => healthCtrl.abort(), 8000);
       let response;
       try {
         response = await fetch(`${this.baseUrl}/health`, { signal: healthCtrl.signal });
@@ -277,6 +277,9 @@ class SomaBackend {
         break;
       case 'soma_activity':
         this.emit('soma_activity', payload);
+        break;
+      case 'vision_update':
+        this.emit('vision_update', payload);
         break;
       default:
         // suppress noisy unknown-type logs in production

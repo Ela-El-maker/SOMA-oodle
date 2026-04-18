@@ -6,7 +6,7 @@ import {
   Shield, User, Users, Lightbulb, ThermometerSun, ChevronLeft,
   ChevronRight, Sparkles, Terminal, Circle, BarChart3, Search, X, Clock,
   Download, TrendingUp, TrendingDown, Target, Server, Gauge, Mail, Mic,
-  Box, Share2, DollarSign, CircleDollarSign, Pencil
+  Box, Share2, DollarSign, CircleDollarSign, Pencil, Eye
 } from 'lucide-react';
 import {
   LineChart, Line, RadarChart, Radar, PolarGrid,
@@ -878,6 +878,7 @@ const SomaCommandBridge = () => {
   const [orbConversation, setOrbConversation] = useState([]);
   const [activeReasoningTree, setActiveReasoningTree] = useState(null);
   const [orbSidebarCollapsed, setOrbSidebarCollapsed] = useState(false);
+  const [orbVisionCollapsed, setOrbVisionCollapsed] = useState(false);
   const [showOrbFace, setShowOrbFace] = useState(false);
 
   // ------------------------------------------
@@ -981,8 +982,15 @@ const SomaCommandBridge = () => {
     channel: visionChannel,
     lastPerception,
     lastFrameUrl,
+    ghostCursor: visionGhostCursor,
     setChannel: setVisionChannel
   } = useVision(somaBackend, isConnected);
+
+  // Keep a ref of current vision state so the voice hook can inject it into queries
+  const visionContextRef = useRef(null);
+  useEffect(() => {
+    visionContextRef.current = { lastPerception, lastFrameUrl, channel: visionChannel };
+  }, [lastPerception, lastFrameUrl, visionChannel]);
 
   // 1. Audio Interaction
   const {
@@ -993,6 +1001,7 @@ const SomaCommandBridge = () => {
     isTalking,
     isListening,
     isThinking,
+    lastTranscript,
     systemStatus: orbSystemStatus,
     sendTextQuery,
     somaHealthy,
@@ -1001,7 +1010,7 @@ const SomaCommandBridge = () => {
     wakeWordActive,
     startWakeWordListening,
     stopWakeWordListening
-  } = useSomaAudio(handleOrbResponse);
+  } = useSomaAudio(handleOrbResponse, visionContextRef);
 
   // Expose text query globally for manual input
   useEffect(() => {
@@ -1082,7 +1091,24 @@ const SomaCommandBridge = () => {
     }, 800);
   }, [isOrbConnected]);
 
-  // 6. User presence signal — throttled activity ping so SOMA knows the user is on-page
+  // 6. Wake word — persistent preference + auto-start on mount
+  const handleWakeWordToggle = useCallback(() => {
+    if (wakeWordActive) {
+      stopWakeWordListening();
+      localStorage.removeItem('soma_wakeword_enabled');
+    } else {
+      startWakeWordListening();
+      localStorage.setItem('soma_wakeword_enabled', 'true');
+    }
+  }, [wakeWordActive, startWakeWordListening, stopWakeWordListening]);
+
+  useEffect(() => {
+    if (localStorage.getItem('soma_wakeword_enabled') === 'true') {
+      startWakeWordListening();
+    }
+  }, []); // once on mount — restore preference from last session
+
+  // 7. User presence signal — throttled activity ping so SOMA knows the user is on-page
   useEffect(() => {
     let lastSent = 0;
     const onActivity = () => {
@@ -1940,7 +1966,7 @@ const SomaCommandBridge = () => {
   // Main Render
   // ------------------------------------------
   return (
-    <div className="flex h-screen ct-background text-zinc-200 font-sans selection:bg-white/20">
+    <div className="flex h-screen ct-background text-zinc-200 font-sans selection:bg-white/50">
       {showOnboarding && <OnboardingWizard onComplete={() => setShowOnboarding(false)} />}
       {showProcessModal && <ProcessMonitor agents={agents} onClose={() => setShowProcessModal(false)} />}
       {showSystemDetail && <SystemDetailModal metricId={showSystemDetail} systemMetrics={systemMetrics} onClose={() => setShowSystemDetail(null)} />}
@@ -2039,8 +2065,6 @@ const SomaCommandBridge = () => {
           isSomaBusy={isSomaBusy}
           isConnected={isConnected}
           sidebarCollapsed={sidebarCollapsed}
-          wakeWordActive={wakeWordActive}
-          onWakeWordToggle={() => wakeWordActive ? stopWakeWordListening() : startWakeWordListening()}
         />
       </div>
 
@@ -2321,17 +2345,6 @@ const SomaCommandBridge = () => {
                   >
                     {isOrbConnected ? '● Disengage Neural Link' : '○ Establish Neural Link'}
                   </button>
-                  {/* Wake Word Toggle */}
-                  <button
-                    title={wakeWordActive ? 'Wake word active — say "Hey SOMA"' : 'Enable wake word'}
-                    className={`w-9 h-9 rounded-full border text-xs transition-all pointer-events-auto flex items-center justify-center ${wakeWordActive
-                      ? 'bg-emerald-500/20 border-emerald-500/50 text-emerald-400 animate-pulse'
-                      : 'bg-white/5 border-white/10 text-zinc-500 hover:border-white/20'
-                    }`}
-                    onClick={() => wakeWordActive ? stopWakeWordListening() : startWakeWordListening()}
-                  >
-                    {wakeWordActive ? '◉' : '◎'}
-                  </button>
                 </div>
 
                 {/* Manual Input Field */}
@@ -2365,6 +2378,13 @@ const SomaCommandBridge = () => {
                   </div>
                 )}
                 
+                {/* Transcript — shows what was heard while SOMA thinks/responds */}
+                {lastTranscript && (isThinking || isTalking) && (
+                  <div className="max-w-md text-center px-4 py-2 bg-white/5 border border-white/5 rounded-xl">
+                    <p className="text-[10px] text-zinc-500 uppercase tracking-widest mb-1">Heard</p>
+                    <p className="text-sm text-zinc-300 italic">"{lastTranscript}"</p>
+                  </div>
+                )}
                 <p className="text-[9px] text-zinc-600 uppercase tracking-widest">
                   {isListening ? 'SOMA is listening...' : isThinking ? 'Processing neural patterns...' : isTalking ? 'SOMA is responding...' : 'Neural interface standby'}
                 </p>
@@ -2385,52 +2405,179 @@ const SomaCommandBridge = () => {
               </div>
             </div>
 
-            {/* Far Right: Status Indicators */}
-            <div className="absolute top-8 right-8 z-50 flex flex-col items-end space-y-3 pointer-events-none">
-              {/* Orb / Face toggle */}
-              <div className="flex items-center gap-2 mb-1 pointer-events-auto">
-                <span className="text-zinc-600 text-[10px] font-mono uppercase tracking-widest select-none">Orb</span>
-                <button
-                  onClick={() => setShowOrbFace(v => !v)}
-                  className="relative w-9 h-5 rounded-full transition-colors duration-300 focus:outline-none flex-shrink-0"
-                  style={{ backgroundColor: showOrbFace ? '#d946ef' : '#27272a', boxShadow: showOrbFace ? '0 0 8px #d946ef50' : 'none' }}
-                >
-                  <span className="absolute top-0.5 w-4 h-4 rounded-full bg-white shadow transition-all duration-300"
-                    style={{ left: showOrbFace ? '1.125rem' : '0.125rem' }} />
-                </button>
-                <span className="text-zinc-600 text-[10px] font-mono uppercase tracking-widest select-none">Face</span>
-              </div>
+            {/* Right: Mind's Eye Vision Panel */}
+            <motion.div
+              initial={false}
+              animate={{ width: orbVisionCollapsed ? 0 : 280, opacity: orbVisionCollapsed ? 0 : 1 }}
+              transition={{ duration: 0.4, ease: 'easeInOut' }}
+              className="border-l border-white/5 flex flex-col bg-zinc-900/20 backdrop-blur-sm relative z-20 overflow-hidden"
+            >
+              <div className="w-[280px] flex flex-col h-full">
+                {/* Panel Header */}
+                <div className="p-4 border-b border-white/5 flex items-center justify-between flex-shrink-0">
+                  <div className="flex items-center gap-2">
+                    <span className="text-[10px] font-bold text-zinc-500 uppercase tracking-[0.2em]">Mind's Eye</span>
+                    <span className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${isVisionActive ? 'bg-emerald-500 shadow-[0_0_6px_#10b981]' : 'bg-zinc-700'}`} />
+                  </div>
+                  <button
+                    onClick={() => setOrbVisionCollapsed(true)}
+                    className="p-1.5 rounded-lg text-zinc-600 hover:text-zinc-300 hover:bg-white/5 transition-all"
+                  >
+                    <ChevronRight className="w-4 h-4" />
+                  </button>
+                </div>
 
-              <div className="flex items-center space-x-3 mb-2 pointer-events-auto">
-                <div className="flex flex-col items-end">
-                  <span className="text-[10px] text-zinc-500 uppercase font-bold tracking-wider">User Mic</span>
-                  <div className="h-1 w-24 bg-white/5 rounded-full mt-1 overflow-hidden border border-white/5">
-                    <div 
-                      className="h-full bg-gradient-to-r from-blue-500 to-fuchsia-500 transition-all duration-75"
-                      style={{ width: `${Math.max(2, inputVolume * 100)}%`, opacity: isOrbConnected ? 1 : 0.2 }}
-                    />
+                {/* Status + Controls */}
+                <div className="px-4 py-3 border-b border-white/5 space-y-3 flex-shrink-0">
+                  {/* Service status dots */}
+                  <div className="flex items-center justify-between">
+                    {[
+                      { label: 'Backend', status: orbSystemStatus.somaBackend },
+                      { label: 'Whisper', status: orbSystemStatus.whisperServer },
+                      { label: 'Voice', status: orbSystemStatus.elevenLabs },
+                    ].map(s => (
+                      <div key={s.label} className="flex items-center gap-1.5">
+                        <div className={`w-1.5 h-1.5 rounded-full ${
+                          s.status === 'connected' || s.status === 'ready' || s.status === 'enabled' ? 'bg-fuchsia-500 shadow-[0_0_6px_rgba(217,70,239,0.6)]' :
+                          s.status === 'fallback' ? 'bg-yellow-500' :
+                          s.status === 'initializing' ? 'bg-blue-500 animate-pulse' :
+                          'bg-rose-500'
+                        }`} />
+                        <span className="text-[9px] text-zinc-500 uppercase font-mono tracking-wider">{s.label}</span>
+                      </div>
+                    ))}
+                  </div>
+
+                  {/* Orb / Face toggle */}
+                  <div className="flex items-center justify-between">
+                    <span className="text-[9px] text-zinc-600 uppercase font-mono tracking-wider">Visualiser</span>
+                    <div className="flex items-center gap-2">
+                      <span className={`text-[9px] font-mono ${!showOrbFace ? 'text-zinc-300' : 'text-zinc-600'}`}>Orb</span>
+                      <button
+                        onClick={() => setShowOrbFace(v => !v)}
+                        className="relative w-9 h-5 rounded-full transition-colors duration-300 focus:outline-none"
+                        style={{ backgroundColor: showOrbFace ? '#d946ef' : '#27272a', boxShadow: showOrbFace ? '0 0 8px #d946ef50' : 'none' }}
+                      >
+                        <span className="absolute top-0.5 w-4 h-4 rounded-full bg-white shadow transition-all duration-300"
+                          style={{ left: showOrbFace ? '1.125rem' : '0.125rem' }} />
+                      </button>
+                      <span className={`text-[9px] font-mono ${showOrbFace ? 'text-zinc-300' : 'text-zinc-600'}`}>Face</span>
+                    </div>
+                  </div>
+
+                  {/* User mic bar */}
+                  <div className="flex items-center gap-2">
+                    <Mic className={`w-3 h-3 flex-shrink-0 ${inputVolume > 0.2 ? 'text-fuchsia-400' : 'text-zinc-600'}`} />
+                    <div className="flex-1 h-1 bg-white/5 rounded-full overflow-hidden border border-white/5">
+                      <div
+                        className="h-full bg-gradient-to-r from-blue-500 to-fuchsia-500 transition-all duration-75"
+                        style={{ width: `${Math.max(2, inputVolume * 100)}%`, opacity: isOrbConnected ? 1 : 0.2 }}
+                      />
+                    </div>
+                    <span className="text-[9px] text-zinc-600 font-mono w-6 text-right">{Math.round(inputVolume * 100)}</span>
                   </div>
                 </div>
-                <div className={`p-2 rounded-full border ${inputVolume > 0.2 ? 'border-fuchsia-500/50 bg-fuchsia-500/10' : 'border-white/5 bg-white/5'} transition-all`}>
-                  <Mic className={`w-4 h-4 ${inputVolume > 0.2 ? 'text-fuchsia-400' : 'text-zinc-600'}`} />
+
+                {/* Vision Feed */}
+                <div className="flex-1 overflow-y-auto p-3 custom-scrollbar space-y-3">
+                  {!isVisionActive ? (
+                    <div className="flex flex-col items-center justify-center h-32 text-center border border-dashed border-white/5 rounded-xl">
+                      <span className="text-zinc-600 text-[10px] uppercase tracking-widest">Vision Daemon Offline</span>
+                      <span className="text-zinc-700 text-[9px] mt-1">COS system required</span>
+                    </div>
+                  ) : !lastFrameUrl ? (
+                    <div className="flex flex-col items-center justify-center h-32 text-center border border-white/5 rounded-xl bg-white/5">
+                      <span className="text-zinc-500 text-[10px] uppercase tracking-widest animate-pulse">Initialising perception...</span>
+                    </div>
+                  ) : (
+                    <div className="relative rounded-xl overflow-hidden border border-white/10">
+                      {/* Frame */}
+                      <img
+                        src={lastFrameUrl}
+                        alt="SOMA Vision"
+                        className="w-full object-cover"
+                        style={{ maxHeight: '180px' }}
+                      />
+                      {/* Scanlines */}
+                      <div className="absolute inset-0 bg-[linear-gradient(rgba(18,16,16,0)_50%,rgba(0,0,0,0.2)_50%)] bg-[length:100%_3px] pointer-events-none opacity-40" />
+                      {/* Ghost cursor */}
+                      {visionGhostCursor && (
+                        <div
+                          className="absolute pointer-events-none transition-all duration-300"
+                          style={{ left: `${visionGhostCursor.x}%`, top: `${visionGhostCursor.y}%`, transform: 'translate(-50%,-50%)' }}
+                        >
+                          <div className={`w-3 h-3 rounded-full border-2 border-purple-400 bg-white/80 shadow-[0_0_8px_rgba(168,85,247,0.8)] ${visionGhostCursor.action === 'click' ? 'scale-150' : ''} transition-transform`} />
+                        </div>
+                      )}
+                      {/* Corner markers */}
+                      <div className="absolute top-2 left-2 w-3 h-3 border-t border-l border-white/20" />
+                      <div className="absolute top-2 right-2 w-3 h-3 border-t border-r border-white/20" />
+                      <div className="absolute bottom-2 left-2 w-3 h-3 border-b border-l border-white/20" />
+                      <div className="absolute bottom-2 right-2 w-3 h-3 border-b border-r border-white/20" />
+                      <div className="absolute bottom-2 left-1/2 -translate-x-1/2 px-2 py-0.5 bg-black/60 rounded-full text-[8px] font-mono text-zinc-500 uppercase tracking-wider">
+                        {visionChannel} stream
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Detected objects */}
+                  {lastPerception?.objects?.length > 0 && (
+                    <div className="space-y-1.5">
+                      <p className="text-[9px] text-zinc-600 uppercase tracking-widest font-mono">Detected</p>
+                      {lastPerception.objects.slice(0, 6).map((obj, i) => (
+                        <div key={i} className="flex items-center justify-between px-2 py-1 rounded bg-fuchsia-500/5 border border-fuchsia-500/10">
+                          <span className="text-[10px] text-fuchsia-300 font-mono">{obj.label}</span>
+                          <span className="text-[9px] text-zinc-500 font-mono">{(obj.score * 100).toFixed(0)}%</span>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+
+                  {/* Channel selector */}
+                  {isVisionActive && (
+                    <div className="space-y-1.5">
+                      <p className="text-[9px] text-zinc-600 uppercase tracking-widest font-mono">Channel</p>
+                      <div className="flex gap-2">
+                        {['desktop', 'webcam'].map(ch => (
+                          <button
+                            key={ch}
+                            onClick={() => setVisionChannel(ch)}
+                            className={`flex-1 py-1.5 rounded-lg text-[10px] font-bold uppercase tracking-wider transition-all border ${
+                              visionChannel === ch
+                                ? 'bg-fuchsia-500/20 border-fuchsia-500/40 text-fuchsia-300'
+                                : 'bg-white/5 border-white/5 text-zinc-600 hover:text-zinc-400'
+                            }`}
+                          >
+                            {ch}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  )}
                 </div>
               </div>
+            </motion.div>
 
-              {[
-                { label: 'Backend', status: orbSystemStatus.somaBackend, required: true },
-                { label: 'Whisper', status: orbSystemStatus.whisperServer, required: true },
-                { label: 'Voice', status: orbSystemStatus.elevenLabs, required: false },
-              ].map(s => (
-                <div key={s.label} className="flex items-center space-x-2 group relative">
-                  <span className="text-[10px] text-zinc-500 uppercase font-bold tracking-wider">{s.label}</span>
-                  <div className={`w-1.5 h-1.5 rounded-full ${s.status === 'connected' || s.status === 'ready' || s.status === 'enabled' ? 'bg-fuchsia-500 shadow-[0_0_8px_rgba(16,185,129,0.5)]' :
-                    s.status === 'fallback' ? 'bg-yellow-500 shadow-[0_0_8px_rgba(234,179,8,0.5)]' :
-                      s.status === 'initializing' ? 'bg-blue-500 animate-pulse' :
-                        'bg-rose-500 shadow-[0_0_8px_rgba(239,68,68,0.5)]'
-                    }`} />
-                </div>
-              ))}
-            </div>
+            {/* Mind's Eye re-expand button — visible when panel is collapsed */}
+            <AnimatePresence>
+              {orbVisionCollapsed && (
+                <motion.div
+                  className="absolute top-8 right-4 z-30"
+                  initial={{ scale: 0, opacity: 0 }}
+                  animate={{ scale: 1, opacity: 1 }}
+                  exit={{ scale: 0, opacity: 0 }}
+                  transition={{ type: 'spring', damping: 15, stiffness: 250 }}
+                >
+                  <button
+                    onClick={() => setOrbVisionCollapsed(false)}
+                    className="p-2.5 rounded-full border bg-fuchsia-500/10 border-fuchsia-500/30 text-fuchsia-400 hover:bg-fuchsia-500/20 transition-all"
+                    title="Expand Mind's Eye"
+                  >
+                    <Eye className="w-4 h-4" />
+                  </button>
+                </motion.div>
+              )}
+            </AnimatePresence>
 
             {/* Right Sidebar: Reasoning Tree (Absolute overlay) */}
             <AnimatePresence>
@@ -3053,6 +3200,8 @@ const SomaCommandBridge = () => {
             auditLogs={auditLogs}
             arbiters={arbiters}
             isConnected={isConnected}
+            wakeWordActive={wakeWordActive}
+            onWakeWordToggle={handleWakeWordToggle}
           />
         )}
 

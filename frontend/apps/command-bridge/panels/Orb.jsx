@@ -1,12 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { useVision } from '../hooks/useVision';
-import somaBackend from '../somaBackend';
 
 // Orb Component - Visual Interface for SOMA
-const Orb = ({ volume, isActive, isTalking, isListening, isThinking, isConnected }) => {
-  // 👁️ SOMA's Perception Layer (Visual Link)
-  const { lastFrameUrl, lastPerception, channel, ghostCursor } = useVision(somaBackend, isConnected);
-  
+const Orb = ({ volume, isActive, isTalking, isListening, isThinking }) => {
   // Animation frame time for smooth pulse effects
   const [animationTime, setAnimationTime] = useState(0);
   const animationFrameRef = useRef();
@@ -119,72 +114,6 @@ const Orb = ({ volume, isActive, isTalking, isListening, isThinking, isConnected
 
       </div>
 
-      {/* 👁️ Mind's Eye Vision Overlay — Persistent Background Perception */}
-      {lastFrameUrl && (
-        <div className="absolute inset-0 -z-20 flex items-center justify-center pointer-events-none opacity-40">
-          <div className="relative w-full h-full max-w-[500px] max-h-[300px] rounded-3xl overflow-hidden border border-white/10 shadow-2xl">
-            {/* The Image */}
-            <img 
-              src={lastFrameUrl} 
-              alt="SOMA Vision" 
-              className="w-full h-full object-cover grayscale brightness-50 contrast-125" 
-            />
-            
-            {/* Scanline Effect */}
-            <div className="absolute inset-0 bg-[linear-gradient(rgba(18,16,16,0)_50%,rgba(0,0,0,0.25)_50%),linear-gradient(90deg,rgba(255,0,0,0.06),rgba(0,255,0,0.02),rgba(0,0,255,0.06))] bg-[length:100%_2px,3px_100%] pointer-events-none" />
-            
-            {/* Detected Objects Overlay */}
-            {lastPerception?.objects?.slice(0, 5).map((obj, i) => (
-              <div 
-                key={i}
-                className="absolute px-2 py-0.5 bg-fuchsia-500/20 border border-fuchsia-500/40 rounded text-[9px] font-mono text-fuchsia-300 uppercase tracking-tighter"
-                style={{ 
-                  left: `${10 + (i * 20)}%`, 
-                  top: `${20 + (Math.sin(animationTime/1000 + i) * 10)}%`,
-                  boxShadow: '0 0 10px rgba(217, 70, 239, 0.3)'
-                }}
-              >
-                {obj.label} ({(obj.score * 100).toFixed(0)}%)
-              </div>
-            ))}
-
-            {/* Ghost Cursor Overlay */}
-            {ghostCursor && (
-              <div 
-                className="absolute pointer-events-none z-50 transition-all duration-300 ease-out"
-                style={{ 
-                  left: `${ghostCursor.x}%`, 
-                  top: `${ghostCursor.y}%`,
-                  transform: 'translate(-50%, -50%)'
-                }}
-              >
-                {/* Outer Glow */}
-                <div className={`absolute inset-0 rounded-full blur-md bg-purple-500/50 ${ghostCursor.action === 'click' ? 'scale-150 opacity-100' : 'scale-100 opacity-50'}`} />
-
-                {/* The Cursor Dot */}
-                <div className="relative w-3 h-3 bg-white rounded-full border-2 border-purple-500 shadow-[0_0_10px_rgba(168,85,247,0.8)]" />
-
-                {/* Action Label */}
-                <div className="absolute top-4 left-4 whitespace-nowrap px-1.5 py-0.5 bg-purple-600/80 rounded text-[7px] font-bold text-white uppercase tracking-tighter">
-                  {ghostCursor.action}
-                </div>
-              </div>
-            )}
-
-            {/* Corner Markers */}
-
-            <div className="absolute top-4 left-4 w-4 h-4 border-t-2 border-l-2 border-white/20" />
-            <div className="absolute top-4 right-4 w-4 h-4 border-t-2 border-r-2 border-white/20" />
-            <div className="absolute bottom-4 left-4 w-4 h-4 border-b-2 border-l-2 border-white/20" />
-            <div className="absolute bottom-4 right-4 w-4 h-4 border-b-2 border-r-2 border-white/20" />
-            
-            {/* Channel Label */}
-            <div className="absolute bottom-4 left-1/2 -translate-x-1/2 px-3 py-1 bg-black/60 backdrop-blur-md rounded-full border border-white/10 text-[8px] font-bold text-zinc-400 uppercase tracking-[0.2em]">
-              {channel} Stream
-            </div>
-          </div>
-        </div>
-      )}
     </div>
   );
 };

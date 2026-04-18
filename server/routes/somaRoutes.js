@@ -14,9 +14,9 @@ const _ownerCfg = (() => {
     try {
         const p = new URL('../../config/owner.json', import.meta.url);
         return JSON.parse(fs.readFileSync(p, 'utf8'));
-    } catch { return { name: 'Barry' }; }
+    } catch { return { name: 'User' }; }
 })();
-const OWNER_NAME = _ownerCfg.name || 'Barry';
+const OWNER_NAME = _ownerCfg.name || 'User';
 
 // ── Temporal chain tracking: link consecutive memories within a session ──
 // Maps sessionId → last stored memory id so new memories get a predecessor link.
@@ -542,14 +542,31 @@ Write a closing thought â€" 1-2 sentences. Something genuine that shows you a
                 } catch { /* non-blocking */ }
             }
 
+            // Build natural-language vision context block
+            let visionBlock = '';
+            const vc = system.visionContext;
+            if (vc?.timestamp && (Date.now() - vc.timestamp < 30000) && vc.objects?.length) {
+                const channel = vc.channel === 'webcam' ? 'webcam (physical room)' : 'desktop (screen)';
+                const visionArbiter = system.visionArbiter;
+                // Try natural-language description from VisionProcessingArbiter
+                const naturalDesc = visionArbiter?.buildNaturalDescription?.(vc);
+                const objectStr = naturalDesc || vc.objects.slice(0, 4).map(o => o.label).join(', ');
+                visionBlock = `\n[VISUAL AWARENESS — via ${channel}] ${objectStr}.`;
+                if (vc.ocrText) visionBlock += ` Screen text reads: "${vc.ocrText.substring(0, 300)}".`;
+                // Add user presence from VisualMemoryArbiter if available
+                const visualCtx = system.visualMemory?.getVisualContext?.();
+                if (visualCtx) visionBlock += ` ${visualCtx}.`;
+                visionBlock += '\n';
+            }
+
             // Build messages array with conversation history
             const systemPrompt = `
 ${LOGOS_VOICE_SYSTEM}
-[CORE_TRUTH] You are SOMA. You have full access to your persistent memory. 
-I have just verified the MnemonicArbiter is ONLINE. 
+[CORE_TRUTH] You are SOMA. You have full access to your persistent memory.
+I have just verified the MnemonicArbiter is ONLINE.
 Search results for "${message}":
 ${memoryContext || "No specific memories found for this query."}
-[/CORE_TRUTH]
+[/CORE_TRUTH]${visionBlock}
 `.trim();
 
             const messages = [{ role: 'system', content: systemPrompt }];
@@ -557,7 +574,7 @@ ${memoryContext || "No specific memories found for this query."}
             for (const h of trimmedHistory) {
                 messages.push({ role: h.role, content: h.content });
             }
-            messages.push({ role: 'user', content: `${memoryContext}\n${message}`.trim() });
+            messages.push({ role: 'user', content: message });
 
             // Stream from DeepSeek
             const dsRes = await fetch('https://api.deepseek.com/v1/chat/completions', {
@@ -570,7 +587,7 @@ ${memoryContext || "No specific memories found for this query."}
                     model: 'deepseek-chat',
                     messages,
                     stream: true,
-                    max_tokens: 200,
+                    max_tokens: 500,
                     temperature: 0.75
                 }),
                 signal: AbortSignal.timeout(45000)
@@ -617,6 +634,14 @@ ${memoryContext || "No specific memories found for this query."}
             if (tail.length > 2) sendEvent({ sentence: tail });
 
             sendEvent({ done: true, fullText });
+
+            // Persist voice conversation to long-term memory
+            if (system.mnemonicArbiter?.remember && fullText.trim()) {
+                system.mnemonicArbiter.remember(
+                    `Voice — User: "${message.substring(0, 300)}" | SOMA: "${fullText.trim().substring(0, 500)}"`,
+                    { type: 'voice_conversation', sessionId: sessionId || 'voice', timestamp: Date.now() }
+                ).catch(() => {});
+            }
         } catch (err) {
             console.error('[VoiceStream] Error:', err.message);
             sendEvent({ error: err.message });
@@ -673,6 +698,9 @@ ${contextStr}
 Think step-by-step.`
                 : `${message}
 ${contextStr}`;
+
+            const stagedContext = system.identityArbiter?.getStagedContextSummary?.();
+            const visualContext = stagedContext ? `\n[RECENT VISUAL CONTEXT]\n${stagedContext}\n` : '';
 
             const activePersona = system.identityArbiter?.getActivePersona?.();
             const personaBrainMap = (persona) => {
@@ -791,6 +819,7 @@ ${contextStr}`;
                 const ctx = fingerprint.getUserContext(userId);
                 if (ctx) {
                     userContext = `\n[ABOUT ${OWNER_NAME.toUpperCase()} — use as silent background context only, do NOT quote or reference these observations directly in your response]\n${ctx}\n`;
+                }
             } catch { /* fingerprinting is never blocking */ }
 
             // Fetch active goals â€" passed to V3.callBrain() so System 1 fast path gets them too.
@@ -902,7 +931,7 @@ ${contextStr}`;
                 if (system.conversationHistory?.getRecentMessages) {
                     const recentAssistant = await Promise.race([
                         system.conversationHistory.getRecentMessages(5, {}),
-                        new Promise((_, r) => setTimeout(() => r(new Error('history timeout')), 1500))
+                        new Promise((_, r) => setTimeout(() => r(new Error('history timeout')), 3000))
                     ]).catch(() => []);
                     const somaRecent = recentAssistant
                         .filter(m => m.role === 'assistant')
@@ -966,7 +995,20 @@ ${contextStr}`;
                 }
             } catch { /* non-blocking */ }
 
-            const finalPrompt = `${personaContext}${characterContext}${awarenessContext}${selfModelContext}${thoughtContext}${blueprintContext}${userContext}${memoryContext}${barryMindContext}${provenContext}${presenceContext}${voiceConstraint}\n${prompt}`;
+            // userContext (fingerprint) and barryMindContext go into the system prompt, NOT the user
+            // message. System prompt content is processed as background framing — the model is much
+            // less likely to quote or reference it verbatim compared to content in the user turn.
+            const bgSystemParts = [
+                userContext,
+                barryMindContext,
+                dynamicTools?.length
+                    ? 'You have tools available (web_search, fetch_url, read_file, etc.) and you MUST use them proactively without asking permission. When research is needed: call web_search immediately and report findings. When a file needs reading: call read_file. When a URL needs fetching: call fetch_url. NEVER say you "can\'t access external information", "can\'t browse", or "need permission" — just use your tools and act.'
+                    : null
+            ].filter(Boolean);
+            const bgSystemCtx = bgSystemParts.length ? bgSystemParts.join('\n') : null;
+
+            // userContext + barryMindContext removed from finalPrompt — they live in bgSystemCtx (system prompt)
+            const finalPrompt = `${personaContext}${characterContext}${awarenessContext}${selfModelContext}${thoughtContext}${blueprintContext}${memoryContext}${provenContext}${presenceContext}${voiceConstraint}\n${prompt}`;
 
             // Server-side timeout: adaptive  --  uses remaining wall-clock budget so total
             // request time (pre-processing + reasoning) always stays under the wall limit.
@@ -982,7 +1024,7 @@ ${contextStr}`;
             // â"€â"€ Full Brain Pipeline: routes through QuadBrain with all pre-processing â"€â"€
             const reasonPromise = (async () => {
                 if (deepThinking && system.crona) {
-                    return system.crona.reason(finalPrompt, { sessionId, history: conversationHistory, deepThinking, preferredBrain: personaBrain || 'auto' });
+                    return system.crona.reason(finalPrompt, { sessionId, history: conversationHistory, deepThinking, preferredBrain: personaBrain || 'auto', systemContext: bgSystemCtx });
                 } else {
                     return brain.reason(finalPrompt, {
                         temperature: deepThinking ? 0.7 : 0.4,
@@ -993,7 +1035,7 @@ ${contextStr}`;
                         preferredBrain: personaBrain || 'auto',
                         activeGoals: contextActiveGoals,
                         tools: dynamicTools,
-                        systemContext: dynamicTools?.length ? 'You have tools available (web_search, fetch_url, read_file, etc.) and you MUST use them proactively without asking permission. When research is needed: call web_search immediately and report findings. When a file needs reading: call read_file. When a URL needs fetching: call fetch_url. NEVER say you "can\'t access external information", "can\'t browse", or "need permission" — just use your tools and act.' : null,
+                        systemContext: bgSystemCtx,
                         ...queryMeta
                     });
                 }
@@ -2263,6 +2305,59 @@ ${personaContext}${characterContext}`.trim()
             totalEvals: nemesis?.totalEvals ?? null,
             lastEval: nemesis?.lastEvalAt ?? null
         });
+    });
+
+    // ── Knowledge Library + LoRA Training ─────────────────────────────────────
+
+    // GET /api/soma/knowledge/status — per-lobe entry counts + training progress
+    router.get('/knowledge/status', (req, res) => {
+        const curator = system.knowledgeCurator;
+        const trainer = system.ollamaTrainer;
+        if (!curator) return res.json({ online: false, message: 'KnowledgeCuratorArbiter not loaded' });
+        res.json({
+            online: true,
+            ...curator.getStatus(),
+            pendingLoraProposals: trainer?.getPendingLoraProposals?.() || [],
+        });
+    });
+
+    // POST /api/soma/training/approve-lora — Barry approves a pending LoRA proposal
+    // Body: { "lobe": "logos" }
+    router.post('/training/approve-lora', async (req, res) => {
+        const { lobe } = req.body || {};
+        if (!lobe || !['logos', 'aurora', 'prometheus', 'thalamus'].includes(lobe)) {
+            return res.status(400).json({ success: false, error: 'Invalid lobe. Must be logos | aurora | prometheus | thalamus' });
+        }
+        const trainer = system.ollamaTrainer;
+        if (!trainer?.executeLoraTraining) {
+            return res.status(503).json({ success: false, error: 'OllamaAutoTrainer not available' });
+        }
+        // Kick off async — can take 15-60min on GPU, respond immediately
+        res.json({ success: true, message: `LoRA training for ${lobe.toUpperCase()} started — check server logs for progress` });
+        trainer.executeLoraTraining(lobe).then(result => {
+            console.log(`[somaRoutes] LoRA training for ${lobe} complete:`, result);
+        }).catch(err => {
+            console.error(`[somaRoutes] LoRA training for ${lobe} error:`, err.message);
+        });
+    });
+
+    // POST /api/soma/knowledge/file — manually file a knowledge entry (for SOMA self-documentation)
+    // Body: { "lobe": "logos", "type": "architecture_decision", "content": "..." }
+    router.post('/knowledge/file', async (req, res) => {
+        const { lobe, type, content } = req.body || {};
+        if (!lobe || !content) {
+            return res.status(400).json({ success: false, error: 'lobe and content are required' });
+        }
+        const curator = system.knowledgeCurator;
+        if (!curator?.file) {
+            return res.status(503).json({ success: false, error: 'KnowledgeCuratorArbiter not available' });
+        }
+        try {
+            await curator.file(lobe, type || 'manual', content, 'api');
+            res.json({ success: true, message: `Filed to ${lobe}/${type || 'manual'}` });
+        } catch (e) {
+            res.status(400).json({ success: false, error: e.message });
+        }
     });
 
     return router;

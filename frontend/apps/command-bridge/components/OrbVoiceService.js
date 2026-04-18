@@ -18,6 +18,7 @@ class OrbVoiceService {
     this.onError = null;
     this.volumeCheckInterval = null;
     this.isListening = false;
+    this._wantListening = false; // user intent, separate from API state
   }
 
   /**
@@ -63,6 +64,7 @@ class OrbVoiceService {
       this.recognition.onstart = () => {
         console.log('[OrbVoice] Recognition started');
         this.isListening = true;
+        this._wantListening = true;
       };
 
       this.recognition.onresult = (event) => {
@@ -89,7 +91,7 @@ class OrbVoiceService {
         // Auto-restart on certain errors
         if (event.error === 'no-speech' || event.error === 'audio-capture') {
           setTimeout(() => {
-            if (this.isListening) {
+            if (this._wantListening) {
               this.recognition?.start();
             }
           }, 1000);
@@ -100,9 +102,9 @@ class OrbVoiceService {
         console.log('[OrbVoice] Recognition ended');
         this.isListening = false;
 
-        // Auto-restart for continuous listening
+        // Auto-restart if user still wants to be listening
         setTimeout(() => {
-          if (this.isListening) {
+          if (this._wantListening) {
             this.recognition?.start();
           }
         }, 500);
@@ -170,6 +172,7 @@ class OrbVoiceService {
     console.log('[OrbVoice] Stopping voice service...');
 
     this.isListening = false;
+    this._wantListening = false;
 
     // Stop recognition
     if (this.recognition) {
@@ -222,14 +225,19 @@ class OrbVoiceService {
       utterance.volume = options.volume || 1.0;
       utterance.lang = options.lang || 'en-US';
 
-      // Try to find a nice voice
-      const voices = this.synthesis.getVoices();
-      const preferredVoice = voices.find(v =>
-        v.lang.startsWith('en') && (v.name.includes('Female') || v.name.includes('Zira') || v.name.includes('Samantha'))
-      ) || voices.find(v => v.lang.startsWith('en'));
+      // Try to find a nice voice — wait for voices to load if needed
+      const applyVoice = () => {
+        const voices = this.synthesis.getVoices();
+        const preferredVoice = voices.find(v =>
+          v.lang.startsWith('en') && (v.name.includes('Female') || v.name.includes('Zira') || v.name.includes('Samantha'))
+        ) || voices.find(v => v.lang.startsWith('en'));
+        if (preferredVoice) utterance.voice = preferredVoice;
+      };
 
-      if (preferredVoice) {
-        utterance.voice = preferredVoice;
+      if (this.synthesis.getVoices().length === 0) {
+        this.synthesis.onvoiceschanged = () => { applyVoice(); this.synthesis.onvoiceschanged = null; };
+      } else {
+        applyVoice();
       }
 
       utterance.onstart = () => {

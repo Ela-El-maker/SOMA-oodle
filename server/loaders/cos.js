@@ -22,6 +22,9 @@ import DaemonManager from '../../core/DaemonManager.js';
 import CapabilityDiscoveryDaemon from '../../daemons/CapabilityDiscoveryDaemon.js';
 import WebPerceptionDaemon from '../../daemons/WebPerceptionDaemon.js';
 import VisionDaemon from '../../daemons/VisionDaemon.js';
+import ProactivePerceptionArbiter from '../../arbiters/ProactivePerceptionArbiter.js';
+import { VisualMemoryArbiter } from '../../arbiters/VisualMemoryArbiter.js';
+import KnowledgeCuratorArbiter from '../../arbiters/KnowledgeCuratorArbiter.js';
 
 export async function loadCOSSystems(system) {
     console.log('\n[Loader] 🧠 Initializing Cognitive Operating System (COS) Layer...');
@@ -162,6 +165,15 @@ export async function loadCOSSystems(system) {
         daemonManager.register(visionDaemon);
         system.visionDaemon = visionDaemon;
 
+        // VisualMemoryArbiter — tags and organizes what SOMA sees (user presence, room type)
+        const visualMemory = new VisualMemoryArbiter({
+            messageBroker: system.messageBroker,
+            mnemonicArbiter: system.mnemonicArbiter,
+            visionArbiter: null // wired later by extended.js
+        });
+        system.visualMemory = visualMemory;
+        if (system.arbiters) system.arbiters.set('visualMemory', visualMemory);
+
         // Self-healing: probe every registered capability every 60s
         const capabilityDaemon = new CapabilityDiscoveryDaemon({
             name: 'CapabilityDiscoveryDaemon',
@@ -180,13 +192,44 @@ export async function loadCOSSystems(system) {
         daemonManager.register(webPerceptionDaemon);
         system.webPerceptionDaemon = webPerceptionDaemon;
 
+        // Proactive Perception — personality layer for visual data
+        const proactivePerception = new ProactivePerceptionArbiter({
+            messageBroker: system.messageBroker,
+            mnemonicArbiter: system.mnemonic || system.mnemonicArbiter,
+            identityArbiter: system.identityArbiter
+        });
+        await proactivePerception.initialize();
+        system.messageBroker.registerArbiter('ProactivePerceptionArbiter', {
+            instance: proactivePerception,
+            role: 'personality',
+            lobe: 'limbic',
+            classification: 'personality'
+        });
+        system.proactivePerception = proactivePerception;
+
+        // ── Knowledge Curator — auto-files signals into lobe MD libraries ──
+        const knowledgeCurator = new KnowledgeCuratorArbiter({
+            messageBroker: system.messageBroker,
+        });
+        system.knowledgeCurator = knowledgeCurator;
+        if (system.arbiters) system.arbiters.set('knowledgeCurator', knowledgeCurator);
+        system.messageBroker.registerArbiter('KnowledgeCuratorArbiter', {
+            instance: knowledgeCurator,
+            role: 'librarian',
+            lobe: 'hippocampus',
+            classification: 'knowledge'
+        });
+        console.log('      ✅ KnowledgeCuratorArbiter online (lobe knowledge libraries active)');
+
         // Expose COS subsystems globally so perceptionRoutes.js can access them
         // without circular imports (same pattern as global.SOMA_TRADING)
         global.SOMA_COS = {
             capabilityDaemon,
             webPerceptionDaemon,
             visionDaemon,
-            attentionArbiter
+            proactivePerception,
+            attentionArbiter,
+            knowledgeCurator
         };
 
         await daemonManager.startAll();
@@ -273,40 +316,6 @@ export async function loadCOSSystems(system) {
             }).catch(() => {}); // non-fatal if GoalPlanner not loaded
         });
 
-        // Visual Proactivity (Predictive Cortex) — pre-fetch contexts based on vision
-        let lastVisualContext = 0;
-        system.messageBroker.subscribe('vision.perceived', (signal) => {
-            const now = Date.now();
-            if (now - lastVisualContext < 60000) return; // Debounce context switches to max 1/min
-            
-            const analysis = signal?.payload?.analysis;
-            if (!analysis?.objects) return;
-
-            const labels = analysis.objects.map(o => o.label.toLowerCase());
-            let contextQuery = null;
-
-            if (labels.includes('chart') || labels.includes('graph')) {
-                contextQuery = 'finance trading portfolio market';
-            } else if (labels.includes('code editor') || labels.includes('terminal')) {
-                contextQuery = 'code engineering terminal workspace development';
-            }
-
-            // If a known context is detected, pre-fetch memories and shift attention
-            if (contextQuery && (system.mnemonic || system.mnemonicArbiter)) {
-                lastVisualContext = now;
-                const mnemonic = system.mnemonic || system.mnemonicArbiter;
-                console.log(`[SOMA] 👁️ Visual Proactivity: Detected context [${labels.find(l => contextQuery.includes(l.split(' ')[0]))}], pre-fetching memories...`);
-                
-                // Warm up the memory cache asynchronously
-                if (mnemonic.recall) {
-                    mnemonic.recall(contextQuery, 5).catch(() => {});
-                }
-                
-                // Shift attention toward the detected visual domain
-                attentionArbiter.setFocus(contextQuery.split(' ')[0], 60000); // 1 min focus
-            }
-        });
-
         // Goal created — focus attention on the goal's domain for 10 min
         system.messageBroker.subscribe('goal.created', (signal) => {
             const { category, title } = signal?.payload || {};
@@ -338,14 +347,6 @@ export async function loadCOSSystems(system) {
                 if (score < 0.4) {
                     curiosity.stimulateCuriosity({ topic: comp, source: 'self_model', strength: 1 - score });
                 }
-            }
-        });
-
-        // goal.created → shift attention focus for high-priority goals
-        system.messageBroker.subscribe('goal.created', (signal) => {
-            const { category, priority } = signal.payload || {};
-            if (priority > 70 && system.messageBroker.attentionEngine) {
-                system.messageBroker.attentionEngine.setFocus(category, 120000); // 2 min focus
             }
         });
 
@@ -388,7 +389,7 @@ export async function loadCOSSystems(system) {
             }
         });
 
-        console.log('      ✅ COS Perception Layer ACTIVE (Watchdog + 7 Daemons + Swarm Intelligence)');
+        console.log('      ✅ COS Perception Layer ACTIVE (Watchdog + 8 Daemons + Swarm Intelligence)');
 
         return {
             attentionArbiter,
@@ -396,7 +397,8 @@ export async function loadCOSSystems(system) {
             engineeringSwarm,
             swarmOptimizer,
             discoverySwarm,
-            curiosityReactor
+            curiosityReactor,
+            proactivePerception
         };
 
     } catch (err) {

@@ -72,6 +72,20 @@ const SignalDefinitions = {
     'user.interaction': {
         description: 'Direct user input through chat or orb',
         required: ['text', 'mode']
+    },
+
+    // ── Knowledge Library (Lobe Training Dataset) ──
+    'knowledge.filed': {
+        description: 'Emitted when KnowledgeCuratorArbiter writes a new MD entry to a lobe library',
+        required: ['lobe', 'type', 'filepath', 'count']
+    },
+    'training.threshold.approaching': {
+        description: 'Emitted when a lobe knowledge library reaches 75% of the training threshold',
+        required: ['lobe', 'count', 'threshold', 'remaining']
+    },
+    'training.threshold.ready': {
+        description: 'Emitted when a lobe knowledge library hits 100 entries and is ready for LoRA fine-tuning',
+        required: ['lobe', 'count', 'knowledgeDir', 'message']
     }
 };
 

@@ -16,6 +16,7 @@
 import fs from 'fs/promises';
 import path from 'path';
 import { createRequire } from 'module';
+import AutonomousCapabilityExpansion from '../arbiters/AutonomousCapabilityExpansion.js';
 const require = createRequire(import.meta.url);
 
 const ROOT_PATH = process.cwd();
@@ -66,6 +67,14 @@ export class SelfEvolvingGoalEngine {
         this.toolCreator    = deps.toolCreator    || this.toolCreator;
         this.system         = deps.system         || this.system;
         this.nemesis        = deps.nemesis        || this.nemesis;
+
+        // Initialize Autonomous Capability Expansion (ACE)
+        this.ace = new AutonomousCapabilityExpansion({
+            quadBrain: this.brain,
+            messageBroker: this.system?.messageBroker,
+            logger: console
+        });
+        await this.ace.initialize().catch(() => {});
 
         console.log(`[${this.name}] 🧬 Initializing self-evolving goal engine...`);
 
@@ -220,6 +229,54 @@ export class SelfEvolvingGoalEngine {
                     name.toLowerCase().replace(/arbiter|engine/gi, '')
                 ))
                 .slice(0, 25);
+
+            // 🧬 Sovereign Assembly: Autonomously integrate dormant arbiters
+            if (this.ace && unloadedArbiters.length > 0) {
+                const targetArbiter = unloadedArbiters[0];
+                console.log(`[${this.name}] 🧬 Sovereign Assembly: Attempting to integrate ${targetArbiter}...`);
+                
+                const integration = await this.ace.integrateDormantCapability(targetArbiter, this.system);
+                
+                if (integration.success) {
+                    await this.memory?.remember?.(
+                        `Autonomous Capability Expansion (ACE): Successfully integrated ${targetArbiter} into active CNS.`,
+                        { type: 'capability_expansion', importance: 9 }
+                    ).catch(() => {});
+                    return;
+                } else {
+                    // 🚨 SELF-HEALING PROTOCOL: Trigger Emergency Repair
+                    console.warn(`[${this.name}] 🚨 Integration FAILED for ${targetArbiter}. Triggering Self-Healing Protocol...`);
+                    
+                    if (this.goalPlanner) {
+                        const repairGoal = await this.goalPlanner.createGoal({
+                            type: 'operational',
+                            category: 'self_repair',
+                            title: `Emergency Repair: ${targetArbiter}`,
+                            description: `The system failed to integrate the dormant capability "${targetArbiter}" due to a crash or syntax error. 
+
+ERROR: ${integration.error}
+FILE: ${integration.filePath}
+
+TASK: Use the Engineering Swarm to analyze the file, identify the bug or missing dependency, and rewrite it so it can be safely loaded. Verify the fix with a syntax check before completing.`,
+                            priority: 95, // Critical priority
+                            confidence: 0.9,
+                            assignedTo: ['EngineeringSwarmArbiter'],
+                            metadata: {
+                                source: 'ace_self_healing',
+                                targetArbiter,
+                                error: integration.error,
+                                stack: integration.stack,
+                                filePath: integration.filePath
+                            }
+                        }, 'emergency_protocol');
+
+                        if (repairGoal?.success) {
+                            console.log(`[${this.name}] 🛠️  Emergency Repair goal dispatched for ${targetArbiter}.`);
+                        }
+                    }
+                    return; // End cycle to allow repair to complete
+                }
+            }
 
             const activeGoalTitles = [];
             for (const id of (this.goalPlanner?.activeGoals || new Set())) {

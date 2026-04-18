@@ -8,10 +8,29 @@
  */
 
 import path from 'path';
+import os from 'os';
 import { createRequire } from 'module';
 import { sentinel } from '../../core/DependencySentinel.js';
 
 const require = createRequire(import.meta.url);
+
+/**
+ * 🛡️ Memory Firewall: Prevents OOM by checking RAM before loading heavy phases.
+ */
+function checkMemoryFirewall(phaseName) {
+    const totalMem = os.totalmem();
+    const freeMem = os.freemem();
+    const usage = (totalMem - freeMem) / totalMem;
+    
+    if (usage > 0.92) {
+        console.warn(`[Firewall] 🚨 CRITICAL MEMORY (${(usage * 100).toFixed(1)}%). Skipping Phase: ${phaseName}`);
+        return false;
+    }
+    if (usage > 0.85) {
+        console.warn(`[Firewall] ⚠️ High Memory Pressure (${(usage * 100).toFixed(1)}%). Proceeding with caution.`);
+    }
+    return true;
+}
 
 // ──────────────────────────────────────────
 // PHASE A: Infrastructure (no dependencies)
@@ -471,7 +490,10 @@ export async function loadExtendedSystems(system) {
     const ext = {};
 
     // ── ComputerControlArbiter + VisionProcessingArbiter (MOVED TO TOP TO AVOID PERSONA DEADLOCK) ──
-    if (process.env.SOMA_LOAD_VISION === 'true') {
+    if (!checkMemoryFirewall('Vision')) {
+        ext.computerControl = null;
+        ext.visionArbiter = null;
+    } else if (process.env.SOMA_LOAD_VISION === 'true') {
         ext.computerControl = await safeLoad('ComputerControlArbiter', async () => {
             const { ComputerControlArbiter } = await import(`../../arbiters/ComputerControlArbiter.js?cb=${Date.now()}`);
             return new ComputerControlArbiter({ name: 'ComputerControl', dryRun: false });
@@ -504,6 +526,7 @@ export async function loadExtendedSystems(system) {
     // ═══════════════════════════════════════════
     // PHASE A: Infrastructure (reuse essential tier where available)
     // ═══════════════════════════════════════════
+    if (!checkMemoryFirewall('Infrastructure')) return ext;
     console.log('\n[Phase A] Infrastructure & Data...');
 
     // Reuse arbiters already loaded by loadEssentialSystems()
@@ -586,6 +609,12 @@ export async function loadExtendedSystems(system) {
         console.log('[Phase D] ⏭️ Skipped trading pipeline (set SOMA_LOAD_TRADING=true to enable)');
     }
     if (loadHeavyCognitive) {
+    if (!checkMemoryFirewall('Core Specialists')) {
+        loadHeavyCognitive = false; 
+    }
+    }
+
+    if (loadHeavyCognitive) {
     console.log('\n[Phase B] Core Specialists (HEAVYWEIGHT)...');
 
     ext.reasoning = await safeLoad('ReasoningChamber', () =>
@@ -659,6 +688,12 @@ export async function loadExtendedSystems(system) {
     // Lighter than B/C. Loads with SOMA_LOAD_TRADING=true OR SOMA_LOAD_HEAVY=true.
     // ═══════════════════════════════════════════
     if (loadTrading) {
+    if (!checkMemoryFirewall('Trading')) {
+        loadTrading = false;
+    }
+    }
+
+    if (loadTrading) {
     console.log('\n[Phase D] Trading Pipeline...');
 
     ext.mtfAnalyzer = await safeLoad('MultiTimeframeAnalyzer', () =>
@@ -697,6 +732,7 @@ export async function loadExtendedSystems(system) {
     // ═══════════════════════════════════════════
     // PHASE E: Learning & Self-Improvement
     // ═══════════════════════════════════════════
+    if (!checkMemoryFirewall('Learning & Self-Improvement')) return ext;
     console.log('\n[Phase E] Learning & Self-Improvement...');
 
     // Reuse from Tier 1 if available
@@ -864,6 +900,7 @@ export async function loadExtendedSystems(system) {
     // ═══════════════════════════════════════════
     // PHASE F: Knowledge & Research
     // ═══════════════════════════════════════════
+    if (!checkMemoryFirewall('Knowledge & Research')) return ext;
     console.log('\n[Phase F] Knowledge & Research...');
 
     ext.fragmentComms = await safeLoad('FragmentCommunicationHub', () =>
@@ -934,6 +971,7 @@ export async function loadExtendedSystems(system) {
     // ═══════════════════════════════════════════
     // PHASE G: Identity & Context
     // ═══════════════════════════════════════════
+    if (!checkMemoryFirewall('Identity & Context')) return ext;
     console.log('\n[Phase G] Identity & Context...');
 
     // Reuse from Tier 1 if available
@@ -1009,6 +1047,7 @@ export async function loadExtendedSystems(system) {
     // Gate everything behind SOMA_LOAD_HEAVY.
     // ═══════════════════════════════════════════
     if (process.env.SOMA_LOAD_HEAVY === 'true') {
+    if (!checkMemoryFirewall('Self-Awareness')) return ext;
     console.log(`\n[Phase I] Self-Awareness & Autonomy... (heap: ${(process.memoryUsage().heapUsed / 1024 / 1024).toFixed(0)}MB)`);
 
     ext.reflexArbiter = await safeLoad('ReflexArbiter (Von Stratum)', () =>
@@ -1307,7 +1346,8 @@ export async function loadExtendedSystems(system) {
     // AutonomousExpansion — give it system reference
     if (ext.autonomousExpansion) {
         ext.autonomousExpansion.system = system;
-        console.log('    🔗 AutonomousCapabilityExpansion ← System reference');
+        ext.autonomousExpansion.startAutonomousScan(system, 20 * 60 * 1000);
+        console.log('    🔗 AutonomousCapabilityExpansion ← System reference + 20min scan started');
     }
 
     // ── AUTONOMOUS BACKGROUND SYSTEMS ──
@@ -1505,8 +1545,15 @@ export async function loadExtendedSystems(system) {
             trainingDataExporter: ext.trainingDataExporter,
             quadBrain: system.quadBrain   // for synthetic Gemini data generation
         });
+        system.ollamaTrainer = ext.ollamaAutoTrainer; // alias used by somaRoutes
         system.ollamaAutoTrainer = ext.ollamaAutoTrainer;
-        console.log('    🔗 OllamaAutoTrainer ← ConversationHistory, PersonalityForge, TrainingDataExporter, QuadBrain (AUTO-STARTED)');
+        // Wire to KnowledgeCuratorArbiter so threshold signals trigger autonomous training
+        if (system.messageBroker) {
+            ext.ollamaAutoTrainer.wireKnowledgeCurator(system.messageBroker);
+        }
+        // Wire NEMESIS as autonomous quality gate + QuadBrain for hot-swap
+        ext.ollamaAutoTrainer.wireNemesisAndBrain(system.nemesis, system.quadBrain);
+        console.log('    🔗 OllamaAutoTrainer ← ConversationHistory, PersonalityForge, TrainingDataExporter, QuadBrain + KnowledgeCurator + NEMESIS (AUTONOMOUS)');
     } catch (e) {
         console.warn(`    ⚠️ OllamaAutoTrainer skipped: ${e.message}`);
         ext.ollamaAutoTrainer = null;
@@ -1527,37 +1574,45 @@ export async function loadExtendedSystems(system) {
     }
 
     // ── ComputerControlArbiter + VisionProcessingArbiter ──
-    // SOMA_LOAD_VISION=true: load both (CLIP WASM compilation blocks ~30-90s — opt-in only)
-    if (process.env.SOMA_LOAD_VISION === 'true') {
-        ext.computerControl = await safeLoad('ComputerControlArbiter', async () => {
-            const { ComputerControlArbiter } = await import(`../../arbiters/ComputerControlArbiter.js?cb=${Date.now()}`);
-            return new ComputerControlArbiter({ name: 'ComputerControl', dryRun: false });
-        });
-        if (ext.computerControl) {
-            system.computerControl = ext.computerControl;
-            if (system.arbiters) system.arbiters.set('computerControl', ext.computerControl);
-        }
+    // 🔱 SOVEREIGN OVERRIDE: Vision is now a core sense, enabled by default.
+    // The VisionDaemon handles polling intervals to prevent event-loop starvation.
+    ext.computerControl = await safeLoad('ComputerControlArbiter', async () => {
+        const { ComputerControlArbiter } = await import(`../../arbiters/ComputerControlArbiter.js?cb=${Date.now()}`);
+        return new ComputerControlArbiter({ name: 'ComputerControl', dryRun: false });
+    });
+    if (ext.computerControl) {
+        system.computerControl = ext.computerControl;
+        if (system.arbiters) system.arbiters.set('computerControl', ext.computerControl);
+    }
 
-        // VisionProcessingArbiter: CLIP model loads ONNX/WASM synchronously — run in background
-        try {
-            ext.visionArbiter = new VisionProcessingArbiter({ name: 'VisionArbiter', quadBrain: system.quadBrain });
-            system.visionArbiter = ext.visionArbiter;
-            if (system.arbiters) system.arbiters.set('visionArbiter', ext.visionArbiter);
-            
-            ext.visionArbiter.initialize().then(() => {
-                console.log('    👁️  VisionProcessingArbiter CLIP model ready');
-                if (ext.computerControl) ext.computerControl.visionArbiter = ext.visionArbiter;
-            }).catch(e => console.warn('    ⚠️ VisionArbiter CLIP load failed:', e.message));
-            console.log('    👁️  VisionProcessingArbiter loading CLIP in background...');
-        } catch (e) {
-            console.warn(`    ⚠️ VisionProcessingArbiter skipped: ${e.message}`);
-            ext.visionArbiter = null;
-        }
-    } else {
-        console.log('    ⏭️ ComputerControlArbiter + VisionProcessingArbiter deferred (set SOMA_LOAD_VISION=true to enable)');
-        console.log('       Note: CLIP WASM compilation blocks the event loop for 30-90s without this gate.');
-        ext.computerControl = null;
+    // VisionProcessingArbiter: CLIP model loads ONNX/WASM synchronously — run in background
+    try {
+        ext.visionArbiter = new VisionProcessingArbiter({ name: 'VisionArbiter', quadBrain: system.quadBrain });
+        system.visionArbiter = ext.visionArbiter;
+        if (system.arbiters) system.arbiters.set('visionArbiter', ext.visionArbiter);
+        
+        ext.visionArbiter.initialize().then(() => {
+            console.log('    👁️  VisionProcessingArbiter CLIP model ready');
+            if (ext.computerControl) ext.computerControl.visionArbiter = ext.visionArbiter;
+        }).catch(e => console.warn('    ⚠️ VisionArbiter CLIP load failed:', e.message));
+        console.log('    👁️  VisionProcessingArbiter loading CLIP in background...');
+    } catch (e) {
+        console.warn(`    ⚠️ VisionProcessingArbiter skipped: ${e.message}`);
         ext.visionArbiter = null;
+    }
+
+    // Wire VisionDaemon with the now-loaded providers
+    // cos.js creates VisionDaemon before extended.js runs — providers were null at construction
+    if (system.visionDaemon && (ext.computerControl || ext.visionArbiter)) {
+        system.visionDaemon.setProviders(ext.computerControl, ext.visionArbiter);
+        console.log('    🔗 VisionDaemon ← ComputerControl + VisionArbiter wired');
+    }
+
+    // Wire VisualMemoryArbiter with brain + visionArbiter (both ready now)
+    if (system.visualMemory) {
+        if (system.quadBrain) system.visualMemory.setBrain(system.quadBrain);
+        if (ext.visionArbiter) system.visualMemory.visionArbiter = ext.visionArbiter;
+        console.log('    🔗 VisualMemoryArbiter ← QuadBrain + VisionArbiter wired');
     }
 
     // ── VirtualShell: Persistent shell session ──

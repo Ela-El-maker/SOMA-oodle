@@ -82,7 +82,6 @@ checkpoints/
 *.ckpt
 *.onnx
 *.pkl
-requirements-training.txt
 
 # ── Databases & State ─────────────────────────────────────────────────────────
 *.db

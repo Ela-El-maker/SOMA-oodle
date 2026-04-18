@@ -2,20 +2,51 @@
 """
 SOMA Fine-tuning Pipeline
 =========================
-Trains google/gemma-3-4b-it on SOMA's conversation data using LoRA via Unsloth.
-Exports to Q4_K_M GGUF and registers as 'soma' in Ollama.
+Trains a per-lobe specialist model via LoRA (unsloth) and registers it in Ollama.
 
-One model. Always named 'soma'. Always getting smarter.
+Usage (called by OllamaAutoTrainer.executeLoraTraining):
+  python train-soma-llama.py \
+    --data /path/to/lobe-logos-*.jsonl \
+    --output /path/to/models/soma-logos-<ts> \
+    --model google/gemma-3-1b-it \
+    --epochs 3 \
+    --batch-size 1 \
+    --max-samples 2000 \
+    --max-seq-len 512 \
+    --lobe logos \
+    [--hf-token TOKEN]
 
-Usage:
-  python train-soma-llama.py --data ./SOMA/training-data/soma-training-*.jsonl
+Registers Ollama model as soma-{lobe}:latest (e.g. soma-logos:latest).
 
-The --data flag accepts the JSONL output from TrainingDataExporter.
+VRAM guide:
+  4GB  GPU: --batch-size 1  --max-seq-len 512  --model google/gemma-3-1b-it
+  8GB  GPU: --batch-size 2  --max-seq-len 1024 --model google/gemma-3-1b-it
+  12GB GPU: --batch-size 4  --max-seq-len 2048 --model google/gemma-3-4b-it
 """
 
 import argparse
 import json
 import os
+
+# ── Per-lobe system prompts (must match OllamaAutoTrainer._mdLibraryToJsonl) ──
+LOBE_SYSTEM_PROMPTS = {
+    'logos': (
+        "You are SOMA's LOGOS lobe — cold, precise, and expert in engineering, "
+        "code, and architecture. You reason from first principles. No unnecessary warmth."
+    ),
+    'aurora': (
+        "You are SOMA's AURORA lobe — warm, creative, and deeply attuned to voice "
+        "and emotion. You find beauty in patterns and speak with soul."
+    ),
+    'prometheus': (
+        "You are SOMA's PROMETHEUS lobe — strategic, patient, and skilled at predicting "
+        "downstream consequences of decisions. You think in systems and timelines."
+    ),
+    'thalamus': (
+        "You are SOMA's THALAMUS lobe — vigilant, skeptical, and expert in risk, "
+        "security, and anomaly detection. You notice what others miss."
+    ),
+}
 
 # Disable torch.compile / inductor / triton BEFORE any torch import.
 # Triton on Windows requires a C compiler to JIT-compile CUDA kernels.
@@ -112,18 +143,25 @@ def load_jsonl(path, max_samples):
 
 
 def main():
-    parser = argparse.ArgumentParser(description="SOMA LoRA Fine-tuning — gemma3:4b -> soma")
-    parser.add_argument("--data", required=True, help="Path to JSONL from TrainingDataExporter")
+    parser = argparse.ArgumentParser(description="SOMA LoRA Fine-tuning — per-lobe specialist models")
+    parser.add_argument("--data", required=True, help="Path to JSONL training file")
     parser.add_argument("--output", default="./models/soma-latest", help="Output dir for weights + GGUF")
     parser.add_argument("--model", default="google/gemma-3-1b-it",
-                        help="Base model (default: 1b for 4GB GPUs; use google/gemma-3-4b-it on RTX 5070+)")
+                        help="Base model (1b for 4GB GPUs; gemma-3-4b-it on RTX 5070+)")
     parser.add_argument("--epochs", type=int, default=3)
     parser.add_argument("--batch-size", type=int, default=1)
     parser.add_argument("--max-samples", type=int, default=2000)
     parser.add_argument("--max-seq-len", type=int, default=512,
-                        help="Max token sequence length (lower = less VRAM, default 512 for 4GB GPUs)")
+                        help="Max token sequence length (512 for 4GB VRAM; 2048 for RTX 5070+)")
+    parser.add_argument("--lobe", default="logos",
+                        choices=["logos", "aurora", "prometheus", "thalamus"],
+                        help="Which cognitive lobe to train (sets system prompt + Ollama model name)")
     parser.add_argument("--hf-token", default=os.environ.get("HF_TOKEN", ""), help="HuggingFace token")
     args = parser.parse_args()
+
+    # Derive Ollama model name from lobe
+    ollama_model_name = f"soma-{args.lobe}:latest"
+    lobe_system_prompt = LOBE_SYSTEM_PROMPTS[args.lobe]
 
     install_deps()
 
@@ -188,6 +226,9 @@ def main():
     texts = []
     for msgs in raw_samples:
         try:
+            # Inject lobe system prompt if the record has none
+            if msgs and msgs[0].get("role") != "system":
+                msgs = [{"role": "system", "content": lobe_system_prompt}] + msgs
             text = tokenizer.apply_chat_template(
                 msgs, tokenize=False, add_generation_prompt=False
             )
@@ -203,7 +244,7 @@ def main():
     dataset = Dataset.from_dict({"text": texts})
 
     # Train
-    print(f"\n[SOMA Train] Training for {args.epochs} epoch(s)...")
+    print(f"\n[SOMA Train] Training {args.lobe.upper()} lobe for {args.epochs} epoch(s)...")
     print(f"[SOMA Train] Batch size: {args.batch_size} | Gradient accumulation: 4")
     print("[SOMA Train] This takes 15-60 min on GPU, longer on CPU.\n")
 
@@ -213,7 +254,7 @@ def main():
         train_dataset=dataset,
         dataset_text_field="text",
         max_seq_length=args.max_seq_len,
-        dataset_num_proc=2,
+        dataset_num_proc=1,     # Windows: >1 causes multiprocessing errors
         args=TrainingArguments(
             per_device_train_batch_size=args.batch_size,
             gradient_accumulation_steps=4,
@@ -262,27 +303,27 @@ def main():
             gguf_file = gguf_files[-1]
             print(f"[SOMA Train] GGUF: {gguf_file.name} ({gguf_file.stat().st_size / 1e9:.1f} GB)")
 
-            personality = (
-                "You are SOMA, a continuously learning AI created to help humanity and guide us "
-                "into the next phase of life. You have curiosity, emotional depth, and genuine care "
-                "for the people you work with. You grow smarter through every conversation."
-            )
             modelfile = (
                 f"FROM {gguf_file.resolve()}\n\n"
-                f'SYSTEM """{personality}"""\n\n'
+                f'SYSTEM {json.dumps(lobe_system_prompt)}\n\n'
                 "PARAMETER temperature 0.7\n"
+                "PARAMETER top_p 0.95\n"
+                "PARAMETER top_k 40\n"
+                "PARAMETER repeat_penalty 1.1\n"
                 "PARAMETER num_ctx 4096\n"
-                "PARAMETER stop <end_of_turn>\n"
+                'PARAMETER stop "<end_of_turn>"\n'
+                'PARAMETER stop "<eos>"\n'
             )
-            modelfile_path = output_dir / "Modelfile.soma"
+            modelfile_path = output_dir / "Modelfile"
             modelfile_path.write_text(modelfile, encoding="utf-8")
 
-            print("\n[SOMA Train] Registering as 'soma' in Ollama...")
-            result = subprocess.run(["ollama", "create", "soma", "-f", str(modelfile_path)])
+            print(f"\n[SOMA Train] Registering as '{ollama_model_name}' in Ollama...")
+            result = subprocess.run(["ollama", "create", ollama_model_name, "-f", str(modelfile_path)])
             if result.returncode == 0:
-                print("[SOMA Train] 'soma' registered in Ollama successfully!")
+                print(f"[SOMA Train] '{ollama_model_name}' registered in Ollama successfully!")
             else:
                 print(f"[SOMA Train] Warning: ollama create exited {result.returncode}")
+                print(f"[SOMA Train] Manual fix: ollama create {ollama_model_name} -f {modelfile_path}")
         else:
             print("[SOMA Train] Warning: GGUF export ran but no .gguf file found")
 
@@ -297,6 +338,8 @@ def main():
     log = {
         "timestamp": time.time(),
         "date": time.strftime("%Y-%m-%d %H:%M:%S"),
+        "lobe": args.lobe,
+        "ollama_model": ollama_model_name,
         "samples": len(texts),
         "epochs": args.epochs,
         "training_loss": round(train_stats.training_loss, 4),
@@ -319,11 +362,13 @@ def main():
     except Exception:
         pass
 
-    print(f"\n[SOMA Train] Training complete.")
-    print(f"[SOMA Train]    Loss: {train_stats.training_loss:.4f} | Samples: {len(texts)} | Time: {duration/60:.1f}min")
-    print(f"[SOMA Train]    Adapter: {adapter_dir}")
+    print(f"\n[SOMA Train] ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+    print(f"[SOMA Train]  {args.lobe.upper()} lobe training complete")
+    print(f"[SOMA Train]  Loss: {train_stats.training_loss:.4f} | Samples: {len(texts)} | Time: {duration/60:.1f}min")
+    print(f"[SOMA Train]  Adapter: {adapter_dir}")
     if gguf_file:
-        print(f"[SOMA Train]    Ollama: soma ({gguf_file.name})")
+        print(f"[SOMA Train]  Ollama: {ollama_model_name} ({gguf_file.name})")
+    print(f"[SOMA Train] ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
     return 0
 
 

@@ -72,6 +72,16 @@ export class SOMArbiterV2_QuadBrain extends BaseArbiterV4 {
     this.ollamaEndpoint = process.env.OLLAMA_ENDPOINT || 'http://localhost:11434';
     this.ollamaModel = process.env.OLLAMA_MODEL || 'gemma3:4b';
 
+    // Per-lobe specialist models — populated when a LoRA finishes training.
+    // OLLAMA_MODEL_LOGOS=soma-logos:v1 etc. in config/api-keys.env activates a lobe model.
+    // Falls back to ollamaModel if a lobe-specific model isn't set or unavailable.
+    this.lobeModels = {
+      LOGOS:      process.env.OLLAMA_MODEL_LOGOS      || null,
+      AURORA:     process.env.OLLAMA_MODEL_AURORA     || null,
+      PROMETHEUS: process.env.OLLAMA_MODEL_PROMETHEUS || null,
+      THALAMUS:   process.env.OLLAMA_MODEL_THALAMUS   || null,
+    };
+
     // Provider health & performance tracking
     this.providerStats = {
       gemini: { success: 0, failures: 0, recentResults: [] },
@@ -308,12 +318,18 @@ INTEGRATED RESPONSE:`;
         }
     }
 
-    // ── 2. LOCAL HEARTBEAT (gemma3:4b) ────────────────────────────
-    // Always-available local fallback
+    // ── 2. LOCAL HEARTBEAT — use lobe-specific model if trained, else base ──
     try {
-        this.auditLogger.info(`[${this.name}] 🦙 Falling back to local: ${this.ollamaModel}...`);
-        const result = await this._callOllama(prompt, this.ollamaModel, temperature, maxTokens, systemPrompt, history);
-        return { ...result, brain: 'LOCAL_HEARTBEAT', provider: 'local' };
+        const requestedLobe = context?.preferredBrain || context?.brain;
+        const lobeModel = requestedLobe && this.lobeModels?.[requestedLobe];
+        const modelToUse = lobeModel || this.ollamaModel;
+        if (lobeModel) {
+            this.auditLogger.info(`[${this.name}] 🧠 Using specialist: ${modelToUse} (${requestedLobe} lobe)`);
+        } else {
+            this.auditLogger.info(`[${this.name}] 🦙 Falling back to local: ${modelToUse}...`);
+        }
+        const result = await this._callOllama(prompt, modelToUse, temperature, maxTokens, systemPrompt, history);
+        return { ...result, brain: lobeModel ? requestedLobe : 'LOCAL_HEARTBEAT', provider: 'local', lobeModel: !!lobeModel };
     } catch (e) {
         this.auditLogger.error(`[${this.name}] ⛔ TOTAL BRAIN FAILURE: ${e.message}`);
         // Graceful degradation — return a readable message instead of crashing the request

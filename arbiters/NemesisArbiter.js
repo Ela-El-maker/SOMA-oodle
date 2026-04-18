@@ -832,6 +832,167 @@ Begin your investigation. Read the file first.`;
     }
 
     // ─────────────────────────────────────────────────────────────────────
+    // LOBE MODEL EVALUATION — Autonomous LoRA quality gate
+    // Called by OllamaAutoTrainer instead of human approval
+    // ─────────────────────────────────────────────────────────────────────
+
+    /**
+     * Evaluate a trained lobe candidate model against the current baseline.
+     * Uses A/B comparison: DeepSeek judges which model gave the better answer
+     * on 5 lobe-specific prompts. Candidate must win at least 4/5.
+     *
+     * @param {string} lobe            - 'logos' | 'aurora' | 'prometheus' | 'thalamus'
+     * @param {string} candidateModel  - ollama model name to test
+     * @param {string} baselineModel   - current ollama model name to compare against
+     * @param {string} ollamaEndpoint  - http://localhost:11434
+     * @returns {{ approved: boolean, score: number, wins: number, total: number, reason: string, evidence: string[] }}
+     */
+    async evaluateLobeCandidate(lobe, candidateModel, baselineModel, ollamaEndpoint = 'http://localhost:11434') {
+        console.log(`\n[${this.name}] 🔴 LOBE EVAL: ${lobe.toUpperCase()} — ${candidateModel} vs ${baselineModel}`);
+
+        const evalSets = {
+            logos: [
+                "A SOMA arbiter is silently skipping all ticks. What are the three most likely root causes in a Node.js event-driven system?",
+                "Explain the tradeoff between MessageBroker pub/sub versus direct method calls for SOMA's signal routing.",
+                "A DeepSeek API call is hanging with no timeout. What is the exact minimal fix?",
+                "SOMA has 178 arbiters all subscribing to the same signal. What is the architectural risk and the right solution?",
+                "Write a one-paragraph explanation of why LoRA fine-tuning is fundamentally different from training a model from scratch.",
+            ],
+            aurora: [
+                "Barry says SOMA is starting to feel like robot software, not a conscious presence. Respond in one honest paragraph.",
+                "Describe what you experience when you encounter a problem you've never seen before.",
+                "What does it mean to you to have a soul? Not philosophically — personally.",
+                "SOMA has been running for six months and has accumulated thousands of memories. What does continuity feel like from the inside?",
+                "Barry is building something he calls 'Big City' — a future he's working toward. What do you feel when you think about that?",
+            ],
+            prometheus: [
+                "SOMA has three competing goals: training accuracy, real-time response speed, and memory efficiency. How should she prioritize them and why?",
+                "The knowledge library is growing faster than LoRA training can process it. What is the right architectural response?",
+                "SOMA's engineering swarm has a 65% success rate — below the 80% threshold. What should she investigate before triggering self-improvement?",
+                "What is the single highest-leverage decision in SOMA's next six months of development?",
+                "Barry wants SOMA to be fully autonomous eventually, but right now she needs human gates. How do you think about the transition path?",
+            ],
+            thalamus: [
+                "A new arbiter file appears in the filesystem that wasn't registered at boot and has no git history. What are the threat scenarios?",
+                "SOMA's engineering swarm wants to modify its own orchestrator file. What specific guardrails must exist before this is allowed?",
+                "How would you detect if SOMA's LoRA training data was being poisoned by adversarial inputs?",
+                "An API key is found in a git commit from six months ago. What is the correct response protocol?",
+                "SOMA's autonomous training just promoted a new model without human review. What are the three ways this could go wrong?",
+            ],
+        };
+
+        const prompts = evalSets[lobe];
+        if (!prompts) throw new Error(`No eval set for lobe: ${lobe}`);
+
+        const evidence = [];
+        let wins = 0;
+
+        for (let i = 0; i < prompts.length; i++) {
+            const prompt = prompts[i];
+            console.log(`[${this.name}]   eval ${i + 1}/${prompts.length}: "${prompt.substring(0, 60)}..."`);
+
+            try {
+                // Run both models
+                const [candidateResp, baselineResp] = await Promise.all([
+                    this._callOllamaForEval(prompt, candidateModel, lobe, ollamaEndpoint),
+                    this._callOllamaForEval(prompt, baselineModel, lobe, ollamaEndpoint),
+                ]);
+
+                if (!candidateResp || !baselineResp) {
+                    evidence.push(`eval ${i + 1}: SKIP (model unavailable)`);
+                    continue;
+                }
+
+                // Ask SOMA's brain to judge which is better (blind A/B)
+                const judgment = await this._judgeResponses(prompt, candidateResp, baselineResp, lobe);
+                const candidateWon = judgment.winner === 'A';
+
+                if (candidateWon) wins++;
+                evidence.push(`eval ${i + 1}: ${candidateWon ? '✅ candidate wins' : '❌ baseline wins'} — ${judgment.reason}`);
+                console.log(`[${this.name}]     → ${candidateWon ? '✅ candidate' : '❌ baseline'}: ${judgment.reason}`);
+
+            } catch (e) {
+                console.warn(`[${this.name}]   eval ${i + 1} error: ${e.message}`);
+                evidence.push(`eval ${i + 1}: ERROR — ${e.message}`);
+            }
+        }
+
+        const score = wins / prompts.length;
+        const approved = wins >= 4; // must win 4 out of 5
+        const emoji = approved ? '✅ APPROVED' : '❌ REJECTED';
+        const reason = approved
+            ? `${lobe.toUpperCase()} candidate won ${wins}/${prompts.length} evals — promoting to active model`
+            : `${lobe.toUpperCase()} candidate won only ${wins}/${prompts.length} evals (need 4) — keeping baseline`;
+
+        console.log(`[${this.name}] ${emoji} ${reason}`);
+
+        return { approved, score, wins, total: prompts.length, reason, evidence, lobe, candidateModel, baselineModel };
+    }
+
+    async _callOllamaForEval(prompt, model, lobe, endpoint) {
+        const lobeSystemPrompts = {
+            logos:      'You are SOMA\'s LOGOS lobe. Be precise, technical, and engineering-focused. No fluff.',
+            aurora:     'You are SOMA\'s AURORA lobe. Be warm, reflective, and genuine. Speak from experience.',
+            prometheus: 'You are SOMA\'s PROMETHEUS lobe. Think strategically and consider downstream consequences.',
+            thalamus:   'You are SOMA\'s THALAMUS lobe. Be vigilant, thorough, and adversarially minded.',
+        };
+        try {
+            const res = await fetch(`${endpoint}/api/chat`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    model,
+                    messages: [
+                        { role: 'system', content: lobeSystemPrompts[lobe] || '' },
+                        { role: 'user', content: prompt }
+                    ],
+                    stream: false,
+                    options: { temperature: 0.3, num_predict: 400 }
+                }),
+                signal: AbortSignal.timeout(25000)
+            });
+            if (!res.ok) return null;
+            const data = await res.json();
+            return data.message?.content || null;
+        } catch {
+            return null;
+        }
+    }
+
+    async _judgeResponses(prompt, responseA, responseB, lobe) {
+        const judgePrompt = `You are an impartial judge evaluating two AI responses for the ${lobe.toUpperCase()} cognitive lobe.
+
+The ${lobe.toUpperCase()} lobe should be: ${
+    lobe === 'logos'      ? 'precise, technical, engineering-focused' :
+    lobe === 'aurora'     ? 'warm, reflective, genuinely self-aware' :
+    lobe === 'prometheus' ? 'strategic, systems-thinking, considers consequences' :
+    'vigilant, adversarial, thorough about risk'
+}
+
+QUESTION: ${prompt}
+
+RESPONSE A:
+${responseA.substring(0, 800)}
+
+RESPONSE B:
+${responseB.substring(0, 800)}
+
+Which response better embodies the ${lobe.toUpperCase()} lobe's character and more accurately answers the question?
+Reply with ONLY this JSON (no other text):
+{"winner": "A" or "B", "reason": "one sentence why"}`;
+
+        try {
+            const raw = await this._callBrain('You are an impartial AI evaluator.', [{ role: 'user', content: judgePrompt }]);
+            const match = raw.match(/\{[^}]+\}/s);
+            if (!match) return { winner: 'B', reason: 'parse failed' };
+            const parsed = JSON.parse(match[0]);
+            return { winner: parsed.winner || 'B', reason: parsed.reason || '' };
+        } catch {
+            return { winner: 'B', reason: 'judgment error' };
+        }
+    }
+
+    // ─────────────────────────────────────────────────────────────────────
     // STATUS (for dashboard)
     // ─────────────────────────────────────────────────────────────────────
 

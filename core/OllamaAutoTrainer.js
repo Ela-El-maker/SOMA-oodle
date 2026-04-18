@@ -582,19 +582,34 @@ Make the questions specific and the answers rich, drawing on your actual knowled
     const { lobe, count, knowledgeDir } = payload;
     if (!lobe) return;
 
-    // Track pending proposals (don't spam Barry with duplicate proposals)
-    if (!this._lobeProposals) this._lobeProposals = new Map();
-    if (this._lobeProposals.has(lobe)) return;
+    // Don't re-train a lobe that's already training or was trained recently
+    if (!this._lobeTrainingState) this._lobeTrainingState = new Map();
+    const state = this._lobeTrainingState.get(lobe);
+    if (state?.running) {
+      console.log(`[${this.name}] ${lobe.toUpperCase()} training already in progress — skipping`);
+      return;
+    }
+    if (state?.trainedAt && (Date.now() - state.trainedAt) < 86400000) {
+      console.log(`[${this.name}] ${lobe.toUpperCase()} trained less than 24h ago — skipping`);
+      return;
+    }
 
-    this._lobeProposals.set(lobe, { count, knowledgeDir, proposedAt: Date.now() });
+    this._lobeTrainingState.set(lobe, { running: true, startedAt: Date.now() });
 
-    console.log(`\n[${this.name}] 🎓 LOBE TRAINING PROPOSAL`);
-    console.log(`[${this.name}]    Lobe: ${lobe.toUpperCase()}`);
-    console.log(`[${this.name}]    Dataset: ${count} entries in ${knowledgeDir}`);
-    console.log(`[${this.name}]    Waiting for Barry's approval via POST /api/soma/training/approve-lora`);
-    console.log(`[${this.name}]    Body: { "lobe": "${lobe}" }\n`);
+    console.log(`\n[${this.name}] 🎓 AUTONOMOUS LOBE TRAINING: ${lobe.toUpperCase()}`);
+    console.log(`[${this.name}]    Dataset: ${count} entries — NEMESIS will gate the promotion\n`);
 
-    this.emit('lora_training_proposed', { lobe, count, knowledgeDir });
+    // Run training + NEMESIS evaluation autonomously
+    this.executeLoraTraining(lobe).then(result => {
+      this._lobeTrainingState.set(lobe, {
+        running: false,
+        trainedAt: Date.now(),
+        lastResult: result
+      });
+    }).catch(err => {
+      this._lobeTrainingState.set(lobe, { running: false, error: err.message });
+      console.error(`[${this.name}] Autonomous ${lobe} training failed:`, err.message);
+    });
   }
 
   /**
@@ -651,23 +666,54 @@ Make the questions specific and the answers rich, drawing on your actual knowled
 
     if (!success) return { success: false, error: 'Python training script failed' };
 
-    // 3. Quality gate — same 3-question test
-    const qualified = await this.testModelQuality(modelName);
-    if (!qualified) {
-      console.warn(`[${this.name}] ⚠️  ${modelName} failed quality gate — not promoted`);
-      return { success: false, error: 'Quality gate failed — model not promoted' };
+    // 3. NEMESIS quality gate — A/B eval against baseline, must win 4/5
+    const nemesis = this._nemesis;
+    let evalResult = null;
+    if (nemesis?.evaluateLobeCandidate) {
+      console.log(`[${this.name}] 🔴 NEMESIS engaging — evaluating ${modelName} vs baseline...`);
+      evalResult = await nemesis.evaluateLobeCandidate(
+        lobe, modelName, this.baseOllamaModel, this.ollamaEndpoint
+      ).catch(e => {
+        console.warn(`[${this.name}] NEMESIS eval error: ${e.message} — falling back to basic gate`);
+        return null;
+      });
     }
 
-    console.log(`[${this.name}] ✅ ${modelName} passed quality gate`);
-    console.log(`[${this.name}]    To activate: set OLLAMA_MODEL_${lobe.toUpperCase()}=${modelName} in config/api-keys.env`);
-    console.log(`[${this.name}]    Then QuadBrain will route ${lobe.toUpperCase()} queries to this model\n`);
+    // Fall back to basic 3-question test if NEMESIS isn't wired yet
+    const qualified = evalResult
+      ? evalResult.approved
+      : await this.testModelQuality(modelName);
 
-    this.emit('lora_training_complete', { lobe, modelName, outputDir });
-    return { success: true, modelName, outputDir };
+    // Log the decision as a thalamus knowledge entry
+    await this._logTrainingDecision(lobe, modelName, qualified, evalResult).catch(() => {});
+
+    if (!qualified) {
+      const reason = evalResult?.reason || 'failed basic quality gate';
+      console.warn(`[${this.name}] ❌ ${modelName} REJECTED — ${reason}`);
+      return { success: false, error: reason };
+    }
+
+    // 4. Promote — update env + notify QuadBrain
+    const envKey = `OLLAMA_MODEL_${lobe.toUpperCase()}`;
+    process.env[envKey] = modelName;
+    if (this._quadBrain?.lobeModels) {
+      this._quadBrain.lobeModels[lobe.toUpperCase()] = modelName;
+      console.log(`[${this.name}] ✅ QuadBrain ${lobe.toUpperCase()} lobe → ${modelName} (hot-swapped)`);
+    }
+
+    console.log(`\n[${this.name}] 🎉 ${lobe.toUpperCase()} LoRA PROMOTED AUTONOMOUSLY`);
+    console.log(`[${this.name}]    Model: ${modelName}`);
+    if (evalResult) {
+      console.log(`[${this.name}]    NEMESIS score: ${evalResult.wins}/${evalResult.total} evals won\n`);
+    }
+
+    this.emit('lora_training_complete', { lobe, modelName, outputDir, evalResult });
+    return { success: true, modelName, outputDir, evalResult };
   }
 
   /**
    * Read all MD entries in a lobe knowledge dir and convert to training JSONL.
+   * Also merges hand-crafted seed data from knowledge/seeds/{lobe}-seed.jsonl.
    * Each entry becomes: system prompt (lobe identity) + user (entry title) + assistant (body).
    */
   async _mdLibraryToJsonl(lobeDir, lobe) {
@@ -706,9 +752,18 @@ Make the questions specific and the answers rich, drawing on your actual knowled
         } catch { /* skip bad files */ }
       }
 
+      // Also merge hand-crafted seed data if it exists
+      const seedPath = path.join(process.cwd(), 'knowledge', 'seeds', `${lobe}-seed.jsonl`);
+      try {
+        const seedData = await fs.readFile(seedPath, 'utf8');
+        const seedLines = seedData.split('\n').filter(l => l.trim());
+        lines.unshift(...seedLines); // Seeds go FIRST — highest quality anchor
+        console.log(`[${this.name}] 🌱 Merged ${seedLines.length} seed examples from ${lobe}-seed.jsonl`);
+      } catch { /* no seed file — fine */ }
+
       if (!lines.length) return null;
       await fs.writeFile(outputPath, lines.join('\n'), 'utf8');
-      console.log(`[${this.name}] 📦 ${lines.length} lobe entries → ${outputPath}`);
+      console.log(`[${this.name}] 📦 ${lines.length} total training examples → ${outputPath}`);
       return outputPath;
     } catch (e) {
       console.warn(`[${this.name}] _mdLibraryToJsonl error:`, e.message);
@@ -716,9 +771,51 @@ Make the questions specific and the answers rich, drawing on your actual knowled
     }
   }
 
+  /** Wire NEMESIS and QuadBrain after extended.js loads them */
+  wireNemesisAndBrain(nemesis, quadBrain) {
+    this._nemesis = nemesis || null;
+    this._quadBrain = quadBrain || null;
+    if (nemesis) console.log(`[${this.name}] 🔴 NEMESIS wired as autonomous training gatekeeper`);
+  }
+
+  /** Log a training decision (pass or fail) as a thalamus knowledge entry */
+  async _logTrainingDecision(lobe, modelName, approved, evalResult) {
+    try {
+      const dir = path.join(process.cwd(), 'knowledge', 'thalamus');
+      await fs.mkdir(dir, { recursive: true });
+      const ts = new Date();
+      const dateStr = ts.toISOString().replace(/[:.]/g, '-').slice(0, 19);
+      const filename = `${dateStr}_lora_${lobe}_${approved ? 'approved' : 'rejected'}.md`;
+
+      const lines = [
+        '---',
+        `lobe: thalamus`,
+        `type: model_promotion_decision`,
+        `source: nemesis_lobe_eval`,
+        `timestamp: ${ts.toISOString()}`,
+        `resolved: ${approved}`,
+        `severity: ${approved ? 'low' : 'medium'}`,
+        '---',
+        '',
+        `**Decision:** ${approved ? '✅ APPROVED' : '❌ REJECTED'}`,
+        `**Model:** ${modelName}`,
+        `**Lobe:** ${lobe.toUpperCase()}`,
+        `**Reason:** ${evalResult?.reason || (approved ? 'Passed basic quality gate' : 'Failed basic quality gate')}`,
+      ];
+
+      if (evalResult?.evidence?.length) {
+        lines.push('', '**NEMESIS Evidence:**');
+        for (const e of evalResult.evidence) lines.push(`- ${e}`);
+      }
+
+      await fs.writeFile(path.join(dir, filename), lines.join('\n') + '\n');
+      console.log(`[${this.name}] 📝 Training decision logged → knowledge/thalamus/${filename}`);
+    } catch { /* non-critical */ }
+  }
+
   getPendingLoraProposals() {
-    if (!this._lobeProposals) return [];
-    return [...this._lobeProposals.entries()].map(([lobe, data]) => ({ lobe, ...data }));
+    if (!this._lobeTrainingState) return [];
+    return [...this._lobeTrainingState.entries()].map(([lobe, data]) => ({ lobe, ...data }));
   }
 
   // ── Shutdown ──────────────────────────────────────────────────────────────

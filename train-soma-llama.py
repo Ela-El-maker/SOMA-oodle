@@ -60,6 +60,11 @@ import sys
 import time
 from pathlib import Path
 
+# Force UTF-8 stdout/stderr on Windows (avoids cp1252 UnicodeEncodeError)
+if sys.stdout.encoding and sys.stdout.encoding.lower() != 'utf-8':
+    sys.stdout.reconfigure(encoding='utf-8', errors='replace')
+    sys.stderr.reconfigure(encoding='utf-8', errors='replace')
+
 
 def install_deps():
     """Install unsloth + trl if not present."""
@@ -163,19 +168,16 @@ def main():
     ollama_model_name = f"soma-{args.lobe}:latest"
     lobe_system_prompt = LOBE_SYSTEM_PROMPTS[args.lobe]
 
-    install_deps()
-
-    # Disable torch.compile BEFORE unsloth patches torch internals.
-    # Must be done at Python level — env vars are not enough because
-    # unsloth's compiled cache calls torch._dynamo directly.
     import torch
     torch._dynamo.config.disable = True
     torch._dynamo.config.suppress_errors = True
 
-    # Late import after potential install
-    from unsloth import FastLanguageModel, is_bfloat16_supported
-    from unsloth.chat_templates import get_chat_template
     from trl import SFTTrainer
+    try:
+        from trl import SFTConfig
+        USE_SFT_CONFIG = True
+    except ImportError:
+        USE_SFT_CONFIG = False
     from transformers import TrainingArguments
     from datasets import Dataset
 
@@ -192,85 +194,160 @@ def main():
         except Exception as e:
             print(f"[SOMA Train] HF login warning: {e}")
 
-    # Load base model
-    print(f"\n[SOMA Train] Loading {args.model} with 4-bit quantization...")
-    print(f"[SOMA Train] Max sequence length: {args.max_seq_len} tokens")
-    model, tokenizer = FastLanguageModel.from_pretrained(
-        model_name=args.model,
-        max_seq_length=args.max_seq_len,
-        dtype=None,
-        load_in_4bit=True,
-        token=hf_token or None,
-    )
+    # ── Try unsloth (optimised path); fall back to plain peft ─────────────────
+    # unsloth requires triton which needs MSVC on Windows. On machines without
+    # VS Build Tools (e.g. work laptops), we fall back to transformers+peft.
+    # Both paths produce a LoRA adapter. Only unsloth path exports GGUF.
+    USE_UNSLOTH = False
+    try:
+        from unsloth import FastLanguageModel, is_bfloat16_supported
+        from unsloth.chat_templates import get_chat_template
+        USE_UNSLOTH = True
+        print("[SOMA Train] ✅ unsloth path active (fast, GGUF export available)")
+    except Exception:
+        print("[SOMA Train] unsloth unavailable - using peft fallback (no GGUF on this machine)")
+        print("[SOMA Train]    Install VS Build Tools 2022 to enable unsloth on Windows")
 
-    # Apply LoRA adapters
-    print("[SOMA Train] Applying LoRA adapters (r=16)...")
-    model = FastLanguageModel.get_peft_model(
-        model,
-        r=16,
-        target_modules=[
-            "q_proj", "k_proj", "v_proj", "o_proj",
-            "gate_proj", "up_proj", "down_proj"
-        ],
-        lora_alpha=16,
-        lora_dropout=0,
-        bias="none",
-        use_gradient_checkpointing="unsloth",
-        random_state=42,
-    )
+    # ── Load base model ────────────────────────────────────────────────────────
+    print(f"\n[SOMA Train] Loading {args.model} ...")
 
-    # Prepare dataset
-    tokenizer = get_chat_template(tokenizer, chat_template="gemma")
+    if USE_UNSLOTH:
+        model, tokenizer = FastLanguageModel.from_pretrained(
+            model_name=args.model,
+            max_seq_length=args.max_seq_len,
+            dtype=None,
+            load_in_4bit=True,
+            token=hf_token or None,
+        )
+        model = FastLanguageModel.get_peft_model(
+            model,
+            r=16,
+            target_modules=["q_proj", "k_proj", "v_proj", "o_proj",
+                             "gate_proj", "up_proj", "down_proj"],
+            lora_alpha=16,
+            lora_dropout=0,
+            bias="none",
+            use_gradient_checkpointing="unsloth",
+            random_state=42,
+        )
+        tokenizer = get_chat_template(tokenizer, chat_template="gemma")
+    else:
+        from transformers import AutoModelForCausalLM, AutoTokenizer, BitsAndBytesConfig
+        from peft import LoraConfig, get_peft_model, prepare_model_for_kbit_training
+
+        tokenizer = AutoTokenizer.from_pretrained(args.model, token=hf_token or None)
+        if tokenizer.pad_token is None:
+            tokenizer.pad_token = tokenizer.eos_token
+
+        bnb_config = BitsAndBytesConfig(
+            load_in_4bit=True,
+            bnb_4bit_use_double_quant=True,
+            bnb_4bit_quant_type="nf4",
+            bnb_4bit_compute_dtype=torch.bfloat16,
+        )
+        model = AutoModelForCausalLM.from_pretrained(
+            args.model,
+            quantization_config=bnb_config,
+            device_map="auto",
+            token=hf_token or None,
+        )
+        model = prepare_model_for_kbit_training(model)
+        model = get_peft_model(model, LoraConfig(
+            r=16,
+            lora_alpha=16,
+            target_modules=["q_proj", "k_proj", "v_proj", "o_proj"],
+            lora_dropout=0.05,
+            bias="none",
+            task_type="CAUSAL_LM",
+        ))
+
+    # ── Format dataset ─────────────────────────────────────────────────────────
     raw_samples = load_jsonl(args.data, args.max_samples)
-
     texts = []
     for msgs in raw_samples:
         try:
-            # Inject lobe system prompt if the record has none
             if msgs and msgs[0].get("role") != "system":
                 msgs = [{"role": "system", "content": lobe_system_prompt}] + msgs
-            text = tokenizer.apply_chat_template(
-                msgs, tokenize=False, add_generation_prompt=False
-            )
+            text = tokenizer.apply_chat_template(msgs, tokenize=False, add_generation_prompt=False)
             texts.append(text)
         except Exception:
             continue
 
     if not texts:
-        print("[SOMA Train] ERROR: No samples could be formatted — check data format")
+        print("[SOMA Train] ERROR: No samples could be formatted")
         sys.exit(1)
 
-    print(f"[SOMA Train] Formatted {len(texts)} samples for training")
+    print(f"[SOMA Train] Formatted {len(texts)} samples")
     dataset = Dataset.from_dict({"text": texts})
 
-    # Train
-    print(f"\n[SOMA Train] Training {args.lobe.upper()} lobe for {args.epochs} epoch(s)...")
-    print(f"[SOMA Train] Batch size: {args.batch_size} | Gradient accumulation: 4")
-    print("[SOMA Train] This takes 15-60 min on GPU, longer on CPU.\n")
+    # ── Train ──────────────────────────────────────────────────────────────────
+    bf16 = torch.cuda.is_available() and torch.cuda.get_device_capability()[0] >= 8
+    fp16 = torch.cuda.is_available() and not bf16
 
-    trainer = SFTTrainer(
-        model=model,
-        tokenizer=tokenizer,
-        train_dataset=dataset,
+    print(f"\n[SOMA Train] Training {args.lobe.upper()} lobe for {args.epochs} epoch(s)...")
+    print(f"[SOMA Train] Batch size: {args.batch_size} | fp16: {fp16} | bf16: {bf16}")
+    print("[SOMA Train] This takes 15-90 min on GPU.\n")
+
+    # trl >= 0.12 moved dataset_text_field/max_seq_length into SFTConfig;
+    # trl >= 0.9  renamed 'tokenizer' -> 'processing_class'
+    tokenizer_kwarg = 'processing_class' if USE_SFT_CONFIG else 'tokenizer'
+
+    _sft_kwargs = dict(
         dataset_text_field="text",
-        max_seq_length=args.max_seq_len,
-        dataset_num_proc=1,     # Windows: >1 causes multiprocessing errors
-        args=TrainingArguments(
-            per_device_train_batch_size=args.batch_size,
-            gradient_accumulation_steps=4,
-            warmup_steps=10,
-            num_train_epochs=args.epochs,
-            learning_rate=2e-4,
-            fp16=not is_bfloat16_supported(),
-            bf16=is_bfloat16_supported(),
-            logging_steps=25,
-            optim="adamw_8bit",
-            weight_decay=0.01,
-            lr_scheduler_type="cosine",
-            output_dir=str(output_dir),
-            save_strategy="no",
-            report_to="none",
-            torch_compile=False,
+        max_length=args.max_seq_len,
+        dataset_num_proc=1,
+        per_device_train_batch_size=args.batch_size,
+        gradient_accumulation_steps=4,
+        warmup_steps=10,
+        num_train_epochs=args.epochs,
+        learning_rate=2e-4,
+        fp16=fp16,
+        bf16=bf16,
+        logging_steps=25,
+        optim="adamw_8bit" if USE_UNSLOTH else "paged_adamw_32bit",
+        weight_decay=0.01,
+        lr_scheduler_type="cosine",
+        output_dir=str(output_dir),
+        save_strategy="no",
+        report_to="none",
+        torch_compile=False,
+        dataloader_num_workers=0,
+    )
+
+    if USE_SFT_CONFIG:
+        # trl >= 0.12: all config in SFTConfig, no extra SFTTrainer args
+        trainer = SFTTrainer(
+            model=model,
+            **{tokenizer_kwarg: tokenizer},
+            train_dataset=dataset,
+            args=SFTConfig(**_sft_kwargs),
+        )
+    else:
+        # trl < 0.12: dataset_text_field etc. on SFTTrainer directly
+        trainer = SFTTrainer(
+            model=model,
+            tokenizer=tokenizer,
+            train_dataset=dataset,
+            dataset_text_field="text",
+            max_seq_length=args.max_seq_len,
+            dataset_num_proc=1,
+            args=TrainingArguments(
+                per_device_train_batch_size=args.batch_size,
+                gradient_accumulation_steps=4,
+                warmup_steps=10,
+                num_train_epochs=args.epochs,
+                learning_rate=2e-4,
+                fp16=fp16,
+                bf16=bf16,
+                logging_steps=25,
+                optim="paged_adamw_32bit",
+                weight_decay=0.01,
+                lr_scheduler_type="cosine",
+                output_dir=str(output_dir),
+                save_strategy="no",
+                report_to="none",
+                torch_compile=False,
+                dataloader_num_workers=0,
         ),
     )
 
@@ -280,59 +357,48 @@ def main():
 
     print(f"\n[SOMA Train] Training complete — {duration/60:.1f} min, loss: {train_stats.training_loss:.4f}")
 
-    # --- GGUF export + Ollama registration (optional — requires llama.cpp) ---
-    # On Windows without Visual Studio Build Tools, GGUF export will fail gracefully.
-    # The trained LoRA adapter is always saved first so training is never wasted.
-    # To enable full export on Windows: install Visual Studio Build Tools 2022 (free),
-    # or run export on Linux / the RTX 5070 machine.
-
-    # Step 1: Always save PEFT adapter weights (these are what actually learned)
+    # ── Save adapter (always) ──────────────────────────────────────────────────
     adapter_dir = output_dir / "adapter"
     model.save_pretrained(str(adapter_dir))
     tokenizer.save_pretrained(str(adapter_dir))
-    print(f"\n[SOMA Train] LoRA adapter saved to {adapter_dir}")
+    print(f"[SOMA Train] LoRA adapter saved to {adapter_dir}")
 
-    # Step 2: Attempt GGUF export + Ollama registration
+    # ── GGUF export + Ollama (unsloth only) ───────────────────────────────────
     gguf_file = None
-    try:
-        print("\n[SOMA Train] Exporting Q4_K_M GGUF for Ollama...")
-        model.save_pretrained_gguf(str(output_dir), tokenizer, quantization_method="q4_k_m")
-
-        gguf_files = sorted(output_dir.glob("*.gguf"), key=lambda p: p.stat().st_mtime)
-        if gguf_files:
-            gguf_file = gguf_files[-1]
-            print(f"[SOMA Train] GGUF: {gguf_file.name} ({gguf_file.stat().st_size / 1e9:.1f} GB)")
-
-            modelfile = (
-                f"FROM {gguf_file.resolve()}\n\n"
-                f'SYSTEM {json.dumps(lobe_system_prompt)}\n\n'
-                "PARAMETER temperature 0.7\n"
-                "PARAMETER top_p 0.95\n"
-                "PARAMETER top_k 40\n"
-                "PARAMETER repeat_penalty 1.1\n"
-                "PARAMETER num_ctx 4096\n"
-                'PARAMETER stop "<end_of_turn>"\n'
-                'PARAMETER stop "<eos>"\n'
-            )
-            modelfile_path = output_dir / "Modelfile"
-            modelfile_path.write_text(modelfile, encoding="utf-8")
-
-            print(f"\n[SOMA Train] Registering as '{ollama_model_name}' in Ollama...")
-            result = subprocess.run(["ollama", "create", ollama_model_name, "-f", str(modelfile_path)])
-            if result.returncode == 0:
-                print(f"[SOMA Train] '{ollama_model_name}' registered in Ollama successfully!")
-            else:
-                print(f"[SOMA Train] Warning: ollama create exited {result.returncode}")
-                print(f"[SOMA Train] Manual fix: ollama create {ollama_model_name} -f {modelfile_path}")
-        else:
-            print("[SOMA Train] Warning: GGUF export ran but no .gguf file found")
-
-    except Exception as gguf_err:
-        print(f"\n[SOMA Train] GGUF export skipped: {gguf_err}")
-        print("[SOMA Train] Training was successful. Adapter weights saved above.")
-        print("[SOMA Train] To convert to GGUF on Windows: install Visual Studio Build Tools 2022")
-        print("[SOMA Train]   https://visualstudio.microsoft.com/downloads/ → Build Tools")
-        print("[SOMA Train] Or copy the adapter dir to a Linux machine and re-run with --output")
+    if USE_UNSLOTH:
+        try:
+            print("\n[SOMA Train] Exporting Q4_K_M GGUF for Ollama...")
+            model.save_pretrained_gguf(str(output_dir), tokenizer, quantization_method="q4_k_m")
+            gguf_files = sorted(output_dir.glob("*.gguf"), key=lambda p: p.stat().st_mtime)
+            if gguf_files:
+                gguf_file = gguf_files[-1]
+                print(f"[SOMA Train] GGUF: {gguf_file.name} ({gguf_file.stat().st_size / 1e9:.1f} GB)")
+                modelfile = (
+                    f"FROM {gguf_file.resolve()}\n\n"
+                    f'SYSTEM {json.dumps(lobe_system_prompt)}\n\n'
+                    "PARAMETER temperature 0.7\n"
+                    "PARAMETER top_p 0.95\n"
+                    "PARAMETER top_k 40\n"
+                    "PARAMETER repeat_penalty 1.1\n"
+                    "PARAMETER num_ctx 4096\n"
+                    'PARAMETER stop "<end_of_turn>"\n'
+                    'PARAMETER stop "<eos>"\n'
+                )
+                modelfile_path = output_dir / "Modelfile"
+                modelfile_path.write_text(modelfile, encoding="utf-8")
+                print(f"\n[SOMA Train] Registering as '{ollama_model_name}' in Ollama...")
+                result = subprocess.run(["ollama", "create", ollama_model_name, "-f", str(modelfile_path)])
+                if result.returncode == 0:
+                    print(f"[SOMA Train] '{ollama_model_name}' registered in Ollama!")
+                else:
+                    print(f"[SOMA Train] ollama create failed — manual fix:")
+                    print(f"[SOMA Train]   ollama create {ollama_model_name} -f {modelfile_path}")
+        except Exception as e:
+            print(f"[SOMA Train] GGUF export failed: {e}")
+            print("[SOMA Train] Adapter saved — re-run on RTX 5070 for full GGUF export")
+    else:
+        print("[SOMA Train] ⚠️  No GGUF on this machine (unsloth required)")
+        print(f"[SOMA Train]    Run on the RTX 5070 to get soma-{args.lobe}:latest in Ollama")
 
     # Save training log
     log = {
@@ -362,13 +428,13 @@ def main():
     except Exception:
         pass
 
-    print(f"\n[SOMA Train] ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+    print(f"\n[SOMA Train] -------------------------------------------------")
     print(f"[SOMA Train]  {args.lobe.upper()} lobe training complete")
     print(f"[SOMA Train]  Loss: {train_stats.training_loss:.4f} | Samples: {len(texts)} | Time: {duration/60:.1f}min")
     print(f"[SOMA Train]  Adapter: {adapter_dir}")
     if gguf_file:
         print(f"[SOMA Train]  Ollama: {ollama_model_name} ({gguf_file.name})")
-    print(f"[SOMA Train] ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+    print(f"[SOMA Train] -------------------------------------------------")
     return 0
 
 

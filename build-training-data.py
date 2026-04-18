@@ -102,7 +102,7 @@ def build(lobe):
         raise SystemExit(1)
 
     out_path.write_text('\n'.join(lines), encoding='utf-8')
-    print(f"[build] {len(lines)} total examples → {out_path}")
+    print(f"[build] {len(lines)} total examples -> {out_path}")
     return out_path
 
 

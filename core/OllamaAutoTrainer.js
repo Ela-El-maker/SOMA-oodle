@@ -701,6 +701,25 @@ Make the questions specific and the answers rich, drawing on your actual knowled
       console.log(`[${this.name}] ✅ QuadBrain ${lobe.toUpperCase()} lobe → ${modelName} (hot-swapped)`);
     }
 
+    // 💾 Physical Persistence: Write to config/api-keys.env
+    try {
+        const envPath = path.join(process.cwd(), 'config', 'api-keys.env');
+        let content = await fs.readFile(envPath, 'utf8').catch(() => '');
+        
+        // Regex to find and replace or append
+        const regex = new RegExp(`^${envKey}=.*`, 'm');
+        if (regex.test(content)) {
+            content = content.replace(regex, `${envKey}=${modelName}`);
+        } else {
+            content += `\n${envKey}=${modelName}`;
+        }
+        
+        await fs.writeFile(envPath, content.trim() + '\n', 'utf8');
+        console.log(`[${this.name}] 💾 ${lobe.toUpperCase()} model physically persisted to api-keys.env`);
+    } catch (e) {
+        console.error(`[${this.name}] ❌ Failed to persist ${lobe.toUpperCase()} model:`, e.message);
+    }
+
     console.log(`\n[${this.name}] 🎉 ${lobe.toUpperCase()} LoRA PROMOTED AUTONOMOUSLY`);
     console.log(`[${this.name}]    Model: ${modelName}`);
     if (evalResult) {
@@ -737,6 +756,9 @@ Make the questions specific and the answers rich, drawing on your actual knowled
       for (const file of mdFiles) {
         try {
           const raw = await fs.readFile(path.join(lobeDir, file), 'utf8');
+          // Skip meta training decision entries — they'd teach the model to be
+          // suspicious of its own training, creating a feedback loop
+          if (raw.includes('type: meta_training_decision') || raw.includes('type: model_promotion_decision')) continue;
           // Strip frontmatter
           const body = raw.replace(/^---[\s\S]*?---\n/, '').trim();
           if (body.length < 20) continue;

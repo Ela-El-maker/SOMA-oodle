@@ -1615,6 +1615,12 @@ export async function loadExtendedSystems(system) {
         console.log('    🔗 VisualMemoryArbiter ← QuadBrain + VisionArbiter wired');
     }
 
+    // Wire SelfReflectionArbiter with QuadBrain (loaded after cos.js, so must wire here)
+    if (system.reflectionArbiter && system.quadBrain && !system.reflectionArbiter.quadBrain) {
+        system.reflectionArbiter.quadBrain = system.quadBrain;
+        console.log('    🔗 SelfReflectionArbiter ← QuadBrain wired (reflection will work correctly)');
+    }
+
     // ── VirtualShell: Persistent shell session ──
     try {
         ext.virtualShell = new VirtualShell(process.cwd());

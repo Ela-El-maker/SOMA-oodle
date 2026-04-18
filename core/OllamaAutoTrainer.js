@@ -494,11 +494,11 @@ Make the questions specific and the answers rich, drawing on your actual knowled
         scriptPath,
         '--data', dataPath,
         '--output', outputDir,
-        '--model', 'google/gemma-3-1b-it', // 1b fits in 4GB VRAM; switch to gemma-3-4b-it on RTX 5070
+        '--model', 'google/gemma-3-4b-it', // RTX 5070 (12GB) — fits comfortably in 4-bit
         '--epochs', '3',
-        '--batch-size', '1',       // 1 for 4GB VRAM; raise to 4 on RTX 5070
+        '--batch-size', '2',       // 2 for 12GB VRAM
         '--max-samples', '2000',
-        '--max-seq-len', '512',    // 512 for 4GB VRAM; raise to 2048 on RTX 5070
+        '--max-seq-len', '2048',   // 2048 for 12GB VRAM
       ];
 
       if (process.env.HF_TOKEN) {
@@ -622,10 +622,10 @@ Make the questions specific and the answers rich, drawing on your actual knowled
   async executeLoraTraining(lobe) {
     const lobeDir = path.join(process.cwd(), 'knowledge', lobe);
     const lobeModels = {
-      logos:      'google/gemma-3-1b-it',
-      aurora:     'google/gemma-3-1b-it',
-      prometheus: 'google/gemma-3-1b-it',
-      thalamus:   'google/gemma-3-1b-it',
+      logos:      'google/gemma-3-4b-it',
+      aurora:     'google/gemma-3-4b-it',
+      prometheus: 'google/gemma-3-4b-it',
+      thalamus:   'google/gemma-3-4b-it',
     };
 
     console.log(`\n[${this.name}] 🚀 LOBE LoRA TRAINING: ${lobe.toUpperCase()}`);
@@ -649,11 +649,11 @@ Make the questions specific and the answers rich, drawing on your actual knowled
         scriptPath,
         '--data', dataPath,
         '--output', outputDir,
-        '--model', lobeModels[lobe] || 'google/gemma-3-1b-it',
+        '--model', lobeModels[lobe] || 'google/gemma-3-4b-it',
         '--epochs', '3',
-        '--batch-size', '1',
+        '--batch-size', '2',
         '--max-samples', '2000',
-        '--max-seq-len', '512',
+        '--max-seq-len', '2048',
         '--lobe', lobe,       // train-soma-llama.py uses this to set lobe-specific system prompt
       ].concat(process.env.HF_TOKEN ? ['--hf-token', process.env.HF_TOKEN] : []), {
         cwd: process.cwd(),

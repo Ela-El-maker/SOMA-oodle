@@ -146,8 +146,8 @@ def main():
     parser = argparse.ArgumentParser(description="SOMA LoRA Fine-tuning — per-lobe specialist models")
     parser.add_argument("--data", required=True, help="Path to JSONL training file")
     parser.add_argument("--output", default="./models/soma-latest", help="Output dir for weights + GGUF")
-    parser.add_argument("--model", default="google/gemma-3-1b-it",
-                        help="Base model (1b for 4GB GPUs; gemma-3-4b-it on RTX 5070+)")
+    parser.add_argument("--model", default="google/gemma-3-4b-it",
+                        help="Base model (4b for RTX 5070 12GB; use 1b for 4GB GPUs)")
     parser.add_argument("--epochs", type=int, default=3)
     parser.add_argument("--batch-size", type=int, default=1)
     parser.add_argument("--max-samples", type=int, default=2000)

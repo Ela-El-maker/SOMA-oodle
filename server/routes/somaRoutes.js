@@ -2307,5 +2307,58 @@ ${personaContext}${characterContext}`.trim()
         });
     });
 
+    // ── Knowledge Library + LoRA Training ─────────────────────────────────────
+
+    // GET /api/soma/knowledge/status — per-lobe entry counts + training progress
+    router.get('/knowledge/status', (req, res) => {
+        const curator = system.knowledgeCurator;
+        const trainer = system.ollamaTrainer;
+        if (!curator) return res.json({ online: false, message: 'KnowledgeCuratorArbiter not loaded' });
+        res.json({
+            online: true,
+            ...curator.getStatus(),
+            pendingLoraProposals: trainer?.getPendingLoraProposals?.() || [],
+        });
+    });
+
+    // POST /api/soma/training/approve-lora — Barry approves a pending LoRA proposal
+    // Body: { "lobe": "logos" }
+    router.post('/training/approve-lora', async (req, res) => {
+        const { lobe } = req.body || {};
+        if (!lobe || !['logos', 'aurora', 'prometheus', 'thalamus'].includes(lobe)) {
+            return res.status(400).json({ success: false, error: 'Invalid lobe. Must be logos | aurora | prometheus | thalamus' });
+        }
+        const trainer = system.ollamaTrainer;
+        if (!trainer?.executeLoraTraining) {
+            return res.status(503).json({ success: false, error: 'OllamaAutoTrainer not available' });
+        }
+        // Kick off async — can take 15-60min on GPU, respond immediately
+        res.json({ success: true, message: `LoRA training for ${lobe.toUpperCase()} started — check server logs for progress` });
+        trainer.executeLoraTraining(lobe).then(result => {
+            console.log(`[somaRoutes] LoRA training for ${lobe} complete:`, result);
+        }).catch(err => {
+            console.error(`[somaRoutes] LoRA training for ${lobe} error:`, err.message);
+        });
+    });
+
+    // POST /api/soma/knowledge/file — manually file a knowledge entry (for SOMA self-documentation)
+    // Body: { "lobe": "logos", "type": "architecture_decision", "content": "..." }
+    router.post('/knowledge/file', async (req, res) => {
+        const { lobe, type, content } = req.body || {};
+        if (!lobe || !content) {
+            return res.status(400).json({ success: false, error: 'lobe and content are required' });
+        }
+        const curator = system.knowledgeCurator;
+        if (!curator?.file) {
+            return res.status(503).json({ success: false, error: 'KnowledgeCuratorArbiter not available' });
+        }
+        try {
+            await curator.file(lobe, type || 'manual', content, 'api');
+            res.json({ success: true, message: `Filed to ${lobe}/${type || 'manual'}` });
+        } catch (e) {
+            res.status(400).json({ success: false, error: e.message });
+        }
+    });
+
     return router;
 }

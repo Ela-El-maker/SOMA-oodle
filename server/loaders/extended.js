@@ -1545,8 +1545,13 @@ export async function loadExtendedSystems(system) {
             trainingDataExporter: ext.trainingDataExporter,
             quadBrain: system.quadBrain   // for synthetic Gemini data generation
         });
+        system.ollamaTrainer = ext.ollamaAutoTrainer; // alias used by somaRoutes
         system.ollamaAutoTrainer = ext.ollamaAutoTrainer;
-        console.log('    🔗 OllamaAutoTrainer ← ConversationHistory, PersonalityForge, TrainingDataExporter, QuadBrain (AUTO-STARTED)');
+        // Wire to KnowledgeCuratorArbiter so threshold signals trigger training proposals
+        if (system.messageBroker) {
+            ext.ollamaAutoTrainer.wireKnowledgeCurator(system.messageBroker);
+        }
+        console.log('    🔗 OllamaAutoTrainer ← ConversationHistory, PersonalityForge, TrainingDataExporter, QuadBrain + KnowledgeCurator (AUTO-STARTED)');
     } catch (e) {
         console.warn(`    ⚠️ OllamaAutoTrainer skipped: ${e.message}`);
         ext.ollamaAutoTrainer = null;

@@ -547,9 +547,185 @@ Make the questions specific and the answers rich, drawing on your actual knowled
     };
   }
 
+  // ── Lobe-Specific LoRA Training (Knowledge Library path) ─────────────────
+
+  /**
+   * Wire to KnowledgeCuratorArbiter's `training.threshold.ready` signal.
+   * Proposes a LoRA fine-tune to Barry — does NOT auto-execute.
+   * Barry approves via POST /api/soma/training/approve-lora
+   */
+  wireKnowledgeCurator(messageBroker) {
+    if (!messageBroker) return;
+    try {
+      messageBroker.subscribe(this.name + '_lobe', 'training.threshold.ready');
+      messageBroker.on('training.threshold.ready', (envelope) => {
+        const payload = envelope?.payload || envelope || {};
+        this._onLobeThresholdReady(payload).catch(e =>
+          console.warn(`[${this.name}] lobe threshold handler error:`, e.message)
+        );
+      });
+      messageBroker.subscribe(this.name + '_lobe_approach', 'training.threshold.approaching');
+      messageBroker.on('training.threshold.approaching', (envelope) => {
+        const payload = envelope?.payload || envelope || {};
+        const { lobe, count, threshold, remaining } = payload;
+        if (lobe) {
+          console.log(`[${this.name}] 📊 ${lobe.toUpperCase()} knowledge: ${count}/${threshold} entries (${remaining} until training threshold)`);
+        }
+      });
+      console.log(`[${this.name}] 🧠 Wired to KnowledgeCuratorArbiter threshold signals`);
+    } catch (e) {
+      console.warn(`[${this.name}] Could not wire KnowledgeCurator signals:`, e.message);
+    }
+  }
+
+  async _onLobeThresholdReady(payload) {
+    const { lobe, count, knowledgeDir } = payload;
+    if (!lobe) return;
+
+    // Track pending proposals (don't spam Barry with duplicate proposals)
+    if (!this._lobeProposals) this._lobeProposals = new Map();
+    if (this._lobeProposals.has(lobe)) return;
+
+    this._lobeProposals.set(lobe, { count, knowledgeDir, proposedAt: Date.now() });
+
+    console.log(`\n[${this.name}] 🎓 LOBE TRAINING PROPOSAL`);
+    console.log(`[${this.name}]    Lobe: ${lobe.toUpperCase()}`);
+    console.log(`[${this.name}]    Dataset: ${count} entries in ${knowledgeDir}`);
+    console.log(`[${this.name}]    Waiting for Barry's approval via POST /api/soma/training/approve-lora`);
+    console.log(`[${this.name}]    Body: { "lobe": "${lobe}" }\n`);
+
+    this.emit('lora_training_proposed', { lobe, count, knowledgeDir });
+  }
+
+  /**
+   * Execute a LoRA fine-tune for a specific lobe.
+   * Called ONLY after human approval via the API route.
+   * Reads MD files from knowledge/{lobe}/, converts to JSONL, trains.
+   *
+   * @param {string} lobe - 'logos' | 'aurora' | 'prometheus' | 'thalamus'
+   */
+  async executeLoraTraining(lobe) {
+    const lobeDir = path.join(process.cwd(), 'knowledge', lobe);
+    const lobeModels = {
+      logos:      'google/gemma-3-1b-it',
+      aurora:     'google/gemma-3-1b-it',
+      prometheus: 'google/gemma-3-1b-it',
+      thalamus:   'google/gemma-3-1b-it',
+    };
+
+    console.log(`\n[${this.name}] 🚀 LOBE LoRA TRAINING: ${lobe.toUpperCase()}`);
+
+    // 1. Convert MD files to training JSONL
+    const dataPath = await this._mdLibraryToJsonl(lobeDir, lobe);
+    if (!dataPath) {
+      return { success: false, error: `No training data found in ${lobeDir}` };
+    }
+
+    // 2. Run training
+    const outputDir = path.join(process.cwd(), 'models', `soma-${lobe}-${Date.now()}`);
+    const modelName = `soma-${lobe}:latest`;
+
+    const scriptPath = path.join(process.cwd(), 'train-soma-llama.py');
+    const venvPython = path.join(process.cwd(), '.soma_venv', 'Scripts', 'python.exe');
+    const python = existsSync(venvPython) ? venvPython : 'python';
+
+    const success = await new Promise((resolve) => {
+      const proc = spawn(python, [
+        scriptPath,
+        '--data', dataPath,
+        '--output', outputDir,
+        '--model', lobeModels[lobe] || 'google/gemma-3-1b-it',
+        '--epochs', '3',
+        '--batch-size', '1',
+        '--max-samples', '2000',
+        '--max-seq-len', '512',
+        '--lobe', lobe,       // train-soma-llama.py uses this to set lobe-specific system prompt
+      ].concat(process.env.HF_TOKEN ? ['--hf-token', process.env.HF_TOKEN] : []), {
+        cwd: process.cwd(),
+        env: { ...process.env, TORCHDYNAMO_DISABLE: '1', TORCHINDUCTOR_DISABLE: '1' },
+        stdio: 'inherit',
+      });
+      proc.on('close', (code) => resolve(code === 0));
+      proc.on('error', (err) => { console.error(`[${this.name}] spawn error:`, err.message); resolve(false); });
+    });
+
+    if (!success) return { success: false, error: 'Python training script failed' };
+
+    // 3. Quality gate — same 3-question test
+    const qualified = await this.testModelQuality(modelName);
+    if (!qualified) {
+      console.warn(`[${this.name}] ⚠️  ${modelName} failed quality gate — not promoted`);
+      return { success: false, error: 'Quality gate failed — model not promoted' };
+    }
+
+    console.log(`[${this.name}] ✅ ${modelName} passed quality gate`);
+    console.log(`[${this.name}]    To activate: set OLLAMA_MODEL_${lobe.toUpperCase()}=${modelName} in config/api-keys.env`);
+    console.log(`[${this.name}]    Then QuadBrain will route ${lobe.toUpperCase()} queries to this model\n`);
+
+    this.emit('lora_training_complete', { lobe, modelName, outputDir });
+    return { success: true, modelName, outputDir };
+  }
+
+  /**
+   * Read all MD entries in a lobe knowledge dir and convert to training JSONL.
+   * Each entry becomes: system prompt (lobe identity) + user (entry title) + assistant (body).
+   */
+  async _mdLibraryToJsonl(lobeDir, lobe) {
+    try {
+      const files = await fs.readdir(lobeDir);
+      const mdFiles = files.filter(f => f.endsWith('.md') && f !== 'README.md');
+      if (!mdFiles.length) return null;
+
+      const systemPrompts = {
+        logos:      'You are SOMA\'s LOGOS lobe — cold, precise, and expert in engineering, code, and architecture. You reason from first principles. No unnecessary warmth.',
+        aurora:     'You are SOMA\'s AURORA lobe — warm, creative, and deeply attuned to voice and emotion. You find beauty in patterns and speak with soul.',
+        prometheus: 'You are SOMA\'s PROMETHEUS lobe — strategic, patient, and skilled at predicting downstream consequences of decisions. You think in systems and timelines.',
+        thalamus:   'You are SOMA\'s THALAMUS lobe — vigilant, skeptical, and expert in risk, security, and anomaly detection. You notice what others miss.',
+      };
+
+      const outputDir = process.env.SOMA_TRAINING_DATA_DIR || path.join(process.cwd(), 'SOMA', 'training-data');
+      await fs.mkdir(outputDir, { recursive: true });
+      const outputPath = path.join(outputDir, `lobe-${lobe}-${Date.now()}.jsonl`);
+
+      const lines = [];
+      for (const file of mdFiles) {
+        try {
+          const raw = await fs.readFile(path.join(lobeDir, file), 'utf8');
+          // Strip frontmatter
+          const body = raw.replace(/^---[\s\S]*?---\n/, '').trim();
+          if (body.length < 20) continue;
+
+          lines.push(JSON.stringify({
+            messages: [
+              { role: 'system', content: systemPrompts[lobe] || systemPrompts.logos },
+              { role: 'user', content: `What do you know about: ${file.replace(/_/g, ' ').replace('.md', '')}?` },
+              { role: 'assistant', content: body }
+            ],
+            metadata: { source: `knowledge_library_${lobe}`, file }
+          }));
+        } catch { /* skip bad files */ }
+      }
+
+      if (!lines.length) return null;
+      await fs.writeFile(outputPath, lines.join('\n'), 'utf8');
+      console.log(`[${this.name}] 📦 ${lines.length} lobe entries → ${outputPath}`);
+      return outputPath;
+    } catch (e) {
+      console.warn(`[${this.name}] _mdLibraryToJsonl error:`, e.message);
+      return null;
+    }
+  }
+
+  getPendingLoraProposals() {
+    if (!this._lobeProposals) return [];
+    return [...this._lobeProposals.entries()].map(([lobe, data]) => ({ lobe, ...data }));
+  }
+
+  // ── Shutdown ──────────────────────────────────────────────────────────────
+
   async shutdown() {
     console.log(`[${this.name}] Shutting down auto-trainer...`);
-    
+
     if (this.monitoringInterval) {
       clearInterval(this.monitoringInterval);
     }

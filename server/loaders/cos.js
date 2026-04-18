@@ -24,6 +24,7 @@ import WebPerceptionDaemon from '../../daemons/WebPerceptionDaemon.js';
 import VisionDaemon from '../../daemons/VisionDaemon.js';
 import ProactivePerceptionArbiter from '../../arbiters/ProactivePerceptionArbiter.js';
 import { VisualMemoryArbiter } from '../../arbiters/VisualMemoryArbiter.js';
+import KnowledgeCuratorArbiter from '../../arbiters/KnowledgeCuratorArbiter.js';
 
 export async function loadCOSSystems(system) {
     console.log('\n[Loader] 🧠 Initializing Cognitive Operating System (COS) Layer...');
@@ -206,6 +207,20 @@ export async function loadCOSSystems(system) {
         });
         system.proactivePerception = proactivePerception;
 
+        // ── Knowledge Curator — auto-files signals into lobe MD libraries ──
+        const knowledgeCurator = new KnowledgeCuratorArbiter({
+            messageBroker: system.messageBroker,
+        });
+        system.knowledgeCurator = knowledgeCurator;
+        if (system.arbiters) system.arbiters.set('knowledgeCurator', knowledgeCurator);
+        system.messageBroker.registerArbiter('KnowledgeCuratorArbiter', {
+            instance: knowledgeCurator,
+            role: 'librarian',
+            lobe: 'hippocampus',
+            classification: 'knowledge'
+        });
+        console.log('      ✅ KnowledgeCuratorArbiter online (lobe knowledge libraries active)');
+
         // Expose COS subsystems globally so perceptionRoutes.js can access them
         // without circular imports (same pattern as global.SOMA_TRADING)
         global.SOMA_COS = {
@@ -213,7 +228,8 @@ export async function loadCOSSystems(system) {
             webPerceptionDaemon,
             visionDaemon,
             proactivePerception,
-            attentionArbiter
+            attentionArbiter,
+            knowledgeCurator
         };
 
         await daemonManager.startAll();

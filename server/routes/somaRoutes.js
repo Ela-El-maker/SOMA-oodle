@@ -7,6 +7,7 @@ import { registry } from '../SystemRegistry.js';
 import { SOMA_VALUES_PROMPT } from '../../core/SomaValues.js';
 import { barryMind }   from '../../core/BarryMindModel.js';
 import { calibrator }  from '../../core/ConfidenceCalibrator.js';
+import { scrapeMarketData, getCachedMarketData } from '../scrapers/MarketDataScraper.js';
 const require = createRequire(import.meta.url);
 
 // ── Owner config — who SOMA belongs to ──
@@ -2368,6 +2369,32 @@ ${personaContext}${characterContext}`.trim()
     router.post('/simulations/ack', (req, res) => {
         _pendingSims.length = 0;
         res.json({ success: true });
+    });
+
+    // Real market data — Puppeteer scrapes CoinGecko, Yahoo Finance, CoinDesk,
+    // Reuters, and Reddit WSB. Results cached 60s. Frontend polls every 30s.
+    router.get('/simulations/market-data', async (req, res) => {
+        try {
+            // Return cached immediately if fresh, otherwise kick off scrape
+            const cached = getCachedMarketData();
+            if (cached && (Date.now() - cached.timestamp) < 60_000) {
+                return res.json({ success: true, ...cached, cached: true });
+            }
+            // Non-blocking: return stale cache (or null) and scrape in background
+            if (cached) res.json({ success: true, ...cached, cached: true, refreshing: true });
+            // If no cache at all, wait for the scrape (first call)
+            if (!cached) {
+                const data = await scrapeMarketData();
+                if (!res.headersSent) {
+                    return res.json({ success: true, ...(data || {}), fresh: true });
+                }
+            } else {
+                // scrape in background
+                scrapeMarketData().catch(() => {});
+            }
+        } catch (e) {
+            if (!res.headersSent) res.status(500).json({ success: false, error: e.message });
+        }
     });
 
     router.post('/knowledge/file', async (req, res) => {

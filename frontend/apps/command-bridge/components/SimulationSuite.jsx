@@ -218,21 +218,32 @@ function SparkLine({ data, width = 300, height = 80, up }) {
 
 // ── Scanner Panel ──────────────────────────────────────────────────────────
 
-function ScannerPanel({ assetClass, prices, signals, news, scanning }) {
+function ScannerPanel({ assetClass, prices, signals, news, scanning, wsb, realDataTs }) {
   const def = ASSET_CLASSES[assetClass];
   if (!def) return null;
 
+  const wsbBarWidth = wsb ? Math.round(wsb.sentiment * 100) : 50;
+  const wsbColor = wsb?.sentiment > 0.6 ? 'emerald' : wsb?.sentiment < 0.4 ? 'rose' : 'amber';
+
   return (
-    <div className="flex flex-col h-full border-r border-white/5">
-      <div className="px-3 py-2 border-b border-white/5 flex items-center gap-2">
+    <div className="flex flex-col h-full border-r border-white/5 overflow-hidden">
+      <div className="px-3 py-2 border-b border-white/5 flex items-center gap-2 shrink-0">
         <Eye className="w-3.5 h-3.5 text-zinc-500" />
         <span className="text-[10px] font-bold text-zinc-500 uppercase tracking-widest">PERCEPTION</span>
-        {scanning && <span className="ml-auto flex items-center gap-1 text-[9px] text-emerald-400"><span className="w-1.5 h-1.5 bg-emerald-400 rounded-full animate-pulse" />scanning</span>}
+        {realDataTs && (
+          <span className="ml-auto text-[9px] text-emerald-500 font-mono">LIVE</span>
+        )}
+        {scanning && <span className={`${realDataTs ? '' : 'ml-auto'} flex items-center gap-1 text-[9px] text-emerald-400`}>
+          <span className="w-1.5 h-1.5 bg-emerald-400 rounded-full animate-pulse" />scanning
+        </span>}
       </div>
 
       {/* Live tickers */}
-      <div className="px-3 py-2 border-b border-white/5">
-        <div className="text-[9px] text-zinc-600 uppercase tracking-wider mb-1.5">Live Prices</div>
+      <div className="px-3 py-2 border-b border-white/5 shrink-0">
+        <div className="text-[9px] text-zinc-600 uppercase tracking-wider mb-1.5 flex items-center gap-1">
+          Live Prices
+          {realDataTs && <span className="text-emerald-600">· real</span>}
+        </div>
         <div className="space-y-1">
           {def.assets.map(asset => {
             const px = prices[asset.id];
@@ -254,10 +265,35 @@ function ScannerPanel({ assetClass, prices, signals, news, scanning }) {
         </div>
       </div>
 
+      {/* WSB sentiment */}
+      {wsb && (
+        <div className="px-3 py-2 border-b border-white/5 shrink-0">
+          <div className="text-[9px] text-zinc-600 uppercase tracking-wider mb-1.5 flex items-center gap-1">
+            r/WallStreetBets
+            <span className={`ml-auto text-[9px] font-bold text-${wsbColor}-400`}>{wsb.sentimentLabel}</span>
+          </div>
+          <div className="h-1.5 bg-zinc-800 rounded-full overflow-hidden mb-1.5">
+            <div
+              className={`h-full bg-${wsbColor}-500 rounded-full transition-all duration-1000`}
+              style={{ width: `${wsbBarWidth}%` }}
+            />
+          </div>
+          <div className="flex justify-between text-[9px] text-zinc-600">
+            <span>🐻 {wsb.bearCount} puts/short</span>
+            <span>{wsb.bullCount} calls/moon 🚀</span>
+          </div>
+          {wsb.posts?.[0] && (
+            <div className="mt-1.5 text-[9px] text-zinc-600 italic leading-snug border-t border-white/5 pt-1">
+              Top post: "{wsb.posts[0].title.substring(0, 70)}{wsb.posts[0].title.length > 70 ? '…' : ''}"
+            </div>
+          )}
+        </div>
+      )}
+
       {/* Signals */}
-      <div className="px-3 py-2 border-b border-white/5 flex-1 overflow-hidden">
+      <div className="px-3 py-2 border-b border-white/5 shrink-0">
         <div className="text-[9px] text-zinc-600 uppercase tracking-wider mb-1.5">Signals Detected</div>
-        <div className="space-y-1 overflow-y-auto max-h-32 custom-scrollbar">
+        <div className="space-y-1 max-h-28 overflow-y-auto custom-scrollbar">
           {signals.length === 0
             ? <div className="text-[10px] text-zinc-700 italic">Scanning for signals...</div>
             : signals.slice(0, 8).map((s, i) => (
@@ -271,12 +307,13 @@ function ScannerPanel({ assetClass, prices, signals, news, scanning }) {
       </div>
 
       {/* News feed */}
-      <div className="px-3 py-2 flex-1 overflow-hidden">
+      <div className="px-3 py-2 flex-1 overflow-hidden min-h-0">
         <div className="text-[9px] text-zinc-600 uppercase tracking-wider mb-1.5">News Feed</div>
-        <div className="space-y-2 overflow-y-auto custom-scrollbar" style={{ maxHeight: '140px' }}>
-          {news.slice(0, 6).map((n, i) => (
-            <div key={i} className="text-[10px] text-zinc-600 leading-snug border-b border-white/5 pb-1.5 last:border-0">
-              {n}
+        <div className="space-y-2 overflow-y-auto custom-scrollbar h-full">
+          {news.slice(0, 10).map((n, i) => (
+            <div key={i} className="text-[10px] leading-snug border-b border-white/5 pb-1.5 last:border-0">
+              {n.source && <span className="text-zinc-700 font-bold mr-1">{n.source}</span>}
+              <span className="text-zinc-600">{n.text || n}</span>
             </div>
           ))}
         </div>
@@ -457,6 +494,8 @@ export default function SimulationSuite() {
   const [prices, setPrices] = useState({});
   const [signals, setSignals] = useState([]);
   const [news, setNews] = useState([]);
+  const [wsb, setWsb] = useState(null);
+  const [realDataTs, setRealDataTs] = useState(null);
   const [debate, setDebate] = useState([]);
   const [decision, setDecision] = useState(null);
   const [position, setPosition] = useState(null);
@@ -492,6 +531,79 @@ export default function SimulationSuite() {
       init[asset.id] = arr;
     }
     return init;
+  }, []);
+
+  // ── Real market data polling (every 30s) ─────────────────────────────────
+  const realDataRef = useRef(null);
+  useEffect(() => {
+    const fetchReal = async () => {
+      try {
+        const res = await fetch('/api/soma/simulations/market-data');
+        if (!res.ok) return;
+        const data = await res.json();
+        realDataRef.current = data;
+        setRealDataTs(data.timestamp || Date.now());
+
+        // Inject real prices as anchors into current price history
+        if (data.crypto) {
+          setPrices(prev => {
+            const next = { ...prev };
+            for (const [id, info] of Object.entries(data.crypto)) {
+              if (info?.price && next[id]?.length) {
+                // Nudge last price toward real price smoothly
+                const arr = [...next[id]];
+                const realPrice = info.price;
+                arr[arr.length - 1] = realPrice * (1 + gaussian(0, 0.001));
+                next[id] = arr;
+              }
+            }
+            return next;
+          });
+        }
+        if (data.stocks) {
+          setPrices(prev => {
+            const next = { ...prev };
+            for (const [id, info] of Object.entries(data.stocks)) {
+              if (info?.price && next[id]?.length) {
+                const arr = [...next[id]];
+                arr[arr.length - 1] = info.price * (1 + gaussian(0, 0.001));
+                next[id] = arr;
+              }
+            }
+            return next;
+          });
+        }
+        if (data.futures) {
+          setPrices(prev => {
+            const next = { ...prev };
+            for (const [id, info] of Object.entries(data.futures)) {
+              if (info?.price && next[id]?.length) {
+                const arr = [...next[id]];
+                arr[arr.length - 1] = info.price * (1 + gaussian(0, 0.001));
+                next[id] = arr;
+              }
+            }
+            return next;
+          });
+        }
+
+        // Real news headlines
+        if (data.news?.length) {
+          setNews(data.news);
+        }
+
+        // WSB sentiment
+        if (data.wsb) {
+          setWsb(data.wsb);
+        }
+      } catch (e) {
+        // silent — synthetic data continues
+      }
+    };
+
+    fetchReal();
+    const t = setInterval(fetchReal, 30_000);
+    return () => clearInterval(t);
   }, []);
 
   // ── Price tick (runs always while a class is selected) ──────────────────
@@ -733,6 +845,8 @@ export default function SimulationSuite() {
             signals={signals}
             news={news}
             scanning={phase === 'scanning'}
+            wsb={wsb}
+            realDataTs={realDataTs}
           />
           <CognitionPanel
             debate={debate}

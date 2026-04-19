@@ -69,7 +69,7 @@ def build(lobe):
     if not lobe_dir.exists():
         print(f"[build] WARNING: {lobe_dir} does not exist — only seed data will be used")
     else:
-        md_files = [f for f in lobe_dir.iterdir() if f.suffix == '.md' and f.name != 'README.md']
+        md_files = [f for f in lobe_dir.rglob('*.md') if f.name != 'README.md']
         skipped = 0
         for f in sorted(md_files):
             raw = f.read_text(encoding='utf-8', errors='replace')

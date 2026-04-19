@@ -737,8 +737,9 @@ Make the questions specific and the answers rich, drawing on your actual knowled
    */
   async _mdLibraryToJsonl(lobeDir, lobe) {
     try {
-      const files = await fs.readdir(lobeDir);
-      const mdFiles = files.filter(f => f.endsWith('.md') && f !== 'README.md');
+      // Recurse into subdirectories (yumyums/, sprouts, etc.)
+      const files = await fs.readdir(lobeDir, { recursive: true });
+      const mdFiles = files.filter(f => f.endsWith('.md') && !f.endsWith('README.md'));
       if (!mdFiles.length) return null;
 
       const systemPrompts = {
@@ -755,7 +756,7 @@ Make the questions specific and the answers rich, drawing on your actual knowled
       const lines = [];
       for (const file of mdFiles) {
         try {
-          const raw = await fs.readFile(path.join(lobeDir, file), 'utf8');
+          const raw = await fs.readFile(path.join(lobeDir, file), 'utf8');  // file may include subdir e.g. yumyums/sprout.md
           // Skip meta training decision entries — they'd teach the model to be
           // suspicious of its own training, creating a feedback loop
           if (raw.includes('type: meta_training_decision') || raw.includes('type: model_promotion_decision')) continue;

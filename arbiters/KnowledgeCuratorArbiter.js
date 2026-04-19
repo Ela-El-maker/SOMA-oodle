@@ -307,8 +307,9 @@ export class KnowledgeCuratorArbiter {
         for (const lobe of Object.keys(this._counts)) {
             try {
                 const dir = path.join(KNOWLEDGE_ROOT, lobe);
-                const files = await fs.readdir(dir);
-                this._counts[lobe] = files.filter(f => f.endsWith('.md') && f !== 'README.md').length;
+                // Recurse into subdirectories (e.g. yumyums/) so sprouts are counted
+                const files = await fs.readdir(dir, { recursive: true });
+                this._counts[lobe] = files.filter(f => f.endsWith('.md') && !f.endsWith('README.md')).length;
             } catch {
                 this._counts[lobe] = 0;
             }

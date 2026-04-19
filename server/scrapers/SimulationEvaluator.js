@@ -22,7 +22,7 @@
 
 import { promises as fs } from 'fs';
 import path from 'path';
-import { getCachedMarketData } from './MarketDataScraper.js';
+import { getCachedMarketData, fetchHistoricalOHLCV } from './MarketDataScraper.js';
 
 // ── Asset universe ─────────────────────────────────────────────────────────
 
@@ -72,7 +72,15 @@ function gaussian(mean = 0, std = 1) {
   return mean + std * Math.sqrt(-2 * Math.log(u)) * Math.cos(2 * Math.PI * v);
 }
 
-function generatePriceSeries(asset, length = 300, anchorPrice = null) {
+function generatePriceSeries(asset, length = 300, anchorPrice = null, realOHLCV = null) {
+  // If real historical data available, use actual closing prices
+  if (realOHLCV && realOHLCV.length >= 30) {
+    const closes = realOHLCV
+      .map(r => r.close)
+      .filter(p => p && p > 0);
+    if (closes.length >= 30) return closes;
+  }
+  // Synthetic fallback — anchored to real price if available
   const start = anchorPrice || asset.base;
   const prices = [start];
   for (let i = 1; i < length; i++) {
@@ -129,8 +137,8 @@ function getSignal(prices) {
 // ── Run a single episode ───────────────────────────────────────────────────
 // Returns trade-level stats for scoring
 
-function runEpisode(asset, protocol, anchorPrice = null) {
-  const prices = generatePriceSeries(asset, 500, anchorPrice);
+function runEpisode(asset, protocol, anchorPrice = null, realOHLCV = null) {
+  const prices = generatePriceSeries(asset, 500, anchorPrice, realOHLCV);
   let cash = 100000;
   let position = null;
   const trades = [];
@@ -220,6 +228,7 @@ export class SimulationEvaluator {
   constructor(opts = {}) {
     this.messageBroker = opts.messageBroker || null;
     this.knowledgeCurator = opts.knowledgeCurator || null;
+    this._realHistory = new Map();   // assetId → OHLCV rows
 
     // All combos: asset × protocol
     this._combos = [];
@@ -288,8 +297,29 @@ export class SimulationEvaluator {
   start() {
     if (this._running) return;
     this._running = true;
+    // Pre-fetch real history for all assets in background
+    this._prefetchHistory();
     this._tick();
     console.log('[SimulationEvaluator] Evaluation loop started');
+  }
+
+  async _prefetchHistory() {
+    const assetIds = [...new Set(ASSETS.map(a => a.id))];
+    console.log(`[SimulationEvaluator] Pre-fetching real OHLCV history for ${assetIds.length} assets...`);
+    let fetched = 0;
+    for (const assetId of assetIds) {
+      if (!this._running) break;
+      try {
+        const rows = await fetchHistoricalOHLCV(assetId);
+        if (rows?.length) {
+          this._realHistory.set(assetId, rows);
+          fetched++;
+        }
+      } catch {}
+      // Stagger to avoid hammering yfinance
+      await new Promise(r => setTimeout(r, 800));
+    }
+    console.log(`[SimulationEvaluator] Real history loaded for ${fetched}/${assetIds.length} assets`);
   }
 
   stop() {
@@ -337,7 +367,8 @@ export class SimulationEvaluator {
       if (!asset || !protocol) continue;
 
       const anchorPrice = anchorPrices[assetId] || null;
-      const { trades } = runEpisode(asset, protocol, anchorPrice);
+      const realOHLCV = this._realHistory.get(assetId) || null;
+      const { trades } = runEpisode(asset, protocol, anchorPrice, realOHLCV);
 
       // Accumulate into ledger
       if (!this._ledger[key]) {

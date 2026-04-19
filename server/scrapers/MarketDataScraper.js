@@ -1,40 +1,134 @@
 /**
  * server/scrapers/MarketDataScraper.js
  *
- * Scrapes real market data for the Simulation Suite.
- * SOMA uses this to trade on actual conditions, not synthetic noise.
+ * SOMA's market data pipeline.
  *
- * Sources:
- *   CoinGecko API    — crypto prices (free, no key)
- *   Yahoo Finance    — stocks + futures prices (unofficial API, no key)
- *   CoinDesk         — crypto news headlines (Puppeteer)
- *   Reuters Finance  — macro/stock news (Puppeteer)
- *   Reddit WSB       — retail sentiment from r/wallstreetbets (Reddit API)
+ * Primary:   scripts/market_bridge.py  (yfinance — real quotes, history, news, WSB)
+ * Fallback:  CoinGecko + Yahoo Finance REST + Puppeteer CoinDesk/Reuters
  *
- * Cache: 60s in-memory. Returns stale data on scrape failure so the
- * frontend never gets a hard error.
+ * Cache: 60s in-memory. Always returns data — never a hard error to callers.
  */
 
+import { spawn } from 'child_process';
 import puppeteer from 'puppeteer';
+import path from 'path';
 
-// ── Cache ──────────────────────────────────────────────────────────────────
-const CACHE_TTL_MS = 60_000;
-let _cache = null;
-let _cacheTs = 0;
+const BRIDGE_SCRIPT = path.join(process.cwd(), 'scripts', 'market_bridge.py');
+const CACHE_TTL_MS  = 60_000;
+const HISTORY_TTL_MS = 4 * 60 * 60 * 1000; // 4h — historical data doesn't change much
+
+let _cache    = null;
+let _cacheTs  = 0;
 let _scraping = false;
 
-// ── Fetch helpers ─────────────────────────────────────────────────────────
+// Historical OHLCV cache per symbol
+const _historyCache = new Map();   // symbol → { data, ts }
 
-async function fetchJson(url, opts = {}) {
+// ── Python bridge helper ──────────────────────────────────────────────────
+
+function runBridge(args, timeoutMs = 30_000) {
+    return new Promise((resolve, reject) => {
+        const chunks = [];
+        const errChunks = [];
+        const proc = spawn('python', [BRIDGE_SCRIPT, ...args], {
+            env: { ...process.env, PYTHONIOENCODING: 'utf-8' },
+        });
+        proc.stdout.on('data', d => chunks.push(d));
+        proc.stderr.on('data', d => errChunks.push(d));
+        const timer = setTimeout(() => {
+            proc.kill();
+            reject(new Error(`market_bridge.py timeout after ${timeoutMs}ms`));
+        }, timeoutMs);
+        proc.on('close', code => {
+            clearTimeout(timer);
+            const out = Buffer.concat(chunks).toString('utf8').trim();
+            if (!out) {
+                const err = Buffer.concat(errChunks).toString('utf8').trim();
+                return reject(new Error(`bridge exited ${code}: ${err.slice(0, 200)}`));
+            }
+            try {
+                resolve(JSON.parse(out));
+            } catch (e) {
+                reject(new Error(`bridge JSON parse error: ${out.slice(0, 200)}`));
+            }
+        });
+        proc.on('error', err => { clearTimeout(timer); reject(err); });
+    });
+}
+
+// ── Primary: yfinance bridge ───────────────────────────────────────────────
+
+async function fetchFromBridge() {
+    const [quotes, wsb] = await Promise.allSettled([
+        runBridge(['quotes'], 45_000),
+        runBridge(['wsb'],    20_000),
+    ]);
+
+    const qData = quotes.status === 'fulfilled' ? quotes.value : null;
+    const wData = wsb.status   === 'fulfilled' ? wsb.value   : null;
+
+    if (!qData?.ok) throw new Error('quotes bridge failed');
+
+    // Split quotes into class buckets matching ASSET_CLASSES in SimulationSuite
+    const cryptoIds  = ['BTC','ETH','SOL','AVAX','LINK','DOT','UNI','AAVE'];
+    const stockIds   = ['NVDA','MSFT','AAPL','META','GOOGL','AMZN','TSLA','AMD'];
+    const futuresIds = ['ES','NQ','CL','GC','SI','ZB'];
+
+    const classify = ids => Object.fromEntries(
+        ids.filter(id => qData.quotes[id]).map(id => [id, qData.quotes[id]])
+    );
+
+    // Build news from yfinance for key symbols
+    const newsItems = [];
+    try {
+        const btcNews = await runBridge(['news', 'BTC'], 15_000);
+        if (btcNews.ok) {
+            newsItems.push(...btcNews.articles.slice(0, 4).map(a => ({ source: a.publisher, text: a.title })));
+        }
+    } catch {}
+    try {
+        const spxNews = await runBridge(['news', 'SPY'], 15_000);
+        if (spxNews.ok) {
+            newsItems.push(...spxNews.articles.slice(0, 3).map(a => ({ source: a.publisher, text: a.title })));
+        }
+    } catch {}
+
+    // Transform WSB
+    let wsbResult = null;
+    if (wData?.ok) {
+        wsbResult = {
+            sentiment:      wData.sentiment,
+            sentimentLabel: wData.sentimentLabel,
+            bullCount:      wData.bullCount,
+            bearCount:      wData.bearCount,
+            hotTickers:     wData.hotTickers,
+            ddPosts:        wData.ddPosts,
+            flowPosts:      wData.flowPosts,
+            posts:          wData.topPosts,
+            totalScanned:   wData.totalScanned,
+        };
+    }
+
+    return {
+        timestamp: Date.now(),
+        source:    'yfinance',
+        crypto:    classify(cryptoIds),
+        stocks:    classify(stockIds),
+        futures:   classify(futuresIds),
+        wsb:       wsbResult,
+        news:      newsItems,
+    };
+}
+
+// ── Fallback: CoinGecko + Yahoo Finance REST ──────────────────────────────
+
+async function fetchFallbackJson(url, timeout = 8000) {
     const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), opts.timeout ?? 8000);
+    const timer = setTimeout(() => controller.abort(), timeout);
     try {
         const res = await fetch(url, {
             signal: controller.signal,
-            headers: {
-                'User-Agent': 'Mozilla/5.0 (compatible; SOMA/1.0)',
-                ...(opts.headers || {}),
-            },
+            headers: { 'User-Agent': 'Mozilla/5.0 (compatible; SOMA/1.0)' },
         });
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
         return await res.json();
@@ -43,222 +137,103 @@ async function fetchJson(url, opts = {}) {
     }
 }
 
-// ── Crypto prices — CoinGecko ─────────────────────────────────────────────
+async function fetchFallback() {
+    const [coinGecko, spxNews] = await Promise.allSettled([
+        fetchFallbackJson('https://api.coingecko.com/api/v3/simple/price?ids=bitcoin,ethereum,solana,avalanche-2&vs_currencies=usd&include_24hr_change=true'),
+        fetch('https://www.reddit.com/r/wallstreetbets/hot.json?limit=25', {
+            headers: { 'User-Agent': 'SOMA-SimBot/1.0' },
+            signal: AbortSignal.timeout(8000),
+        }).then(r => r.json()),
+    ]);
 
-async function fetchCrypto() {
-    try {
-        const data = await fetchJson(
-            'https://api.coingecko.com/api/v3/simple/price?ids=bitcoin,ethereum,solana,avalanche-2&vs_currencies=usd&include_24hr_change=true&include_24hr_vol=true'
-        );
-        return {
-            BTC:  { price: data['bitcoin']?.usd,        change24h: data['bitcoin']?.usd_24h_change,        vol: data['bitcoin']?.usd_24h_vol },
-            ETH:  { price: data['ethereum']?.usd,       change24h: data['ethereum']?.usd_24h_change,       vol: data['ethereum']?.usd_24h_vol },
-            SOL:  { price: data['solana']?.usd,         change24h: data['solana']?.usd_24h_change,         vol: data['solana']?.usd_24h_vol },
-            AVAX: { price: data['avalanche-2']?.usd,    change24h: data['avalanche-2']?.usd_24h_change,    vol: data['avalanche-2']?.usd_24h_vol },
+    const cg = coinGecko.status === 'fulfilled' ? coinGecko.value : null;
+    const wsb = spxNews.status === 'fulfilled' ? spxNews.value : null;
+
+    const crypto = cg ? {
+        BTC:  { price: cg['bitcoin']?.usd,     change24h: cg['bitcoin']?.usd_24h_change },
+        ETH:  { price: cg['ethereum']?.usd,    change24h: cg['ethereum']?.usd_24h_change },
+        SOL:  { price: cg['solana']?.usd,      change24h: cg['solana']?.usd_24h_change },
+        AVAX: { price: cg['avalanche-2']?.usd, change24h: cg['avalanche-2']?.usd_24h_change },
+    } : null;
+
+    let wsbResult = null;
+    if (wsb?.data?.children) {
+        const posts = wsb.data.children.map(p => p.data).filter(p => !p.stickied);
+        const bulls = posts.filter(p => /moon|call|bull|buy|yolo/i.test(p.title)).length;
+        const bears = posts.filter(p => /puts|short|crash|bear|dump/i.test(p.title)).length;
+        const total = bulls + bears || 1;
+        wsbResult = {
+            sentiment: bulls / total,
+            sentimentLabel: bulls / total > 0.6 ? 'BULLISH' : bulls / total < 0.4 ? 'BEARISH' : 'NEUTRAL',
+            bullCount: bulls, bearCount: bears,
+            posts: posts.slice(0, 5).map(p => ({ title: p.title, score: p.score })),
         };
+    }
+
+    return { timestamp: Date.now(), source: 'fallback', crypto, wsb: wsbResult, news: [], stocks: null, futures: null };
+}
+
+// ── Historical OHLCV (for SimulationEvaluator backtesting) ────────────────
+
+export async function fetchHistoricalOHLCV(symbol) {
+    const cached = _historyCache.get(symbol);
+    if (cached && (Date.now() - cached.ts) < HISTORY_TTL_MS) return cached.data;
+
+    try {
+        const result = await runBridge(['history', symbol], 30_000);
+        if (!result.ok || !result.rows?.length) throw new Error('no rows');
+        const data = result.rows;
+        _historyCache.set(symbol, { data, ts: Date.now() });
+        return data;
     } catch (e) {
-        console.warn('[MarketDataScraper] CoinGecko failed:', e.message);
+        console.warn(`[MarketDataScraper] history failed for ${symbol}:`, e.message);
         return null;
     }
 }
 
-// ── Stock + futures prices — Yahoo Finance ────────────────────────────────
+// ── WSB deep scan (standalone) ────────────────────────────────────────────
 
-async function fetchYahooQuote(symbol) {
+export async function fetchWSBDeepScan() {
     try {
-        const data = await fetchJson(
-            `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(symbol)}?interval=1m&range=1d`,
-            { timeout: 6000 }
-        );
-        const meta = data?.chart?.result?.[0]?.meta;
-        if (!meta) return null;
-        return {
-            price: meta.regularMarketPrice,
-            open:  meta.chartPreviousClose,
-            change24h: meta.regularMarketPrice && meta.chartPreviousClose
-                ? ((meta.regularMarketPrice - meta.chartPreviousClose) / meta.chartPreviousClose) * 100
-                : null,
-        };
+        const result = await runBridge(['wsb'], 20_000);
+        if (!result.ok) throw new Error('wsb bridge failed');
+        return result;
     } catch (e) {
+        console.warn('[MarketDataScraper] WSB deep scan failed:', e.message);
         return null;
-    }
-}
-
-async function fetchStocksAndFutures() {
-    const symbols = {
-        stocks:  { NVDA: 'NVDA', MSFT: 'MSFT', AAPL: 'AAPL', META: 'META' },
-        futures: { ES: 'ES=F', NQ: 'NQ=F', CL: 'CL=F', GC: 'GC=F' },
-    };
-    const results = { stocks: {}, futures: {} };
-    const all = [
-        ...Object.entries(symbols.stocks).map(([k, v]) => ({ cat: 'stocks', key: k, sym: v })),
-        ...Object.entries(symbols.futures).map(([k, v]) => ({ cat: 'futures', key: k, sym: v })),
-    ];
-    await Promise.all(all.map(async ({ cat, key, sym }) => {
-        const q = await fetchYahooQuote(sym);
-        if (q) results[cat][key] = q;
-    }));
-    return results;
-}
-
-// ── News — CoinDesk (Puppeteer) ────────────────────────────────────────────
-
-async function scrapeCoindeskNews(browser) {
-    const page = await browser.newPage();
-    try {
-        await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120.0 Safari/537.36');
-        await page.goto('https://www.coindesk.com/markets/', { waitUntil: 'domcontentloaded', timeout: 15000 });
-        const headlines = await page.evaluate(() => {
-            const items = [];
-            document.querySelectorAll('h3, h4, [class*="headline"], [class*="title"]').forEach(el => {
-                const text = el.innerText?.trim();
-                if (text && text.length > 20 && text.length < 150) items.push(text);
-            });
-            return [...new Set(items)].slice(0, 8);
-        });
-        return headlines.map(h => ({ source: 'CoinDesk', text: h }));
-    } catch (e) {
-        console.warn('[MarketDataScraper] CoinDesk scrape failed:', e.message);
-        return [];
-    } finally {
-        await page.close().catch(() => {});
-    }
-}
-
-// ── WSB sentiment — Reddit API ─────────────────────────────────────────────
-
-async function fetchWSB() {
-    try {
-        const data = await fetchJson(
-            'https://www.reddit.com/r/wallstreetbets/hot.json?limit=25',
-            {
-                timeout: 8000,
-                headers: { 'User-Agent': 'SOMA-SimBot/1.0 (market research)' },
-            }
-        );
-        const posts = data?.data?.children || [];
-        const items = posts
-            .map(p => p.data)
-            .filter(p => !p.stickied && p.score > 100)
-            .slice(0, 12)
-            .map(p => ({
-                title: p.title,
-                score: p.score,
-                comments: p.num_comments,
-                flair: p.link_flair_text || '',
-                url: `https://reddit.com${p.permalink}`,
-            }));
-
-        // Simple sentiment: count bull/bear keywords in titles
-        let bullCount = 0, bearCount = 0;
-        const bullWords = ['moon', 'bull', 'calls', 'buy', 'long', 'yolo', 'squeeze', 'rocket', '🚀', 'gains'];
-        const bearWords = ['puts', 'short', 'crash', 'bear', 'dump', 'sell', 'drop', 'rekt', 'loss'];
-        for (const p of items) {
-            const t = p.title.toLowerCase();
-            if (bullWords.some(w => t.includes(w))) bullCount++;
-            if (bearWords.some(w => t.includes(w))) bearCount++;
-        }
-        const total = bullCount + bearCount || 1;
-        const sentiment = bullCount / total; // 0 = full bear, 1 = full bull
-
-        return {
-            posts: items,
-            sentiment,
-            sentimentLabel: sentiment > 0.65 ? 'BULLISH' : sentiment < 0.35 ? 'BEARISH' : 'NEUTRAL',
-            bullCount,
-            bearCount,
-        };
-    } catch (e) {
-        console.warn('[MarketDataScraper] WSB fetch failed:', e.message);
-        return null;
-    }
-}
-
-// ── Reuters headlines — Puppeteer ─────────────────────────────────────────
-
-async function scrapeReutersNews(browser) {
-    const page = await browser.newPage();
-    try {
-        await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120.0 Safari/537.36');
-        await page.goto('https://www.reuters.com/finance/', { waitUntil: 'domcontentloaded', timeout: 15000 });
-        const headlines = await page.evaluate(() => {
-            const items = [];
-            document.querySelectorAll('[data-testid*="heading"], h3, [class*="heading"]').forEach(el => {
-                const text = el.innerText?.trim();
-                if (text && text.length > 20 && text.length < 160) items.push(text);
-            });
-            return [...new Set(items)].slice(0, 6);
-        });
-        return headlines.map(h => ({ source: 'Reuters', text: h }));
-    } catch (e) {
-        console.warn('[MarketDataScraper] Reuters scrape failed:', e.message);
-        return [];
-    } finally {
-        await page.close().catch(() => {});
     }
 }
 
 // ── Main scrape ────────────────────────────────────────────────────────────
 
 export async function scrapeMarketData() {
-    // Return cached if fresh
     if (_cache && (Date.now() - _cacheTs) < CACHE_TTL_MS) {
         return { ..._cache, cached: true };
     }
-
-    // Deduplicate concurrent scrape calls
     if (_scraping) {
         return _cache ? { ..._cache, cached: true, pending: true } : null;
     }
     _scraping = true;
 
-    let browser = null;
     try {
-        console.log('[MarketDataScraper] Starting market data scrape...');
-
-        // Launch Puppeteer (headless, no sandbox for Windows)
-        browser = await puppeteer.launch({
-            headless: 'new',
-            args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-gpu', '--disable-dev-shm-usage'],
-            timeout: 20000,
-        });
-
-        // Run all scrapers in parallel
-        const [crypto, stocksFutures, wsbData, coindeskNews, reutersNews] = await Promise.allSettled([
-            fetchCrypto(),
-            fetchStocksAndFutures(),
-            fetchWSB(),
-            scrapeCoindeskNews(browser),
-            scrapeReutersNews(browser),
-        ]);
-
-        // Merge news
-        const news = [
-            ...(coindeskNews.status === 'fulfilled' ? coindeskNews.value : []),
-            ...(reutersNews.status  === 'fulfilled' ? reutersNews.value  : []),
-        ].filter(n => n.text && n.text.length > 10);
-
-        const result = {
-            timestamp: Date.now(),
-            crypto:        crypto.status        === 'fulfilled' ? crypto.value        : null,
-            stocks:        stocksFutures.status === 'fulfilled' ? stocksFutures.value?.stocks  : null,
-            futures:       stocksFutures.status === 'fulfilled' ? stocksFutures.value?.futures : null,
-            wsb:           wsbData.status       === 'fulfilled' ? wsbData.value       : null,
-            news,
-            cached: false,
-        };
-
-        _cache = result;
+        console.log('[MarketDataScraper] Fetching market data via yfinance bridge...');
+        const result = await fetchFromBridge();
+        _cache  = result;
         _cacheTs = Date.now();
-
-        console.log(`[MarketDataScraper] Done — crypto:${!!result.crypto} stocks:${!!result.stocks} news:${news.length} wsb:${!!result.wsb}`);
+        console.log(`[MarketDataScraper] Done — BTC: $${result.crypto?.BTC?.price?.toFixed(0)} | NVDA: $${result.stocks?.NVDA?.price?.toFixed(2)} | WSB: ${result.wsb?.sentimentLabel}`);
         return result;
-
     } catch (e) {
-        console.error('[MarketDataScraper] Scrape error:', e.message);
-        return _cache ? { ..._cache, cached: true, error: e.message } : null;
+        console.warn('[MarketDataScraper] Bridge failed, trying fallback:', e.message);
+        try {
+            const result = await fetchFallback();
+            _cache  = result;
+            _cacheTs = Date.now();
+            return result;
+        } catch (e2) {
+            console.error('[MarketDataScraper] All sources failed:', e2.message);
+            return _cache ? { ..._cache, cached: true, stale: true } : null;
+        }
     } finally {
-        if (browser) await browser.close().catch(() => {});
         _scraping = false;
     }
 }

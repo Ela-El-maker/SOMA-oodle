@@ -424,9 +424,26 @@ function ScannerPanel({ assetClass, prices, signals, news, scanning, wsb, realDa
             <span>🐻 {wsb.bearCount} puts/short</span>
             <span>{wsb.bullCount} calls/moon 🚀</span>
           </div>
-          {wsb.posts?.[0] && (
-            <div className="mt-1.5 text-[9px] text-zinc-600 italic leading-snug border-t border-white/5 pt-1">
-              Top post: "{wsb.posts[0].title.substring(0, 70)}{wsb.posts[0].title.length > 70 ? '…' : ''}"
+          {/* Hot tickers from WSB */}
+          {wsb.hotTickers?.length > 0 && (
+            <div className="mt-1.5 flex flex-wrap gap-1">
+              {wsb.hotTickers.slice(0, 8).map(t => (
+                <span key={t.ticker} className="text-[9px] px-1.5 py-0.5 rounded bg-zinc-800 text-zinc-400 font-mono border border-white/5">
+                  {t.ticker} <span className="text-zinc-600">{t.mentions}</span>
+                </span>
+              ))}
+            </div>
+          )}
+          {/* DD post alert */}
+          {wsb.ddPosts?.length > 0 && (
+            <div className="mt-1 text-[9px] text-amber-400 border-t border-white/5 pt-1">
+              DD: "{wsb.ddPosts[0].title.substring(0, 65)}…"
+            </div>
+          )}
+          {/* Flow post alert */}
+          {wsb.flowPosts?.length > 0 && (
+            <div className="mt-0.5 text-[9px] text-fuchsia-400">
+              Flow: "{wsb.flowPosts[0].title.substring(0, 65)}…"
             </div>
           )}
         </div>

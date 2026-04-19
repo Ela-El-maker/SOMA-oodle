@@ -1928,6 +1928,20 @@ export async function loadExtendedSystems(system) {
         setInterval(sirenKeepalive, 5 * 60 * 1000).unref();
     }, 6 * 60 * 1000).unref();
 
+    // ── Simulation Evaluator — SOMA's strategy evolution engine ──────────────
+    try {
+        const { SimulationEvaluator } = await import('../scrapers/SimulationEvaluator.js');
+        const evaluator = new SimulationEvaluator({
+            messageBroker: system.messageBroker,
+            knowledgeCurator: system.knowledgeCurator || null,
+        });
+        evaluator.start();
+        system.simulationEvaluator = evaluator;
+        console.log('    ✅ SimulationEvaluator online — strategy evolution engine running');
+    } catch (e) {
+        console.warn('    ⚠️  SimulationEvaluator failed to start:', e.message);
+    }
+
     return ext;
 }
 

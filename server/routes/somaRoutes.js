@@ -2371,6 +2371,19 @@ ${personaContext}${characterContext}`.trim()
         res.json({ success: true });
     });
 
+    // Strategy evaluator — leaderboard, playbook, live status
+    router.get('/simulations/evaluator', (req, res) => {
+        const ev = system?.simulationEvaluator;
+        if (!ev) return res.json({ online: false, status: null, leaderboard: [], playbook: [] });
+        res.json({ online: true, status: ev.getStatus(), playbook: ev.getPlaybook().slice(0, 20) });
+    });
+
+    router.get('/simulations/evaluator/ledger', (req, res) => {
+        const ev = system?.simulationEvaluator;
+        if (!ev) return res.json({ online: false, ledger: [] });
+        res.json({ online: true, ledger: ev.getLedger() });
+    });
+
     // Real market data — Puppeteer scrapes CoinGecko, Yahoo Finance, CoinDesk,
     // Reuters, and Reddit WSB. Results cached 60s. Frontend polls every 30s.
     router.get('/simulations/market-data', async (req, res) => {

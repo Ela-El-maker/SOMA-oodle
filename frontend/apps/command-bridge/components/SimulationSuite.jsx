@@ -15,8 +15,150 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import {
   Activity, Brain, TrendingUp, TrendingDown, Eye, Zap,
-  BarChart2, Radio, Shield, Compass, Box, Cpu
+  BarChart2, Radio, Shield, Compass, Box, Cpu, Trophy, FlaskConical
 } from 'lucide-react';
+
+// ── Evaluator Panel ────────────────────────────────────────────────────────
+
+function EvaluatorPanel() {
+  const [data, setData] = useState(null);
+  const [ledger, setLedger] = useState([]);
+  const [tab, setTab] = useState('leaderboard'); // leaderboard | playbook
+
+  useEffect(() => {
+    const fetch_ = async () => {
+      try {
+        const [evRes, ldRes] = await Promise.all([
+          fetch('/api/soma/simulations/evaluator'),
+          fetch('/api/soma/simulations/evaluator/ledger'),
+        ]);
+        if (evRes.ok) setData(await evRes.json());
+        if (ldRes.ok) {
+          const l = await ldRes.json();
+          setLedger(l.ledger || []);
+        }
+      } catch {}
+    };
+    fetch_();
+    const t = setInterval(fetch_, 8000);
+    return () => clearInterval(t);
+  }, []);
+
+  const fmt = n => n == null ? '—' : typeof n === 'number' ? n.toFixed(3) : n;
+  const pct = n => n == null ? '—' : `${(n * 100).toFixed(1)}%`;
+
+  const displayRows = tab === 'playbook'
+    ? (data?.playbook || [])
+    : ledger.slice(0, 40);
+
+  const stats = data?.status;
+
+  return (
+    <div className="flex flex-col h-full overflow-hidden">
+      {/* Stats bar */}
+      <div className="flex items-center gap-4 px-4 py-3 border-b border-white/5 shrink-0">
+        <div className="text-center">
+          <div className="text-[9px] text-zinc-600 uppercase tracking-wider">Combos</div>
+          <div className="font-mono text-sm text-zinc-300">{stats?.combos ?? '—'}</div>
+        </div>
+        <div className="text-center">
+          <div className="text-[9px] text-zinc-600 uppercase tracking-wider">Episodes Run</div>
+          <div className="font-mono text-sm text-emerald-400">{stats?.totalEpisodes?.toLocaleString() ?? '—'}</div>
+        </div>
+        <div className="text-center">
+          <div className="text-[9px] text-zinc-600 uppercase tracking-wider">Trades Simulated</div>
+          <div className="font-mono text-sm text-blue-400">{stats?.totalTrades?.toLocaleString() ?? '—'}</div>
+        </div>
+        <div className="text-center">
+          <div className="text-[9px] text-zinc-600 uppercase tracking-wider">Graduated</div>
+          <div className="font-mono text-sm text-fuchsia-400">{stats?.graduated ?? '—'}</div>
+        </div>
+        {!data?.online && (
+          <div className="ml-auto text-[10px] text-zinc-600 italic">Evaluator starting up...</div>
+        )}
+        {data?.online && (
+          <div className="ml-auto flex items-center gap-1 text-[9px] text-emerald-400">
+            <span className="w-1.5 h-1.5 bg-emerald-400 rounded-full animate-pulse" />
+            running
+          </div>
+        )}
+      </div>
+
+      {/* Tab switcher */}
+      <div className="flex border-b border-white/5 shrink-0">
+        {[['leaderboard', 'Leaderboard'], ['playbook', 'Graduated Playbook']].map(([id, label]) => (
+          <button
+            key={id}
+            onClick={() => setTab(id)}
+            className={`px-4 py-2 text-[11px] font-semibold transition-colors ${
+              tab === id ? 'text-white border-b-2 border-orange-500' : 'text-zinc-600 hover:text-zinc-400'
+            }`}
+          >{label} {id === 'playbook' && stats?.graduated > 0 && <span className="ml-1 text-fuchsia-400">({stats.graduated})</span>}</button>
+        ))}
+      </div>
+
+      {/* Table */}
+      <div className="flex-1 overflow-y-auto custom-scrollbar">
+        {displayRows.length === 0 ? (
+          <div className="flex flex-col items-center justify-center h-full gap-3 text-zinc-700">
+            <FlaskConical className="w-8 h-8 opacity-30" />
+            <div className="text-sm">{tab === 'playbook' ? 'No strategies graduated yet — evaluator is building evidence' : 'Evaluation starting...'}</div>
+            <div className="text-[10px] max-w-xs text-center leading-relaxed">
+              {tab === 'playbook'
+                ? 'A strategy needs 20+ episodes and 70%+ composite score to graduate to Mission Control.'
+                : 'SOMA is running accelerated simulations across all asset × protocol combinations. Check back in a minute.'}
+            </div>
+          </div>
+        ) : (
+          <table className="w-full text-left text-xs">
+            <thead className="sticky top-0 bg-[#09090b] border-b border-white/5">
+              <tr className="text-[9px] text-zinc-600 uppercase tracking-wider">
+                <th className="px-3 py-2">#</th>
+                <th className="px-3 py-2">Asset</th>
+                <th className="px-3 py-2">Class</th>
+                <th className="px-3 py-2">Protocol</th>
+                <th className="px-3 py-2 text-right">Score</th>
+                <th className="px-3 py-2 text-right">Win Rate</th>
+                <th className="px-3 py-2 text-right">Sharpe</th>
+                <th className="px-3 py-2 text-right">Max DD</th>
+                <th className="px-3 py-2 text-right">P Factor</th>
+                <th className="px-3 py-2 text-right">Episodes</th>
+                {tab === 'playbook' && <th className="px-3 py-2 text-center">Status</th>}
+              </tr>
+            </thead>
+            <tbody>
+              {displayRows.map((row, i) => {
+                const scoreColor = row.score >= 0.7 ? 'text-emerald-400' : row.score >= 0.55 ? 'text-amber-400' : 'text-zinc-500';
+                const assetClass = { crypto: 'text-emerald-400', stocks: 'text-blue-400', futures: 'text-fuchsia-400' };
+                return (
+                  <tr key={`${row.assetId}-${row.protocolId}`} className="border-b border-white/5 hover:bg-white/3 transition-colors">
+                    <td className="px-3 py-1.5 text-zinc-700 font-mono">{i + 1}</td>
+                    <td className="px-3 py-1.5 font-mono font-bold text-zinc-200">{row.assetId}</td>
+                    <td className={`px-3 py-1.5 text-[10px] font-bold uppercase ${assetClass[row.assetClass] || 'text-zinc-500'}`}>{row.assetClass || '—'}</td>
+                    <td className="px-3 py-1.5 text-zinc-400 capitalize">{row.protocolId}</td>
+                    <td className={`px-3 py-1.5 text-right font-mono font-bold ${scoreColor}`}>{fmt(row.score)}</td>
+                    <td className="px-3 py-1.5 text-right font-mono text-zinc-300">{pct(row.winRate)}</td>
+                    <td className="px-3 py-1.5 text-right font-mono text-zinc-400">{fmt(row.sharpe)}</td>
+                    <td className="px-3 py-1.5 text-right font-mono text-rose-400">{pct(row.maxDrawdown)}</td>
+                    <td className="px-3 py-1.5 text-right font-mono text-zinc-400">{fmt(row.profitFactor)}</td>
+                    <td className="px-3 py-1.5 text-right font-mono text-zinc-600">{row.episodes}</td>
+                    {tab === 'playbook' && (
+                      <td className="px-3 py-1.5 text-center">
+                        <span className="text-[9px] px-2 py-0.5 rounded-full bg-fuchsia-500/10 text-fuchsia-400 border border-fuchsia-500/20 font-bold uppercase tracking-wider">
+                          READY
+                        </span>
+                      </td>
+                    )}
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        )}
+      </div>
+    </div>
+  );
+}
 
 // ── Asset universe ─────────────────────────────────────────────────────────
 
@@ -788,6 +930,7 @@ export default function SimulationSuite() {
     return () => { cancelled = true; };
   }, []);  // eslint-disable-line react-hooks/exhaustive-deps
 
+  const [view, setView] = useState('zoo'); // 'zoo' | 'evaluator'
   const assetClassDef = assetClassKey ? ASSET_CLASSES[assetClassKey] : null;
   const protocolDef = protocolKey ? PROTOCOLS[protocolKey] : null;
   const phaseColors = { init: 'zinc', scanning: 'emerald', debating: 'fuchsia', deciding: 'amber', executing: 'orange', monitoring: 'blue' };
@@ -803,26 +946,48 @@ export default function SimulationSuite() {
         <span className="text-zinc-700 text-xs">·</span>
         <span className="text-[10px] text-zinc-600">SOMA autonomous — observation only</span>
 
-        <div className="ml-auto flex items-center gap-2">
-          {assetClassDef && (
-            <span className={`text-[10px] px-2 py-0.5 rounded-full bg-${assetClassDef.color}-500/10 text-${assetClassDef.color}-400 border border-${assetClassDef.color}-500/20 font-bold uppercase tracking-wider`}>
-              {assetClassDef.label}
+        <div className="ml-auto flex items-center gap-3">
+          {/* View toggle */}
+          <div className="flex bg-zinc-900 rounded-lg p-0.5 border border-white/5">
+            <button
+              onClick={() => setView('zoo')}
+              className={`flex items-center gap-1.5 px-3 py-1 rounded-md text-[10px] font-bold uppercase tracking-wider transition-all ${
+                view === 'zoo' ? 'bg-orange-500/20 text-orange-400' : 'text-zinc-600 hover:text-zinc-400'
+              }`}
+            >
+              <Eye className="w-3 h-3" /> SIM
+            </button>
+            <button
+              onClick={() => setView('evaluator')}
+              className={`flex items-center gap-1.5 px-3 py-1 rounded-md text-[10px] font-bold uppercase tracking-wider transition-all ${
+                view === 'evaluator' ? 'bg-fuchsia-500/20 text-fuchsia-400' : 'text-zinc-600 hover:text-zinc-400'
+              }`}
+            >
+              <Trophy className="w-3 h-3" /> EVAL
+            </button>
+          </div>
+
+          {view === 'zoo' && (<>
+            {assetClassDef && (
+              <span className={`text-[10px] px-2 py-0.5 rounded-full bg-${assetClassDef.color}-500/10 text-${assetClassDef.color}-400 border border-${assetClassDef.color}-500/20 font-bold uppercase tracking-wider`}>
+                {assetClassDef.label}
+              </span>
+            )}
+            {protocolDef && (
+              <span className={`text-[10px] px-2 py-0.5 rounded-full bg-${protocolDef.color}-500/10 text-${protocolDef.color}-400 border border-${protocolDef.color}-500/20 font-bold uppercase tracking-wider`}>
+                {protocolDef.label}
+              </span>
+            )}
+            <span className={`flex items-center gap-1.5 text-[10px] px-2 py-0.5 rounded-full bg-${phaseColor}-500/10 text-${phaseColor}-400 border border-${phaseColor}-500/20 font-mono uppercase tracking-wider`}>
+              <span className={`w-1.5 h-1.5 rounded-full bg-${phaseColor}-400 ${['scanning','debating','executing'].includes(phase) ? 'animate-pulse' : ''}`} />
+              {phase}
             </span>
-          )}
-          {protocolDef && (
-            <span className={`text-[10px] px-2 py-0.5 rounded-full bg-${protocolDef.color}-500/10 text-${protocolDef.color}-400 border border-${protocolDef.color}-500/20 font-bold uppercase tracking-wider`}>
-              {protocolDef.label}
-            </span>
-          )}
-          <span className={`flex items-center gap-1.5 text-[10px] px-2 py-0.5 rounded-full bg-${phaseColor}-500/10 text-${phaseColor}-400 border border-${phaseColor}-500/20 font-mono uppercase tracking-wider`}>
-            <span className={`w-1.5 h-1.5 rounded-full bg-${phaseColor}-400 ${['scanning','debating','executing'].includes(phase) ? 'animate-pulse' : ''}`} />
-            {phase}
-          </span>
+          </>)}
         </div>
       </div>
 
       {/* ── Init overlay ── */}
-      {phase === 'init' && (
+      {view === 'zoo' && phase === 'init' && (
         <div className="flex-1 flex flex-col items-center justify-center gap-4 px-8">
           <Cpu className="w-10 h-10 text-orange-400/50 animate-pulse" />
           <div className="text-sm font-semibold text-zinc-400">SOMA initialising simulation...</div>
@@ -836,8 +1001,11 @@ export default function SimulationSuite() {
         </div>
       )}
 
+      {/* ── Evaluator view ── */}
+      {view === 'evaluator' && <EvaluatorPanel />}
+
       {/* ── 3-panel layout ── */}
-      {phase !== 'init' && (
+      {view === 'zoo' && phase !== 'init' && (
         <div className="flex-1 grid grid-cols-3 overflow-hidden min-h-0">
           <ScannerPanel
             assetClass={assetClassKey}

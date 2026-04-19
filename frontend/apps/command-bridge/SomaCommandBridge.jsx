@@ -101,9 +101,13 @@ const CommandCenterPanel = ({
   totalFragments, systemMetrics, analyticsSummary, activityStream,
   isConnected, formatUptime
 }) => {
-  const [steveMessages, setSteveMessages] = React.useState([
-    { role: 'steve', content: "System online. I assume you've broken something already?", ts: Date.now() }
-  ]);
+  const [steveMessages, setSteveMessages] = React.useState(() => {
+    try {
+      const saved = localStorage.getItem('soma_steve_messages');
+      if (saved) return JSON.parse(saved);
+    } catch {}
+    return [{ role: 'steve', content: "System online. I assume you've broken something already?", ts: Date.now() }];
+  });
   const [steveInput, setSteveInput] = React.useState('');
   const [steveThinking, setSteveThinking] = React.useState(false);
   const [steveStatus, setSteveStatus] = React.useState({ online: false, status: 'idle', mood: 'idle', toolCount: 0 });
@@ -111,6 +115,15 @@ const CommandCenterPanel = ({
   const [perceptionData, setPerceptionData] = React.useState({ attention: null, recentSignals: [] });
   const [wittyPhrase, setWittyPhrase] = React.useState('');
   const steveScrollRef = React.useRef(null);
+
+  // Persist Steve chat history across tab switches
+  React.useEffect(() => {
+    try {
+      // Keep last 100 messages to avoid unbounded localStorage growth
+      const toSave = steveMessages.slice(-100);
+      localStorage.setItem('soma_steve_messages', JSON.stringify(toSave));
+    } catch {}
+  }, [steveMessages]);
 
   // Poll Steve status + daemon health every 10s
   // inFlight ref prevents parallel requests if a fetch takes longer than the interval

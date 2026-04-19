@@ -703,20 +703,18 @@ ${contextStr}`;
             const visualContext = stagedContext ? `\n[RECENT VISUAL CONTEXT]\n${stagedContext}\n` : '';
 
             const activePersona = system.identityArbiter?.getActivePersona?.();
+            
+            // 🧠 Intent-based Lobe Routing: Use AttentionArbiter to pick the best cortex
+            const recommendedLobe = system.attentionArbiter?.recommendLobe?.(message) || 'auto';
+            
             const personaBrainMap = (persona) => {
                 if (persona?.preferredBrain) return persona.preferredBrain;
-                if (persona?.brain) return persona.brain;
-                const text = `${persona?.domain || ''} ${persona?.description || ''} ${persona?.name || ''}`.toLowerCase();
-                if (/(artist|creative|design|music|writer|poet|story|visual)/.test(text)) return 'AURORA';
-                if (/(security|risk|policy|compliance|threat|audit|governance)/.test(text)) return 'THALAMUS';
-                if (/(strategy|planner|roadmap|ops|optimization|forecast|business)/.test(text)) return 'PROMETHEUS';
-                if (/(engineer|developer|code|software|logic|math|debug|systems)/.test(text)) return 'LOGOS';
-                return 'auto';
+                return recommendedLobe; // Use dynamic intent routing as default
             };
-            const personaBrain = activePersona ? personaBrainMap(activePersona) : null;
+            const personaBrain = activePersona ? personaBrainMap(activePersona) : recommendedLobe;
             const personaContext = activePersona
-                ? `\n\n[ACTIVE PERSONA]\nName: ${activePersona.name}\nDescription: ${activePersona.description || activePersona.summary || 'N/A'}\nPreferredBrain: ${personaBrain}\n`
-                : '';
+                ? `\n\n[ACTIVE PERSONA]\nName: ${activePersona.name}\nDescription: ${activePersona.description || activePersona.summary || 'N/A'}\nRecommendedLobe: ${personaBrain}\n`
+                : `\n\n[COGNITIVE ROUTING]\nActiveLobe: ${personaBrain}\n`;
 
             // â"€â"€ @Mention: Activate a collected character â"€â"€
             const mentionMatch = message.match(/@(\w+)/);
@@ -1008,7 +1006,7 @@ ${contextStr}`;
             const bgSystemCtx = bgSystemParts.length ? bgSystemParts.join('\n') : null;
 
             // userContext + barryMindContext removed from finalPrompt — they live in bgSystemCtx (system prompt)
-            const finalPrompt = `${personaContext}${characterContext}${awarenessContext}${selfModelContext}${thoughtContext}${blueprintContext}${memoryContext}${provenContext}${presenceContext}${voiceConstraint}\n${prompt}`;
+            const finalPrompt = `${personaContext}${characterContext}${awarenessContext}${selfModelContext}${thoughtContext}${blueprintContext}${memoryContext}${provenContext}${presenceContext}${visualContext}${voiceConstraint}\n${prompt}`;
 
             // Server-side timeout: adaptive  --  uses remaining wall-clock budget so total
             // request time (pre-processing + reasoning) always stays under the wall limit.
@@ -2343,6 +2341,35 @@ ${personaContext}${characterContext}`.trim()
 
     // POST /api/soma/knowledge/file — manually file a knowledge entry (for SOMA self-documentation)
     // Body: { "lobe": "logos", "type": "architecture_decision", "content": "..." }
+    // ── Simulation Suite ──────────────────────────────────────────────────────
+    // SOMA can call POST /api/soma/simulations to request a sim be spawned in
+    // the frontend. The frontend polls /api/soma/simulations every 15s and
+    // spawns any pending entries, then calls /ack to clear them.
+
+    const _pendingSims = [];
+
+    router.get('/simulations', (req, res) => {
+        res.json({ pending: [..._pendingSims] });
+    });
+
+    router.post('/simulations', (req, res) => {
+        const { type, title } = req.body || {};
+        const validTypes = ['market', 'code', 'asi_path', 'cc'];
+        if (!validTypes.includes(type)) {
+            return res.status(400).json({ success: false, error: `type must be one of: ${validTypes.join(', ')}` });
+        }
+        _pendingSims.push({ type, title: title || type, requestedAt: Date.now() });
+        if (system?.messageBroker) {
+            system.messageBroker.publish('simulation.spawn.requested', { type, title }).catch(() => {});
+        }
+        res.json({ success: true, message: `Simulation '${type}' queued for frontend spawn` });
+    });
+
+    router.post('/simulations/ack', (req, res) => {
+        _pendingSims.length = 0;
+        res.json({ success: true });
+    });
+
     router.post('/knowledge/file', async (req, res) => {
         const { lobe, type, content } = req.body || {};
         if (!lobe || !content) {

@@ -85,6 +85,7 @@ import BootHealthWidget from './components/BootHealthWidget';
 import GoalsPanel from './components/GoalsPanel';
 import CharacterCard from './components/CharacterCard';
 import CharacterGacha from './components/CharacterGacha';
+import SimulationSuite from './components/SimulationSuite';
 
 // ==========================================
 // Command Center Panel (Steve + Perception + Status)
@@ -2762,31 +2763,7 @@ const SomaCommandBridge = () => {
         )}
 
         {/* SIMULATION MODULE */}
-        {activeModule === 'simulation' && (
-          <div className="h-full flex flex-col bg-[#09090b] text-zinc-200 font-sans p-6 rounded-xl border border-white/5 relative overflow-hidden">
-            <div className="flex items-center justify-between mb-4">
-              <h2 className="text-2xl font-bold text-white tracking-tight flex items-center">
-                <Box className="w-6 h-6 mr-3 text-orange-400" /> Physics Simulation
-              </h2>
-              <div className="flex items-center space-x-2">
-                <span className="text-[10px] font-mono text-zinc-500 uppercase tracking-widest">LIVE FEED</span>
-                <div className="w-2 h-2 bg-orange-500 rounded-full animate-pulse shadow-[0_0_10px_rgba(249,115,22,0.5)]" />
-              </div>
-            </div>
-            <div className="flex-1 bg-black rounded-xl overflow-hidden border border-white/10 shadow-inner relative">
-              <iframe
-                src="/simulation_viewer.html"
-                className="w-full h-full border-0"
-                title="SOMA Physics Simulation"
-              />
-              {/* Overlay for instructions */}
-              <div className="absolute top-4 left-4 bg-black/60 backdrop-blur-md p-3 rounded-lg border border-white/10 text-xs text-zinc-400 pointer-events-none">
-                <p className="font-bold text-orange-400 mb-1">EMBODIED LEARNING</p>
-                <p>Observe SOMA learning physical manipulation.</p>
-              </div>
-            </div>
-          </div>
-        )}
+        {activeModule === 'simulation' && <SimulationSuite />}
 
 
 

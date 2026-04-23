@@ -78,20 +78,22 @@ export async function loadPersonas(systemContext) {
 
             if (!metadata.name) { skippedNoName++; continue; }
 
-            // --- NEURAL CATEGORIZATION ---
-            const domain = (metadata.domain || path.basename(path.dirname(path.dirname(filePath)))).toUpperCase();
-            if (['CODE', 'ENGINEERING', 'SYSTEM', 'TERMINAL', 'FILES'].includes(domain)) {
-                metadata.lobe = 'EXECUTIVE';
-            } else if (['FINANCE', 'TRADING', 'MARKET', 'CRYPTO'].includes(domain)) {
-                metadata.lobe = 'EXECUTIVE';
-            } else if (['SOCIAL', 'X', 'MOLTBOOK', 'COMMUNICATION'].includes(domain)) {
-                metadata.lobe = 'EXTERNAL';
-            } else if (['MEMORY', 'DATA', 'MNEMONIC', 'CAUSALITY'].includes(domain)) {
-                metadata.lobe = 'KNOWLEDGE';
-            } else if (['EMOTION', 'PERSONALITY', 'PHILOSOPHY'].includes(domain)) {
-                metadata.lobe = 'LIMBIC';
+            // --- NEURAL CATEGORIZATION (QuadBrain Lobe Mapping) ---
+            const domainStr = metadata.domain ? metadata.domain.toUpperCase() : '';
+            const dirName = path.basename(path.dirname(path.dirname(filePath))).toUpperCase();
+            const combinedText = `${domainStr} ${dirName} ${metadata.name || ''}`.toUpperCase();
+
+            if (/(SECURITY|RISK|POLICY|COMPLIANCE|THREAT|AUDIT|GOVERN|ACCESS|VULNERABILITY)/.test(combinedText)) {
+                metadata.lobe = 'THALAMUS';
+            } else if (/(STRATEGY|PLANNER|ROADMAP|OPS|OPTIMIZATION|FORECAST|BUSINESS|FINANCE|TRADING|MARKET|CRYPTO|SEO|SALES|STARTUP|MANAGEMENT)/.test(combinedText)) {
+                metadata.lobe = 'PROMETHEUS';
+            } else if (/(ARTIST|CREATIVE|DESIGN|MUSIC|WRITER|POET|STORY|VISUAL|EMOTION|PERSONALITY|PHILOSOPHY|CONTENT|UI|UX)/.test(combinedText)) {
+                metadata.lobe = 'AURORA';
+            } else if (/(ENGINEER|DEVELOPER|CODE|SOFTWARE|LOGIC|MATH|DEBUG|SYSTEM|TERMINAL|FILE|SCRIPT|TESTING|API|FRONTEND|BACKEND|DATA|BLOCKCHAIN)/.test(combinedText)) {
+                metadata.lobe = 'LOGOS';
             } else {
-                metadata.lobe = 'COGNITIVE';
+                // Default to LOGOS for analytical/general reasoning tasks if ambiguous
+                metadata.lobe = 'LOGOS';
             }
 
             // 1. Register in active map (instant, in-memory)

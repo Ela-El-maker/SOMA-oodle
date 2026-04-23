@@ -56,20 +56,20 @@ import broker from './core/MessageBroker';
 import { pulseClient } from './services/PulseClient';
 
 const INITIAL_STATE: ProjectState = {
-  name: "Form",
+  name: "SOMA WORKBENCH",
   activeTab: 'web',
   currentPlane: 'code', // 'code' (Studio), 'shell' (Terminal), 'editor', 'preview', 'planning'
-  currentPath: "~/projects/form-app",
+  currentPath: ".", // Default to project root
   services: [
     {
-      id: 'PrimeCore',
-      name: 'Prime Core',
-      port: 8000,
+      id: 'SOMA_CORE',
+      name: 'SOMA Core',
+      port: 3001,
       status: 'online',
       role: 'prime',
-      version: '3.6.1',
-      logs: ['[AUTHORITY] Form Orchestrator online'],
-      metrics: { cpu: [8, 10, 9], memory: [120, 122, 121] }
+      version: '4.5.0-ULTRA',
+      logs: ['[SERVER] Pulse Connection Established'],
+      metrics: { cpu: [2, 4, 3], memory: [450, 460, 455] }
     }
   ],
   blocks: [
@@ -125,6 +125,28 @@ const App: React.FC<AppProps> = ({ onClose }) => {
 
   useEffect(() => {
     contextSync.initialize();
+    
+    // Auto-discover workspace files on mount
+    const discoverWorkspace = async () => {
+      try {
+        const res = await pulseClient.fsList('.');
+        if (res.success && res.files) {
+          const blueprintFiles = res.files
+            .filter((f: any) => !f.isDirectory)
+            .map((f: any) => ({
+              path: f.path,
+              content: '',
+              language: f.path.split('.').pop() || 'text'
+            }));
+          setState(prev => ({ ...prev, activeBlueprint: blueprintFiles }));
+        }
+      } catch (e) {
+        console.error("[Pulse] Workspace discovery failed:", e);
+      }
+    };
+    
+    discoverWorkspace();
+    
     return () => contextSync.shutdown();
   }, []);
 

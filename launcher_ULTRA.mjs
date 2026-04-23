@@ -152,27 +152,11 @@ async function main() {
     try {
         cLog('ULTRA', '🟢 Initializing SOMA System...');
 
-        // ─── Database Health Check ───────────────────────────
-        const dbPath = path.join(__dirname, 'soma-memory.db');
-        if (fs.existsSync(dbPath)) {
-            const stats = fs.statSync(dbPath);
-            const sizeGB = stats.size / (1024 * 1024 * 1024);
-            if (sizeGB > 2.0) {
-                cLog('DATABASE', `⚠️  CRITICAL BLOAT: Database is ${sizeGB.toFixed(2)} GB!`, colors.red);
-                cLog('DATABASE', '⚠️  Reasoning timeouts are LIKELY. Run "node purge_memories.mjs" immediately.', colors.yellow);
-            } else {
-                cLog('DATABASE', `✅ Health: ${sizeGB.toFixed(2)} GB`, colors.green);
-            }
-        }
-
-        // 1. Kill Zombies on main port only (cluster port 7777 has Windows system PIDs that cause loop)
-        const PORT = 3001; // FIXED PORT
+        // 1. Start Server IMMEDIATELY (Atomic Port Binding)
+        const PORT = 3001; 
         killPortOwner(PORT);
+        await new Promise(r => setTimeout(r, 1000)); // brief pause for OS
 
-        // 2. Pre-Flight
-        await SystemValidator.runPreFlightChecks();
-
-        // 3. Setup Server & Middleware FIRST
         const app = express();
         const server = http.createServer(app);
         const wss = new WebSocketServer({ server, path: '/ws' });
@@ -189,17 +173,8 @@ async function main() {
             next();
         });
 
-        // Serve Frontend (built output lives in frontend/dist)
+        // 🟢 RESTORED: Serve Frontend (built output lives in frontend/dist)
         app.use(express.static(join(__dirname, 'frontend', 'dist')));
-
-        server.on('error', (e) => {
-            cLog('ERROR', `Server error: ${e.message}`);
-            logSync(`[SERVER] Error: ${e.message}`);
-            if (e.code === 'EADDRINUSE') {
-                cLog('ERROR', `Port ${PORT} is already in use!`);
-                process.exit(1);
-            }
-        });
 
         // Health endpoint — shallow at boot, deep once system is ready
         app.get('/health', (req, res) => {
@@ -208,12 +183,9 @@ async function main() {
                 return res.json({ ok: true, status: 'initializing', uptime: process.uptime() });
             }
             try {
-                // Deep check — wrapped so a non-serializable brain state never hangs the endpoint
                 const sys = global.__SOMA_SYSTEM;
                 const rawStatus = sys?.quadBrain?.getStatus?.() ?? null;
-                const brainOk = rawStatus
-                    ? (rawStatus.providers?.some(p => p.available) ?? true)
-                    : true;
+                const brainOk = rawStatus ? (rawStatus.providers?.some(p => p.available) ?? true) : true;
                 res.json({
                     ok: brainOk,
                     status: brainOk ? 'healthy' : 'degraded',
@@ -228,18 +200,35 @@ async function main() {
                     }
                 });
             } catch (e) {
-                // Fallback: always send something so the Orb connect loop doesn't hang
                 res.json({ ok: true, status: 'healthy', uptime: process.uptime() });
             }
         });
 
-        // 4. Start Server EARLY (bind port before heavy bootstrap)
         server.listen(PORT, '0.0.0.0', () => {
             logSync(`[SERVER] Active on port ${PORT}`);
             cLog('SERVER', `SOMA Core online at http://0.0.0.0:${PORT}`);
-            cLog('BACKEND', `REST API Active on /health`);
-            cLog('BACKEND', `WebSocket Server Active on /ws`);
         });
+
+        // 2. Database Health Check
+        const dbPath = path.join(__dirname, 'soma-memory.db');
+        if (fs.existsSync(dbPath)) {
+            const stats = fs.statSync(dbPath);
+            const sizeGB = stats.size / (1024 * 1024 * 1024);
+            if (sizeGB > 2.0) {
+                cLog('DATABASE', `⚠️  CRITICAL BLOAT: Database is ${sizeGB.toFixed(2)} GB!`, colors.red);
+            } else {
+                cLog('DATABASE', `✅ Health: ${sizeGB.toFixed(2)} GB`, colors.green);
+            }
+        }
+
+        // 3. Pre-Flight
+        await SystemValidator.runPreFlightChecks();
+
+        // 4. Bootstrap - Register API Routes
+        cLog('BOOTSTRAP', 'Initializing SOMA systems and routes...');
+        const bootstrap = new SomaBootstrap();
+        await bootstrap.initialize(app, server, wss);
+        global.__SOMA_SYSTEM = bootstrap.system;
 
         // 🧠 MEMORY MANAGEMENT: Periodic GC if available
         if (global.gc) {
@@ -252,16 +241,10 @@ async function main() {
             }, 60000);
         }
 
-        // 5. Bootstrap - Register Routes AFTER listening
-        cLog('BOOTSTRAP', 'Initializing SOMA systems and routes...');
-        const bootstrap = new SomaBootstrap();
-        await bootstrap.initialize(app, server, wss);
-
         logSync('[BOOTSTRAP] Success - Routes Registered');
 
         // Mark server as ready so unhandled rejections don't crash it
         global.__SOMA_SERVER_READY = true;
-        global.__SOMA_SYSTEM = bootstrap.system; // expose for /health deep check
         cLog('ULTRA', 'SOMA Fully Operational');
 
         // Start MessageBroker network bridge — lets external agents (MAX, etc.)

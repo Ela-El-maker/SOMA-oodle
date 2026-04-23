@@ -19,6 +19,8 @@ export class CommandPolicyEngine {
             "cat",
             "ls",
             "dir",
+            "cd",
+            "mkdir",
             "findstr",
             "type"
         ];

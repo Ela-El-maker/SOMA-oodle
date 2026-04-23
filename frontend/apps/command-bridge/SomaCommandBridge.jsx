@@ -134,19 +134,24 @@ const CommandCenterPanel = ({
       if (inFlight.current) return;
       inFlight.current = true;
       try {
-        const [sRes, dRes, pRes] = await Promise.all([
+        const [sRes, dRes, phRes] = await Promise.all([
           fetch('/api/soma/steve/status'),
           fetch('/api/daemon/status'),
           fetch('/api/perception/health')
-        ]);
+          ]);
+
         if (sRes.ok) setSteveStatus(await sRes.json());
         if (dRes.ok) {
           const d = await dRes.json();
           setDaemons(d.daemon?.daemons || []);
         }
-        if (pRes.ok) {
-          const p = await pRes.json();
-          setPerceptionData({ attention: p.attention, recentSignals: p.recentSignals || [] });
+        if (phRes.ok) {
+          const ph = await phRes.json();
+          const att = ph.attention;
+          setPerceptionData({
+            attention: att ? { focus: att.focus, expires: att.focusExpiry, active: att.focusActive } : null,
+            recentSignals: ph.recentSignals || []
+          });
         }
       } catch {}
       finally { inFlight.current = false; }
@@ -1081,18 +1086,13 @@ const SomaCommandBridge = () => {
     return () => somaBackend.off('soma_proactive', onProactiveSpeak);
   }, []);
 
-  // Auto-connect Neural Link on first user click (browser requires gesture before AudioContext)
-  const autoConnectedRef = useRef(false);
+  // --- AUTO-ENGAGEMENT REMOVED (User Directive) ---
+  // Disconnect audio pipeline when navigating away from orb tab — mic should not run in background
   useEffect(() => {
-    const onFirstClick = () => {
-      if (autoConnectedRef.current || isOrbConnected) return;
-      autoConnectedRef.current = true;
-      connectOrb();
-      window.removeEventListener('click', onFirstClick);
-    };
-    window.addEventListener('click', onFirstClick);
-    return () => window.removeEventListener('click', onFirstClick);
-  }, [connectOrb, isOrbConnected]);
+    if (activeModule !== 'orb' && isOrbConnected) {
+      disconnectOrb();
+    }
+  }, [activeModule]);
 
   // Speak queued greeting the moment Neural Link comes up
   useEffect(() => {
@@ -2360,48 +2360,6 @@ const SomaCommandBridge = () => {
                     {isOrbConnected ? '● Disengage Neural Link' : '○ Establish Neural Link'}
                   </button>
                 </div>
-
-                {/* Manual Input Field */}
-                {isOrbConnected && (
-                  <div className="w-full bg-white/5 border border-white/10 rounded-2xl p-2 flex items-center gap-2 focus-within:border-purple-500/50 transition-all">
-                    <input
-                      type="text"
-                      placeholder="Transmit manual command..."
-                      className="flex-1 bg-transparent border-none outline-none px-4 py-2 text-sm text-zinc-200 placeholder-zinc-600"
-                      onKeyDown={(e) => {
-                        if (e.key === 'Enter' && e.target.value.trim()) {
-                          const query = e.target.value.trim();
-                          e.target.value = '';
-                          if (window.somaTextQuery) window.somaTextQuery(query);
-                        }
-                      }}
-                    />
-                    <button
-                      onClick={(e) => {
-                        const input = e.target.closest('div').querySelector('input');
-                        const query = input.value.trim();
-                        if (query) {
-                          input.value = '';
-                          if (window.somaTextQuery) window.somaTextQuery(query);
-                        }
-                      }}
-                      className="p-2 bg-purple-500/20 hover:bg-purple-500/40 text-purple-400 rounded-xl transition-all"
-                    >
-                      <Zap className="w-4 h-4" />
-                    </button>
-                  </div>
-                )}
-                
-                {/* Transcript — shows what was heard while SOMA thinks/responds */}
-                {lastTranscript && (isThinking || isTalking) && (
-                  <div className="max-w-md text-center px-4 py-2 bg-white/5 border border-white/5 rounded-xl">
-                    <p className="text-[10px] text-zinc-500 uppercase tracking-widest mb-1">Heard</p>
-                    <p className="text-sm text-zinc-300 italic">"{lastTranscript}"</p>
-                  </div>
-                )}
-                <p className="text-[9px] text-zinc-600 uppercase tracking-widest">
-                  {isListening ? 'SOMA is listening...' : isThinking ? 'Processing neural patterns...' : isTalking ? 'SOMA is responding...' : 'Neural interface standby'}
-                </p>
 
                 {/* Whisper offline banner */}
                 {isOrbConnected && (orbSystemStatus.whisperServer === 'fallback' || orbSystemStatus.whisperServer === 'error') && (

@@ -125,26 +125,38 @@ export class SomaBootstrapV2 {
         }
     }
 
-    async _loadHardenedASI(system) {
-        try {
-            console.log('[SOMA V2] 🧠 Initiating ASI Hardening sequence (Parallel)...');
-            await loadEssentialSystems(system);
-            
-            if (process.env.SOMA_LOAD_EXTENDED !== 'false') {
-                console.log('[SOMA V2] 🔄 Loading extended arbiters (Tier 2)...');
-                const extended = await loadExtendedSystems(system);
-                for (const [key, value] of Object.entries(extended)) {
-                    if (value != null && !system[key]) {
-                        system[key] = value;
-                    }
-                }
-            }
-            console.log('[SOMA V2] 🔱 ASI Capability Layer: FULLY SYNCHRONIZED');
-        } catch (e) {
-            console.error('[SOMA V2] ❌ ASI Hardening failed:', e.message);
-        }
-    }
+    /**
+     * ASI Hardening: Multi-Tier Awakening
+     * Backgrounded to prevent blocking port binding and dashboard responsiveness.
+     */
+    _loadHardenedASI(system) {
+        // Kick off the awakening in a separate async context (Fire and Forget)
+        (async () => {
+            try {
+                console.log('[SOMA V2] 🧠 Initiating ASI Hardening sequence (Background)...');
 
+                // Tier 1: Learning, Fragments, Provenance
+                await loadEssentialSystems(system);
+                console.log('[SOMA V2] ✅ Tier 1 ASI Core Online');
+
+                // Tier 2: Extended Specialists
+                if (process.env.SOMA_LOAD_EXTENDED !== 'false') {
+                    console.log('[SOMA V2] 🔄 Loading extended arbiters (Tier 2)...');
+                    const extended = await loadExtendedSystems(system);
+                    for (const [key, value] of Object.entries(extended)) {
+                        if (value != null && !system[key]) {
+                            system[key] = value;
+                        }
+                    }
+                    console.log('[SOMA V2] ✅ Tier 2 Specialists Online');
+                }
+
+                console.log('[SOMA V2] 🔱 ASI Capability Layer: FULLY SYNCHRONIZED');
+            } catch (e) {
+                console.error('[SOMA V2] ❌ ASI Hardening background failure:', e.message);
+            }
+        })();
+    }
     async _loadEssentialBackground(system) {
         try {
             console.log('[SOMA V2] 🧠 Loading essential ASI arbiters (Tier 1)...');

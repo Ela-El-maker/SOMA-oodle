@@ -63,6 +63,18 @@ const PROTOCOLS = [
   { id: 'trend',      sizePct: 0.14, minConf: 0.65, takeProfit: 0.060, stopLoss: 0.030 },
 ];
 
+// ── Episode lengths per protocol type ────────────────────────────────────
+// Scalp = short windows (2-3 day equiv), Trend = long windows (months equiv)
+
+const EPISODE_LENGTHS = {
+  scalp:      150,
+  aggressive: 280,
+  momentum:   350,
+  defensive:  420,
+  swing:      500,
+  trend:      700,
+};
+
 // ── Tiny synthetic engine ─────────────────────────────────────────────────
 
 function gaussian(mean = 0, std = 1) {
@@ -70,6 +82,22 @@ function gaussian(mean = 0, std = 1) {
   while (u === 0) u = Math.random();
   while (v === 0) v = Math.random();
   return mean + std * Math.sqrt(-2 * Math.log(u)) * Math.cos(2 * Math.PI * v);
+}
+
+function clamp(v, lo, hi) { return Math.max(lo, Math.min(hi, v)); }
+
+function pearsonCorr(a, b) {
+  const n = Math.min(a.length, b.length);
+  if (n < 5) return 0;
+  const xs = a.slice(-n), ys = b.slice(-n);
+  const mx = xs.reduce((s, v) => s + v, 0) / n;
+  const my = ys.reduce((s, v) => s + v, 0) / n;
+  let num = 0, sx = 0, sy = 0;
+  for (let i = 0; i < n; i++) {
+    const dx = xs[i] - mx, dy = ys[i] - my;
+    num += dx * dy; sx += dx * dx; sy += dy * dy;
+  }
+  return (sx * sy) === 0 ? 0 : num / Math.sqrt(sx * sy);
 }
 
 function generatePriceSeries(asset, length = 300, anchorPrice = null, realOHLCV = null) {
@@ -138,7 +166,8 @@ function getSignal(prices) {
 // Returns trade-level stats for scoring
 
 function runEpisode(asset, protocol, anchorPrice = null, realOHLCV = null) {
-  const prices = generatePriceSeries(asset, 500, anchorPrice, realOHLCV);
+  const length = EPISODE_LENGTHS[protocol.id] || EPISODE_LENGTHS[protocol._parent] || 350;
+  const prices = generatePriceSeries(asset, length, anchorPrice, realOHLCV);
   let cash = 100000;
   let position = null;
   const trades = [];
@@ -246,6 +275,14 @@ export class SimulationEvaluator {
     this._tickMs = 3000;    // ms between evaluation batches
     this._comboIdx = 0;     // round-robin pointer
 
+    // Genetic evolution
+    this._evolvedProtocols = [];
+    this._evolverId = 1;
+    this._lastEvolveAt = 0;  // total episodes at last evolution step
+
+    // Correlation matrix (built after history prefetch)
+    this._correlationMatrix = {};
+
     // Live status for frontend
     this._status = {
       totalEpisodes: 0,
@@ -285,13 +322,19 @@ export class SimulationEvaluator {
 
   _rebuildStatus() {
     const entries = Object.entries(this._ledger)
-      .map(([key, v]) => ({ key, ...v.scores, episodes: v.episodes, trades: v.allTrades.length, assetId: v.assetId, protocolId: v.protocolId, graduated: v.graduated }))
+      .map(([key, v]) => ({
+        key, ...v.scores, episodes: v.episodes, trades: v.allTrades.length,
+        assetId: v.assetId, protocolId: v.protocolId, graduated: v.graduated,
+        evolved: !!(PROTOCOLS.find(p => p.id === v.protocolId) === undefined && v.protocolId),
+      }))
       .sort((a, b) => b.score - a.score);
 
     this._status.leaderboard = entries.slice(0, 30);
     this._status.graduated = this._playbook.length;
     this._status.totalEpisodes = Object.values(this._ledger).reduce((a, v) => a + v.episodes, 0);
     this._status.totalTrades = Object.values(this._ledger).reduce((a, v) => a + v.allTrades.length, 0);
+    this._status.evolvedProtocols = this._evolvedProtocols.length;
+    this._status.combos = this._combos.length;
   }
 
   start() {
@@ -316,10 +359,88 @@ export class SimulationEvaluator {
           fetched++;
         }
       } catch {}
-      // Stagger to avoid hammering yfinance
       await new Promise(r => setTimeout(r, 800));
     }
     console.log(`[SimulationEvaluator] Real history loaded for ${fetched}/${assetIds.length} assets`);
+    // Build correlation matrix from real closes
+    this._buildCorrelationMatrix();
+  }
+
+  _buildCorrelationMatrix() {
+    const ids = [...this._realHistory.keys()];
+    const closes = {};
+    for (const id of ids) {
+      closes[id] = this._realHistory.get(id).map(r => r.close).filter(v => v > 0);
+    }
+    const matrix = {};
+    for (let i = 0; i < ids.length; i++) {
+      for (let j = i + 1; j < ids.length; j++) {
+        const a = ids[i], b = ids[j];
+        const corr = +(pearsonCorr(closes[a] || [], closes[b] || [])).toFixed(3);
+        if (!matrix[a]) matrix[a] = {};
+        if (!matrix[b]) matrix[b] = {};
+        matrix[a][b] = corr;
+        matrix[b][a] = corr;
+      }
+    }
+    this._correlationMatrix = matrix;
+    console.log(`[SimulationEvaluator] Correlation matrix built for ${ids.length} assets`);
+  }
+
+  // ── Genetic evolution — mutate top performers every 100 episodes ──────────
+
+  _evolveStep() {
+    const top = Object.values(this._ledger)
+      .filter(e => !e.graduated && e.episodes >= 15 && (e.scores?.score || 0) > 0.55)
+      .sort((a, b) => (b.scores?.score || 0) - (a.scores?.score || 0))
+      .slice(0, 3);
+
+    if (top.length === 0) return;
+
+    // Cap evolved pool at 12 — prune the worst first
+    if (this._evolvedProtocols.length >= 12) {
+      const worstCombos = Object.values(this._ledger)
+        .filter(e => e.protocolId && e.protocolId.includes('_ev'))
+        .sort((a, b) => (a.scores?.score || 0) - (b.scores?.score || 0))
+        .slice(0, 3);
+      for (const wc of worstCombos) {
+        this._evolvedProtocols = this._evolvedProtocols.filter(p => p.id !== wc.protocolId);
+        const baseIdx = this._combos.findIndex(c => c.protocolId === wc.protocolId);
+        if (baseIdx >= 0) this._combos.splice(baseIdx, 1);
+        delete this._ledger[wc.assetId + '::' + wc.protocolId];
+      }
+    }
+
+    let newCount = 0;
+    for (const entry of top) {
+      const baseProto = PROTOCOLS.find(p => p.id === entry.protocolId)
+        || this._evolvedProtocols.find(p => p.id === entry.protocolId);
+      if (!baseProto) continue;
+
+      // Create one mutant offspring
+      const mutant = {
+        id: `${baseProto._parent || baseProto.id}_ev${this._evolverId++}`,
+        _parent: baseProto._parent || baseProto.id,
+        _evolved: true,
+        sizePct:     clamp(baseProto.sizePct    * (1 + gaussian(0, 0.15)), 0.04, 0.28),
+        minConf:     clamp(baseProto.minConf    * (1 + gaussian(0, 0.08)), 0.42, 0.90),
+        takeProfit:  clamp(baseProto.takeProfit * (1 + gaussian(0, 0.15)), 0.005, 0.10),
+        stopLoss:    clamp(baseProto.stopLoss   * (1 + gaussian(0, 0.15)), 0.003, 0.05),
+      };
+
+      this._evolvedProtocols.push(mutant);
+      // Wire it against the asset that scored best with the parent protocol
+      const assetId = entry.assetId;
+      const key = `${assetId}::${mutant.id}`;
+      if (!this._ledger[key]) {
+        this._combos.push({ assetId, protocolId: mutant.id, key });
+        newCount++;
+      }
+    }
+
+    if (newCount > 0) {
+      console.log(`[SimulationEvaluator] Evolved ${newCount} new protocol variants — pool: ${this._combos.length} combos`);
+    }
   }
 
   stop() {
@@ -363,7 +484,8 @@ export class SimulationEvaluator {
 
     for (const { assetId, protocolId, key } of batch) {
       const asset = ASSETS.find(a => a.id === assetId);
-      const protocol = PROTOCOLS.find(p => p.id === protocolId);
+      const protocol = PROTOCOLS.find(p => p.id === protocolId)
+        || this._evolvedProtocols.find(p => p.id === protocolId);
       if (!asset || !protocol) continue;
 
       const anchorPrice = anchorPrices[assetId] || null;
@@ -395,8 +517,15 @@ export class SimulationEvaluator {
     this._status.lastBatch = batchResults;
     this._rebuildStatus();
 
+    // Genetic evolution: every 100 total episodes
+    const total = this._status.totalEpisodes;
+    if (total - this._lastEvolveAt >= 100 && total >= 100) {
+      this._lastEvolveAt = total;
+      this._evolveStep();
+    }
+
     // Save every 10 batches
-    if (this._status.totalEpisodes % 10 === 0) {
+    if (total % 10 === 0) {
       this._saveLedger().catch(() => {});
     }
   }
@@ -439,10 +568,22 @@ export class SimulationEvaluator {
       graduatedAt: Date.now(),
     };
 
+    // Attach correlation context before saving
+    const correlatedWith = Object.entries(this._correlationMatrix[assetId] || {})
+      .filter(([, c]) => Math.abs(c) > 0.75)
+      .sort((a, b) => Math.abs(b[1]) - Math.abs(a[1]))
+      .slice(0, 3)
+      .map(([id, c]) => ({ id, correlation: c }));
+    if (correlatedWith.length) playbookEntry.correlatedWith = correlatedWith;
+
+    const isEvolved = !!this._evolvedProtocols.find(p => p.id === protocolId);
+    const parentId = isEvolved ? (this._evolvedProtocols.find(p => p.id === protocolId)?._parent) : null;
+    if (isEvolved) { playbookEntry.evolved = true; playbookEntry.evolvedFrom = parentId; }
+
     this._playbook.push(playbookEntry);
     this._playbook.sort((a, b) => b.score - a.score);
 
-    console.log(`[SimulationEvaluator] GRADUATED: ${assetId} + ${protocolId} — score ${entry.scores.score.toFixed(3)}, winRate ${(entry.scores.winRate * 100).toFixed(1)}%`);
+    console.log(`[SimulationEvaluator] GRADUATED: ${assetId} + ${protocolId}${isEvolved ? ` (evolved from ${parentId})` : ''} — score ${entry.scores.score.toFixed(3)}, winRate ${(entry.scores.winRate * 100).toFixed(1)}%`);
 
     // Publish to CNS
     if (this.messageBroker) {
@@ -451,16 +592,21 @@ export class SimulationEvaluator {
 
     // File to PROMETHEUS knowledge library
     if (this.knowledgeCurator) {
+      const corrNote = correlatedWith.length
+        ? `\n**Correlated Assets (>0.75):** ${correlatedWith.map(c => `${c.id} (${c.correlation > 0 ? '+' : ''}${c.correlation})`).join(', ')}`
+        : '';
+      const evolvedNote = isEvolved ? `\n**Evolution:** Mutated from ${parentId} protocol` : '';
+
       const content = [
         `**Asset:** ${assetId} (${ASSETS.find(a => a.id === assetId)?.class})`,
-        `**Protocol:** ${protocolId}`,
+        `**Protocol:** ${protocolId}${evolvedNote}`,
         `**Win Rate:** ${(entry.scores.winRate * 100).toFixed(1)}%`,
         `**Sharpe Ratio:** ${entry.scores.sharpe}`,
         `**Max Drawdown:** ${(entry.scores.maxDrawdown * 100).toFixed(1)}%`,
         `**Profit Factor:** ${entry.scores.profitFactor}`,
         `**Composite Score:** ${entry.scores.score.toFixed(3)}`,
         `**Episodes:** ${entry.episodes} (${entry.allTrades.length} trades)`,
-        `**Total P&L:** $${entry.scores.totalPnL.toFixed(2)}`,
+        `**Total P&L:** $${entry.scores.totalPnL.toFixed(2)}${corrNote}`,
         `**Status:** GRADUATED — ready for Mission Control deployment`,
       ].join('\n');
 
@@ -470,7 +616,7 @@ export class SimulationEvaluator {
   }
 
   getStatus() {
-    return { ...this._status, combos: this._combos.length };
+    return { ...this._status };
   }
 
   getPlaybook() {
@@ -479,8 +625,24 @@ export class SimulationEvaluator {
 
   getLedger() {
     return Object.values(this._ledger)
-      .map(e => ({ assetId: e.assetId, protocolId: e.protocolId, ...e.scores, episodes: e.episodes, trades: e.allTrades.length, graduated: e.graduated }))
+      .map(e => ({
+        assetId: e.assetId, protocolId: e.protocolId, ...e.scores,
+        episodes: e.episodes, trades: e.allTrades.length, graduated: e.graduated,
+        evolved: !!this._evolvedProtocols.find(p => p.id === e.protocolId),
+      }))
       .sort((a, b) => b.score - a.score);
+  }
+
+  getCorrelationMatrix() {
+    return this._correlationMatrix;
+  }
+
+  getEvolvedProtocols() {
+    return this._evolvedProtocols.map(p => ({
+      id: p.id, parent: p._parent,
+      sizePct: +p.sizePct.toFixed(3), minConf: +p.minConf.toFixed(3),
+      takeProfit: +p.takeProfit.toFixed(4), stopLoss: +p.stopLoss.toFixed(4),
+    }));
   }
 }
 

@@ -109,6 +109,12 @@ async function fetchFromBridge() {
         };
     }
 
+    // Fetch options flow in parallel (non-blocking — if it fails, skip)
+    let optionsData = null;
+    try {
+        optionsData = await _fetchOptionsBundle();
+    } catch {}
+
     return {
         timestamp: Date.now(),
         source:    'yfinance',
@@ -117,6 +123,7 @@ async function fetchFromBridge() {
         futures:   classify(futuresIds),
         wsb:       wsbResult,
         news:      newsItems,
+        options:   optionsData,
     };
 }
 
@@ -189,6 +196,38 @@ export async function fetchHistoricalOHLCV(symbol) {
         console.warn(`[MarketDataScraper] history failed for ${symbol}:`, e.message);
         return null;
     }
+}
+
+// ── Options flow (put/call ratio + unusual activity) ─────────────────────
+
+const OPTIONS_SYMBOLS = ['SPY', 'QQQ', 'NVDA', 'TSLA', 'AAPL'];
+const _optionsCache = new Map();
+const OPTIONS_TTL_MS = 10 * 60 * 1000;
+
+export async function fetchOptionsData(symbol) {
+    const cached = _optionsCache.get(symbol);
+    if (cached && (Date.now() - cached.ts) < OPTIONS_TTL_MS) return cached.data;
+    try {
+        const result = await runBridge(['options', symbol], 20_000);
+        if (!result.ok) throw new Error(result.error || 'options bridge failed');
+        _optionsCache.set(symbol, { data: result, ts: Date.now() });
+        return result;
+    } catch (e) {
+        console.warn(`[MarketDataScraper] options failed for ${symbol}:`, e.message);
+        return null;
+    }
+}
+
+async function _fetchOptionsBundle() {
+    const results = {};
+    for (const sym of OPTIONS_SYMBOLS) {
+        try {
+            const data = await fetchOptionsData(sym);
+            if (data?.ok) results[sym] = data;
+        } catch {}
+        await new Promise(r => setTimeout(r, 400));
+    }
+    return Object.keys(results).length ? results : null;
 }
 
 // ── WSB deep scan (standalone) ────────────────────────────────────────────

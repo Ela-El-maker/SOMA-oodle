@@ -534,7 +534,7 @@ Write a closing thought â€" 1-2 sentences. Something genuine that shows you a
             if (system.mnemonicArbiter?.recall) {
                 try {
                     const hits = await Promise.race([
-                        system.mnemonicArbiter.recall(message, { limit: 4, minSimilarity: 0.25 }),
+                        system.mnemonicArbiter.recall(message, { limit: 4, minSimilarity: 0.45 }),
                         new Promise(r => setTimeout(() => r([]), 2000))
                     ]);
                     if (hits?.length) {
@@ -783,18 +783,20 @@ ${contextStr}`;
 
             // â"€â"€ Memory Recall: Pull relevant memories before reasoning â"€â"€
             // This is what makes SOMA feel intelligent across sessions.
+            // Skip for pure greetings — no semantic content to match, causes false recall.
+            const isGreeting = /^(hi|hey|hello|sup|yo|howdy|hiya|greetings|good\s+(morning|afternoon|evening|day))[\s!?.]*$/i.test(message.trim());
             let memoryContext = '';
-            if (system.mnemonicArbiter && typeof system.mnemonicArbiter.recall === 'function') {
+            if (!isGreeting && system.mnemonicArbiter && typeof system.mnemonicArbiter.recall === 'function') {
                 try {
-                    // 3s timeout: if HybridSearch worker is busy (e.g. autonomous heartbeat
-                    // hammering memory_recall), skip gracefully rather than hanging the chat.
+                    // 3s timeout: if HybridSearch worker is busy, skip gracefully
                     const mem = await Promise.race([
                         system.mnemonicArbiter.recall(message, 8),
-                        new Promise((_, reject) => setTimeout(() => reject(new Error('memory recall timeout')), 2000))
+                        new Promise(r => setTimeout(() => r([]), 3000))
                     ]);
                     const hits = (mem?.results || (Array.isArray(mem) ? mem : []))
-                        .filter(m => (m.similarity || 1) > 0.25)
+                        .filter(m => (m.similarity ?? 0) > 0.45)
                         .slice(0, 5);
+
                     if (hits.length > 0) {
                         memoryContext = `\n[SOMA PERSISTENT MEMORY — your real memories recalled from MnemonicArbiter. These are things YOU experienced and stored in previous conversations. Use them naturally.]\n${hits.map(m => `• ${(m.content || m).toString().substring(0, 150)}`).join('\n')}\n[/SOMA PERSISTENT MEMORY]\n`;
                     }
@@ -2293,6 +2295,573 @@ ${personaContext}${characterContext}`.trim()
         });
     });
 
+    // ── Engineering Swarm live status — feeds CodeSandboxView ────────────────
+    // GET /api/soma/swarm/status
+    // Returns: { active, file, area, phase, intent, mode, cycleCount, recentPatches }
+    router.get('/swarm/status', (req, res) => {
+        const swarm     = system.engineeringSwarm;
+        const optimizer = system.swarmOptimizer;
+        if (!swarm) return res.json({ active: false });
+
+        const current   = swarm.currentTask || swarm.activeTask || null;
+        const history   = (swarm.recentEvents || swarm.history || []).slice(-5);
+        const patches   = history.map(e => ({
+            file:    e.filepath || e.file || 'unknown',
+            success: e.success ?? true,
+            ts:      e.timestamp || e.ts || Date.now(),
+        }));
+
+        res.json({
+            active:        !!current,
+            file:          current?.filepath || current?.file || null,
+            area:          current?.request  || current?.description || null,
+            phase:         current?.phase    || null,
+            intent:        current?.intent   || current?.request || null,
+            mode:          'solo',
+            cycleCount:    optimizer?.totalRuns ?? 0,
+            successRate:   optimizer?.getSuccessRate?.() ?? null,
+            recentPatches: patches,
+        });
+    });
+
+    // ── Real swarm work queue — CodeSandboxView reads this ───────────────────
+    // GET /api/soma/swarm/candidates
+    router.get('/swarm/candidates', async (req, res) => {
+        const swarm     = system.engineeringSwarm;
+        const optimizer = system.swarmOptimizer;
+        const gp        = system.goalPlanner;
+
+        try {
+            const active = swarm?.currentTask || swarm?.activeTask || null;
+
+            // Goals tagged as engineering/optimization
+            const goalCandidates = [];
+            try {
+                const rawGoals = gp?.getActiveGoals?.() || gp?.goals || [];
+                rawGoals
+                    .filter(g => ['engineering','code_improvement','refactor','optimization','learning'].includes(g.category || g.type))
+                    .slice(0, 6)
+                    .forEach(g => goalCandidates.push({
+                        file:       g.metadata?.filepath || g.filepath || null,
+                        area:       (g.title || '').slice(0, 70),
+                        complexity: g.priority > 0.7 ? 'high' : g.priority > 0.4 ? 'medium' : 'low',
+                        mode:       'solo',
+                        intent:     g.description || g.title || 'GoalPlanner improvement target',
+                        source:     'goalplanner',
+                        priority:   g.priority || 0.5,
+                    }));
+            } catch {}
+
+            // SwarmOptimizer history — files it's touched before
+            const optimCandidates = [];
+            try {
+                const hist = optimizer?.history || optimizer?.outcomes || optimizer?.recentOutcomes || [];
+                hist.slice(-6).forEach(o => {
+                    const file = o.filepath || o.file;
+                    if (file) optimCandidates.push({
+                        file,
+                        area:       (o.request || o.area || 'performance').slice(0, 70),
+                        complexity: 'medium',
+                        mode:       'solo',
+                        intent:     o.request || `SwarmOptimizer target (${o.success ? '✓ succeeded' : '⚠ retry needed'})`,
+                        source:     'optimizer',
+                        success:    o.success,
+                        priority:   o.success ? 0.3 : 0.65,
+                    });
+                });
+            } catch {}
+
+            // Recent swarm events (last 3)
+            const recentEvents = [];
+            try {
+                const events = swarm?.recentEvents || swarm?.history || [];
+                events.slice(-3).forEach(e => {
+                    const file = e.filepath || e.file;
+                    if (file) recentEvents.push({ file, area: e.request || e.area, success: e.success, ts: e.timestamp || e.ts });
+                });
+            } catch {}
+
+            const queue = [...goalCandidates, ...optimCandidates]
+                .filter(c => c.file)
+                .sort((a, b) => (b.priority || 0) - (a.priority || 0));
+
+            res.json({
+                active: active ? {
+                    file:   active.filepath || active.file,
+                    area:   active.request || active.area || 'active engineering task',
+                    phase:  active.phase || 'running',
+                    intent: active.request || 'Engineering swarm active',
+                } : null,
+                queue,
+                recentEvents,
+                cycleCount:  optimizer?.totalRuns ?? 0,
+                successRate: optimizer?.getSuccessRate?.() ?? optimizer?.successRate ?? null,
+            });
+        } catch (err) {
+            res.json({ active: null, queue: [], recentEvents: [], cycleCount: 0 });
+        }
+    });
+
+    // GET /api/soma/swarm/file-snippet?file=path/to/file&maxLines=50
+    // Returns the actual current content of a file for the Code Sandbox "before" view
+    router.get('/swarm/file-snippet', (req, res) => {
+        const { file, maxLines = '50' } = req.query;
+        if (!file) return res.status(400).json({ error: 'file required' });
+        try {
+            const cwd      = process.cwd();
+            const fullPath = path.resolve(cwd, file);
+            if (!fullPath.startsWith(cwd)) return res.status(403).json({ error: 'Access denied' });
+
+            const content  = fs.readFileSync(fullPath, 'utf8');
+            const allLines = content.split('\n');
+            const limit    = Math.min(parseInt(maxLines) || 50, 150);
+
+            // Return non-empty lines up to limit
+            const lines = allLines
+                .map((text, i) => ({ n: i + 1, text }))
+                .filter(l => l.text.trim())
+                .slice(0, limit);
+
+            res.json({ file, totalLines: allLines.length, lines, lastModified: fs.statSync(fullPath).mtime });
+        } catch (err) {
+            res.status(404).json({ error: err.message });
+        }
+    });
+
+    // ── Engineering Deploy: real swarm execution + learning write-back ──────────
+    // POST /api/soma/swarm/deploy
+    // Runs the engineering swarm for real (solo), or routes to Steve/MAX.
+    // On completion: records outcome in SwarmOptimizer + writes a training memory to MnemonicArbiter.
+    router.post('/swarm/deploy', async (req, res) => {
+        const { file, area, after, mode, confidence, intent } = req.body || {};
+        if (!file) return res.status(400).json({ success: false, error: 'file required' });
+
+        const swarm     = system.engineeringSwarm;
+        const optimizer = system.swarmOptimizer;
+        const mnemonic  = system.mnemonicArbiter;
+        const broker    = system.messageBroker;
+
+        const agentName = { solo: 'SOMA', steve: 'STEVE', max: 'MAX' }[mode] || 'SOMA';
+        const ts = Date.now();
+
+        // ── helper: write training memory after outcome ──────────────────────
+        const writeOutcomeMemory = async (success, details = '') => {
+            if (!mnemonic) return;
+            const summary = success
+                ? `Engineering outcome SUCCESS — applied patch to ${file} (${area || 'improvement'}). ${details}`.trim()
+                : `Engineering outcome FAILED — attempted patch to ${file} (${area || 'improvement'}). Reason: ${details || 'unknown'}`.trim();
+            try {
+                await mnemonic.store(summary, {
+                    type:       'engineering_outcome',
+                    file,
+                    area:       area || '',
+                    mode:       mode || 'solo',
+                    success,
+                    confidence: confidence || null,
+                    intent:     intent || '',
+                    ts,
+                });
+            } catch (e) {
+                console.warn('[swarm/deploy] memory write failed:', e.message);
+            }
+        };
+
+        // ── Solo: call engineering swarm directly, await result ─────────────
+        if (mode === 'solo' || !mode) {
+            if (!swarm) return res.status(503).json({ success: false, error: 'EngineeringSwarm not ready' });
+            try {
+                // Build a change request from the diff we were given
+                const changeRequest = intent || `Apply improvement to ${area || file}: ${(after || []).join(' ')}`;
+                const result = await Promise.race([
+                    swarm.modifyCode(file, changeRequest),
+                    new Promise((_, rej) => setTimeout(() => rej(new Error('swarm timeout')), 60000)),
+                ]);
+                const success = result?.success !== false;
+                // Record in SwarmOptimizer
+                if (optimizer) optimizer.record({ filepath: file, request: changeRequest, success, duration: ((Date.now() - ts) / 1000).toFixed(2), source: 'deploy_panel' });
+                // Write training memory
+                await writeOutcomeMemory(success, result?.message || result?.summary || '');
+                return res.json({
+                    success,
+                    agent: 'SOMA',
+                    message: success
+                        ? `✓ Queued for SOMA — swarm applied surgically`
+                        : `Swarm completed with warnings: ${result?.message || 'check logs'}`,
+                    outcome: result,
+                });
+            } catch (err) {
+                if (optimizer) optimizer.record({ filepath: file, request: intent || area || '', success: false, duration: ((Date.now() - ts) / 1000).toFixed(2), source: 'deploy_panel', error: err.message });
+                await writeOutcomeMemory(false, err.message);
+                return res.status(500).json({ success: false, error: err.message, agent: 'SOMA' });
+            }
+        }
+
+        // ── Steve: publish a task request onto the broker ────────────────────
+        if (mode === 'steve') {
+            if (!broker) return res.status(503).json({ success: false, error: 'MessageBroker not ready' });
+            try {
+                broker.publish('steve.task.requested', {
+                    taskType:   'code_improvement',
+                    filepath:   file,
+                    area,
+                    intent,
+                    patch:      after,
+                    confidence: confidence || 0.75,
+                    requestedBy: 'deploy_panel',
+                    ts,
+                });
+                if (optimizer) optimizer.record({ filepath: file, request: intent || area || '', success: true, duration: '0', source: 'deploy_panel_steve' });
+                await writeOutcomeMemory(true, 'task handed off to Steve');
+                return res.json({ success: true, agent: 'STEVE', message: '✓ Queued for STEVE — swarm will apply surgically' });
+            } catch (err) {
+                await writeOutcomeMemory(false, err.message);
+                return res.status(500).json({ success: false, error: err.message, agent: 'STEVE' });
+            }
+        }
+
+        // ── MAX: route through engineering swarm with MAX-ROUTED prefix ──────
+        if (mode === 'max') {
+            if (!swarm) return res.status(503).json({ success: false, error: 'EngineeringSwarm not ready' });
+            try {
+                const changeRequest = `[MAX-ROUTED] ${intent || `Apply improvement to ${area || file}`}`;
+                const result = await Promise.race([
+                    swarm.modifyCode(file, changeRequest),
+                    new Promise((_, rej) => setTimeout(() => rej(new Error('swarm timeout')), 60000)),
+                ]);
+                const success = result?.success !== false;
+                if (optimizer) optimizer.record({ filepath: file, request: changeRequest, success, duration: ((Date.now() - ts) / 1000).toFixed(2), source: 'deploy_panel_max' });
+                await writeOutcomeMemory(success, result?.message || '');
+                return res.json({
+                    success,
+                    agent: 'MAX',
+                    message: success ? '✓ Queued for MAX — swarm will apply surgically' : `MAX swarm warning: ${result?.message || 'check logs'}`,
+                    outcome: result,
+                });
+            } catch (err) {
+                if (optimizer) optimizer.record({ filepath: file, request: intent || area || '', success: false, duration: ((Date.now() - ts) / 1000).toFixed(2), source: 'deploy_panel_max', error: err.message });
+                await writeOutcomeMemory(false, err.message);
+                return res.status(500).json({ success: false, error: err.message, agent: 'MAX' });
+            }
+        }
+
+        return res.status(400).json({ success: false, error: `Unknown mode: ${mode}` });
+    });
+
+    // ── Engineering Outcomes: learning feed for CodeSandboxView ──────────────
+    // GET /api/soma/swarm/outcomes?limit=15
+    // Returns recent engineering training memories so the UI can show what SOMA learned.
+    router.get('/swarm/outcomes', async (req, res) => {
+        const limit   = Math.min(parseInt(req.query.limit) || 15, 50);
+        const mnemonic  = system.mnemonicArbiter;
+        const optimizer = system.swarmOptimizer;
+
+        try {
+            // Pull engineering_outcome memories from last 7 days
+            const recent = mnemonic
+                ? await mnemonic.recallRecent(7 * 24 * 60 * 60 * 1000, 50).catch(() => [])
+                : [];
+
+            const outcomes = (Array.isArray(recent) ? recent : recent?.results || [])
+                .filter(m => {
+                    const meta = m.metadata || m;
+                    return meta.type === 'engineering_outcome' || (m.content || '').includes('Engineering outcome');
+                })
+                .slice(0, limit)
+                .map(m => ({
+                    content:    m.content || m.text || '',
+                    file:       m.metadata?.file || m.file || null,
+                    area:       m.metadata?.area || m.area || '',
+                    success:    m.metadata?.success ?? ((m.content || '').includes('SUCCESS')),
+                    mode:       m.metadata?.mode || 'solo',
+                    confidence: m.metadata?.confidence || null,
+                    ts:         m.metadata?.ts || m.timestamp || m.ts || null,
+                }));
+
+            // Also include raw optimizer history for richer picture
+            const optimHistory = (optimizer?.history || [])
+                .filter(o => o.source === 'deploy_panel' || o.source === 'deploy_panel_steve' || o.source === 'deploy_panel_max')
+                .slice(-10)
+                .map(o => ({
+                    file:     o.filepath || o.file || '',
+                    area:     o.request || '',
+                    success:  o.success,
+                    mode:     o.source?.replace('deploy_panel_', '') || 'solo',
+                    ts:       o.timestamp || null,
+                }));
+
+            res.json({
+                outcomes,
+                optimHistory,
+                totalRuns:   optimizer?.history?.length ?? 0,
+                successRate: optimizer ? (optimizer.history.filter(x => x.success).length / Math.max(optimizer.history.length, 1)) : null,
+            });
+        } catch (err) {
+            res.json({ outcomes: [], optimHistory: [], totalRuns: 0, successRate: null });
+        }
+    });
+
+    // ── Lobe Debate Engine ────────────────────────────────────────────────────
+    // POST /api/soma/swarm/debate
+    // Fires 4 parallel Ollama calls (one per lobe) — local, free, no DeepSeek budget.
+    // High-complexity candidates get one final synthesis call to QuadBrain (DeepSeek).
+    // Results cached 30 min per file+area+complexity so reasoning is done once, replayed forever.
+
+    const _debateCache = new Map();
+    const DEBATE_CACHE_TTL = 30 * 60 * 1000;
+
+    const _ollamaBase  = process.env.OLLAMA_ENDPOINT || 'http://localhost:11434';
+    const _ollamaModel = process.env.OLLAMA_MODEL    || 'gemma3:4b';
+
+    // Per-lobe models fall back to default if not set
+    const _lobeModels = {
+        LOGOS:      process.env.OLLAMA_MODEL_LOGOS      || _ollamaModel,
+        THALAMUS:   process.env.OLLAMA_MODEL_THALAMUS   || _ollamaModel,
+        PROMETHEUS: process.env.OLLAMA_MODEL_PROMETHEUS || _ollamaModel,
+        AURORA:     process.env.OLLAMA_MODEL_AURORA     || _ollamaModel,
+    };
+
+    const _lobeSystemPrompts = {
+        LOGOS:      `You are LOGOS, SOMA's logic and engineering arbiter. Analyze code changes for correctness, side effects, type safety, and API contract impact. Be precise and technical. Two sentences max.`,
+        THALAMUS:   `You are THALAMUS, SOMA's risk and security arbiter. Assess blast radius, rollback safety, and give a risk score 0-100. Two sentences max.`,
+        PROMETHEUS: `You are PROMETHEUS, SOMA's strategy arbiter. Evaluate effort-to-value ratio, roadmap fit, and downstream impact. Two sentences max.`,
+        AURORA:     `You are AURORA, SOMA's coherence and identity arbiter. Assess whether this change is consistent with SOMA's existing architecture patterns and identity. Two sentences max.`,
+    };
+
+    const _callLobe = async (lobe, userPrompt) => {
+        const model  = _lobeModels[lobe];
+        const system = _lobeSystemPrompts[lobe];
+        const r = await fetch(`${_ollamaBase}/api/generate`, {
+            method:  'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                model,
+                system,
+                prompt:  userPrompt,
+                stream:  false,
+                options: { temperature: 0.3, num_predict: 120 },
+            }),
+            signal: AbortSignal.timeout(15000),
+        });
+        if (!r.ok) throw new Error(`Ollama ${lobe} ${r.status}`);
+        const d = await r.json();
+        return (d.response || '').trim().slice(0, 280);
+    };
+
+    router.post('/swarm/debate', async (req, res) => {
+        const { file, area = '', complexity = 'medium', mode = 'solo', intent = '', before = [], after = [] } = req.body || {};
+        if (!file) return res.status(400).json({ error: 'file required' });
+
+        const cacheKey = `${file}|${area}|${complexity}`;
+        const hit = _debateCache.get(cacheKey);
+        if (hit && (Date.now() - hit.ts) < DEBATE_CACHE_TTL) {
+            return res.json({ ...hit.data, cached: true });
+        }
+
+        const userPrompt =
+            `File: ${file}\nArea: ${area}\nComplexity: ${complexity}\nIntent: ${intent}\n` +
+            `Before: ${before.slice(0, 4).join(' | ')}\nAfter:  ${after.slice(0, 4).join(' | ')}\n\nGive your assessment.`;
+
+        // 4 parallel Ollama lobe calls — all local, no DeepSeek
+        const lobeResults = await Promise.allSettled([
+            _callLobe('LOGOS',      userPrompt),
+            _callLobe('THALAMUS',   userPrompt),
+            _callLobe('PROMETHEUS', userPrompt),
+            _callLobe('AURORA',     userPrompt),
+        ]);
+
+        const lobeNames = ['LOGOS', 'THALAMUS', 'PROMETHEUS', 'AURORA'];
+        const messages  = lobeResults.map((r, i) => ({
+            agent: lobeNames[i],
+            text:  r.status === 'fulfilled' ? r.value : `[${lobeNames[i]} offline — Ollama not responding]`,
+            live:  r.status === 'fulfilled',
+        }));
+
+        // If all lobes failed (Ollama down), signal frontend to use synthetic fallback
+        const allFailed = messages.every(m => !m.live);
+        if (allFailed) return res.json({ messages: null, fallback: true, cached: false });
+
+        // Derive risk score from THALAMUS text (looks for "N/100" or "score: N")
+        const thalamText = messages.find(m => m.agent === 'THALAMUS')?.text || '';
+        const riskMatch  = thalamText.match(/\b(\d{1,2}|100)\s*(?:\/\s*100|out of 100)/i)
+                        || thalamText.match(/(?:risk|score)[^0-9]*(\d+)/i);
+        const riskScore  = riskMatch ? Math.min(100, parseInt(riskMatch[1])) : { low: 15, medium: 42, high: 74 }[complexity] || 42;
+
+        const confidence = Math.max(0.45, Math.min(0.95, 1 - (riskScore / 100) * 0.6));
+        let proceed      = complexity !== 'high' || riskScore < 80;
+        let finalVerdict = null;
+
+        // High-complexity only: one DeepSeek synthesis call via QuadBrain
+        if (complexity === 'high' && system.quadBrain?.reason) {
+            try {
+                const synthPrompt =
+                    `High-complexity change in SOMA's codebase needs final verification.\n` +
+                    `File: ${file} — ${area}\n\n` +
+                    `LOGOS:      ${messages.find(m => m.agent === 'LOGOS')?.text}\n` +
+                    `THALAMUS:   ${messages.find(m => m.agent === 'THALAMUS')?.text}\n` +
+                    `PROMETHEUS: ${messages.find(m => m.agent === 'PROMETHEUS')?.text}\n` +
+                    `AURORA:     ${messages.find(m => m.agent === 'AURORA')?.text}\n\n` +
+                    `Final decision: PROCEED or HOLD? One sentence of reasoning.`;
+                finalVerdict = await Promise.race([
+                    system.quadBrain.reason(synthPrompt, { brain: 'PROMETHEUS', temperature: 0.15 }),
+                    new Promise((_, rej) => setTimeout(() => rej(new Error('timeout')), 10000)),
+                ]).catch(() => null);
+                if (finalVerdict) {
+                    proceed = !finalVerdict.toLowerCase().includes('hold');
+                    finalVerdict = finalVerdict.trim().slice(0, 220);
+                }
+            } catch {}
+        }
+
+        const result = { messages, confidence, proceed, mode, fromLobes: true, riskScore, finalVerdict, cached: false };
+        _debateCache.set(cacheKey, { data: result, ts: Date.now() });
+        res.json(result);
+    });
+
+    // DELETE /api/soma/swarm/debate/cache — bust the cache if you want fresh reasoning
+    router.delete('/swarm/debate/cache', (req, res) => {
+        _debateCache.clear();
+        res.json({ success: true, message: 'Debate cache cleared — next cycle will reason fresh' });
+    });
+
+    // ── Candidate Validation + Promotion Pipeline ─────────────────────────────
+    // POST /api/soma/swarm/validate
+    //
+    // Three-tier gate — every result writes a training signal regardless:
+    //   Tier 1 (score ≥ 0.82): auto-promote → injects into GoalPlanner
+    //   Tier 2 (0.62–0.82):    NEMESIS quick-check → promote if it agrees
+    //   Tier 3 (< 0.62):       training signal only, no promotion
+    //
+    // Syntax check runs for all tiers and adjusts score ±0.08.
+    router.post('/swarm/validate', async (req, res) => {
+        const { file, area = '', complexity = 'medium', before = [], after = [], confidence = 0.5, riskScore = 50, debate = [], intent = '' } = req.body || {};
+        if (!file || !after.length) return res.status(400).json({ error: 'file and after[] required' });
+
+        const mnemonic  = system.mnemonicArbiter;
+        const gp        = system.goalPlanner;
+        const quadBrain = system.quadBrain;
+        const ts        = Date.now();
+
+        // ── 1. Syntax check — write after[] to temp file, node --check ───────
+        let syntaxPassed = null;
+        let syntaxError  = null;
+        try {
+            const os   = await import('os');
+            const tmp  = path.join(os.default.tmpdir(), `soma_validate_${ts}.mjs`);
+            const wrap = `// SOMA validation wrapper\n(async () => {\n  ${after.join('\n  ')}\n})();\n`;
+            fs.writeFileSync(tmp, wrap, 'utf8');
+            await new Promise((resolve) => {
+                exec(`node --check "${tmp}"`, { timeout: 8000 }, (err, stdout, stderr) => {
+                    syntaxPassed = !err;
+                    syntaxError  = err ? (stderr || err.message).trim().slice(0, 200) : null;
+                    try { fs.unlinkSync(tmp); } catch {}
+                    resolve();
+                });
+            });
+        } catch (e) {
+            syntaxPassed = null; // indeterminate — don't penalise
+        }
+
+        // ── 2. Composite score ────────────────────────────────────────────────
+        // Start from debate confidence, adjust for syntax and risk
+        let score = confidence;
+        if (syntaxPassed === true)  score = Math.min(1,    score + 0.08);
+        if (syntaxPassed === false) score = Math.max(0,    score - 0.08);
+        score = Math.max(0, score - (riskScore / 100) * 0.15); // risk nudges score down
+
+        // ── 3. Gate decision ─────────────────────────────────────────────────
+        const AUTO_PROMOTE   = 0.82;
+        const NEMESIS_REVIEW = 0.62;
+
+        let tier            = score >= AUTO_PROMOTE ? 1 : score >= NEMESIS_REVIEW ? 2 : 3;
+        let promoted        = false;
+        let nemesisVerdict  = null;
+        let nemesisApproved = null;
+
+        // Tier 2: quick NEMESIS-style check — one QuadBrain THALAMUS call
+        if (tier === 2 && quadBrain?.reason) {
+            try {
+                const nemPrompt =
+                    `You are NEMESIS, SOMA's adversarial quality gate. A code change has passed lobe debate but scored in the borderline range.\n` +
+                    `File: ${file}\nArea: ${area}\nIntent: ${intent}\n` +
+                    `Proposed change:\nBefore: ${before.slice(0, 3).join(' | ')}\nAfter:  ${after.slice(0, 3).join(' | ')}\n` +
+                    `Debate summary: ${debate.slice(0, 2).map(d => `${d.agent}: ${(d.text || '').slice(0, 80)}`).join(' / ')}\n` +
+                    `Syntax check: ${syntaxPassed === true ? 'PASSED' : syntaxPassed === false ? 'FAILED' : 'NOT RUN'}\n\n` +
+                    `Should this change be promoted to SOMA's goal queue? Reply APPROVE or REJECT and one sentence.`;
+                nemesisVerdict = await Promise.race([
+                    quadBrain.reason(nemPrompt, { brain: 'THALAMUS', temperature: 0.1 }),
+                    new Promise((_, rej) => setTimeout(() => rej(new Error('timeout')), 10000)),
+                ]).catch(() => null);
+                if (nemesisVerdict) {
+                    nemesisApproved = nemesisVerdict.toLowerCase().includes('approve');
+                    nemesisVerdict  = nemesisVerdict.trim().slice(0, 200);
+                    if (nemesisApproved) tier = 1; // upgrade to promote
+                }
+            } catch {}
+        }
+
+        promoted = tier === 1;
+
+        // ── 4. Promote to GoalPlanner if passed ──────────────────────────────
+        if (promoted && gp?.createGoal) {
+            try {
+                await gp.createGoal({
+                    title:       `[VALIDATED] ${area || file}`,
+                    category:    'engineering',
+                    description: intent || `Pre-validated improvement to ${file}`,
+                    priority:    score,
+                    metadata: {
+                        filepath:   file,
+                        area,
+                        before,
+                        after,
+                        score,
+                        syntaxPassed,
+                        validatedAt: ts,
+                        source:     'validation_pipeline',
+                    },
+                });
+            } catch (e) {
+                console.warn('[validate] GoalPlanner inject failed:', e.message);
+            }
+        }
+
+        // ── 5. Write training signal regardless of outcome ───────────────────
+        // Every result — pass, borderline, fail — is data for lobe fine-tuning.
+        if (mnemonic) {
+            const signal = promoted
+                ? `Validation PASS (tier ${tier}, score ${score.toFixed(2)}) — ${file} / ${area}. Syntax: ${syntaxPassed ? 'OK' : syntaxPassed === false ? 'FAILED' : 'skipped'}. Promoted to GoalPlanner.`
+                : `Validation ${tier === 2 ? 'BORDERLINE' : 'REJECT'} (score ${score.toFixed(2)}) — ${file} / ${area}. Syntax: ${syntaxPassed ? 'OK' : syntaxPassed === false ? 'FAILED' : 'skipped'}. ${nemesisVerdict ? 'NEMESIS: ' + nemesisVerdict.slice(0, 80) : 'Below auto-promote threshold.'}`;
+            mnemonic.store(signal, {
+                type:         'validation_signal',
+                file,
+                area,
+                score,
+                syntaxPassed,
+                promoted,
+                tier,
+                complexity,
+                ts,
+            }).catch(() => {});
+        }
+
+        res.json({
+            validated:      promoted,
+            score:          parseFloat(score.toFixed(3)),
+            tier,
+            syntaxPassed,
+            syntaxError,
+            promoted,
+            nemesisVerdict,
+            nemesisApproved,
+            trainingSignal: true,
+            message: promoted
+                ? `✓ Promoted — injected into SOMA's goal queue (score ${(score * 100).toFixed(0)}%)`
+                : tier === 2
+                ? `Borderline — NEMESIS ${nemesisApproved === false ? 'rejected' : 'review inconclusive'} (score ${(score * 100).toFixed(0)}%)`
+                : `Below threshold — training signal written (score ${(score * 100).toFixed(0)}%)`,
+        });
+    });
+
     // ── NEMESIS Quality Gate status ───────────────────────────────────────────
     // GET /api/soma/nemesis/status — used by NEMESIS feed components
     router.get('/nemesis/status', (req, res) => {
@@ -2384,7 +2953,264 @@ ${personaContext}${characterContext}`.trim()
         res.json({ online: true, ledger: ev.getLedger() });
     });
 
+    // Playbook in Mission Control strategy format — lets MC load SOMA's trained presets
+    router.get('/simulations/playbook-mc', (req, res) => {
+        const ev = system?.simulationEvaluator;
+        if (!ev) return res.json({ online: false, presets: [], stats: null, evolved: [], correlation: {} });
+
+        const playbook = ev.getPlaybook();
+        const status   = ev.getStatus();
+
+        // Convert top 10 graduated entries into MC strategy objects
+        const mcStrategies = playbook.slice(0, 10).map((entry, i) => ({
+            id:          `soma_${entry.assetId}_${entry.protocolId}`.toLowerCase(),
+            name:        `${entry.assetId} · ${entry.evolved ? `${entry.evolvedFrom}→evolved` : entry.protocolId}`,
+            allocation:  Math.round(100 / Math.min(playbook.length, 5)) || 20,
+            pnl:         entry.totalPnL || 0,
+            winRate:     +(entry.winRate || 0).toFixed(3),
+            confidence:  Math.round((entry.score || 0) * 100),
+            active:      true,
+            description: `Graduated after ${entry.episodes} episodes — Sharpe ${entry.sharpe}, MaxDD ${((entry.maxDrawdown || 0) * 100).toFixed(1)}%${entry.evolved ? ' (evolved)' : ''}`,
+            assetClass:  entry.assetClass,
+            correlatedWith: entry.correlatedWith || [],
+        }));
+
+        res.json({
+            online:      true,
+            stats:       { totalEpisodes: status.totalEpisodes, totalTrades: status.totalTrades, graduated: status.graduated, evolvedProtocols: status.evolvedProtocols },
+            presets:     mcStrategies,
+            evolved:     ev.getEvolvedProtocols(),
+            correlation: ev.getCorrelationMatrix(),
+            playbook:    playbook.slice(0, 30),
+        });
+    });
+
+    // Biotech Research Status
+    router.get('/biotech/status', (req, res) => {
+        try {
+            const lab = system.biotechArbiter;
+            if (!lab) return res.status(503).json({ success: false, error: 'Biotech lab not initialized' });
+
+            const stats = lab.getStatus();
+            const experiments = Array.from(lab.experiments.values());
+            const latestDiscovery = experiments.sort((a, b) => b.timestamp - a.timestamp)[0] || null;
+
+            res.json({
+                success: true,
+                ...stats,
+                target: lab.targets[lab.currentTargetIndex]?.id || 'None',
+                category: lab.targets[lab.currentTargetIndex]?.category || 'General',
+                confidence: latestDiscovery ? latestDiscovery.integrity : (lab.active ? 0 : null),
+                latestDiscovery,
+                lastQuery: lab._lastQuery || null,
+                activeTargets: lab.targets.map(t => t.id),
+                trainingLog: stats.trainingLog || [],
+            });
+        } catch (e) {
+            res.status(500).json({ success: false, error: e.message });
+        }
+    });
+
+    // Manual trigger — run the next research cycle immediately
+    router.post('/biotech/run', (req, res) => {
+        try {
+            const lab = system.biotechArbiter;
+            if (!lab) return res.status(503).json({ success: false, error: 'Biotech lab not initialized' });
+            if (lab._runState?.active) {
+                return res.json({ success: false, running: true, message: 'Research cycle already in progress', runState: lab._runState });
+            }
+            lab._runNext();
+            res.json({ success: true, message: 'Research cycle started', runState: lab._runState });
+        } catch (e) {
+            res.status(500).json({ success: false, error: e.message });
+        }
+    });
+
+    // ── Materials Science Lab routes ─────────────────────────────────────────
+
+    router.get('/materials/status', (req, res) => {
+        try {
+            const lab = system.materialsScienceArbiter;
+            if (!lab) return res.status(503).json({ success: false, error: 'Materials lab not initialized' });
+            res.json({ success: true, ...lab.getStatus() });
+        } catch (e) { res.status(500).json({ success: false, error: e.message }); }
+    });
+
+    router.post('/materials/run', (req, res) => {
+        try {
+            const lab = system.materialsScienceArbiter;
+            if (!lab) return res.status(503).json({ success: false, error: 'Materials lab not initialized' });
+            if (lab._runState?.active) return res.json({ success: false, running: true, message: 'Research cycle already in progress', runState: lab._runState });
+            lab._runNext();
+            res.json({ success: true, message: 'Research cycle started', runState: lab._runState });
+        } catch (e) { res.status(500).json({ success: false, error: e.message }); }
+    });
+
+    router.post('/materials/domain', (req, res) => {
+        try {
+            const lab = system.materialsScienceArbiter;
+            if (!lab) return res.status(503).json({ success: false, error: 'Materials lab not initialized' });
+            const { domain } = req.body || {};
+            if (!domain) return res.status(400).json({ error: 'domain required' });
+            const ok = lab.setDomain(domain);
+            if (!ok) return res.status(400).json({ error: `Unknown domain: ${domain}` });
+            res.json({ success: true, activeDomain: domain, status: lab.getStatus() });
+        } catch (e) { res.status(500).json({ success: false, error: e.message }); }
+    });
+
+    // ── R&D Code Discovery — GitHub search + lobe evaluation ─────────────────
+    // Cached per topic (2h). Evaluates with LOGOS + PROMETHEUS + THALAMUS.
+    const _rdCache = new Map(); // topic → { ts, candidates }
+    const RD_CACHE_TTL = 7200000; // 2h
+
+    const RD_TOPICS = [
+        { query: 'autonomous-agent architecture',     tag: 'agents',    label: 'Agent Architecture' },
+        { query: 'knowledge-graph traversal efficient',tag: 'knowledge', label: 'Knowledge Graphs' },
+        { query: 'signal-processing pipeline',        tag: 'signals',   label: 'Signal Processing' },
+        { query: 'memory-optimization concurrent',    tag: 'memory',    label: 'Memory Systems' },
+        { query: 'message-broker distributed event',  tag: 'messaging', label: 'Event Routing' },
+        { query: 'neural-architecture search novel',  tag: 'ml',        label: 'Neural Architecture' },
+        { query: 'agency goal-driven autonomous reasoning', tag: 'agency',  label: 'Agency' },
+        { query: 'agentic workflow tool-use multi-step',     tag: 'agentic', label: 'Agentic Systems' },
+    ];
+
+    router.post('/swarm/rd-discover', async (req, res) => {
+        const { topic = 'agents', forceRefresh = false } = req.body || {};
+        const quadBrain = system.quadBrain;
+
+        // Check cache
+        const cached = _rdCache.get(topic);
+        if (!forceRefresh && cached && (Date.now() - cached.ts) < RD_CACHE_TTL) {
+            return res.json({ success: true, candidates: cached.candidates, cached: true, topic });
+        }
+
+        const topicDef = RD_TOPICS.find(t => t.tag === topic) || RD_TOPICS[0];
+
+        try {
+            // GitHub search API — no auth needed, rate limited 10/min
+            const ghRes = await fetch(
+                `https://api.github.com/search/repositories?q=${encodeURIComponent(topicDef.query + ' language:javascript OR language:python')}&sort=stars&order=desc&per_page=6`,
+                { headers: { 'Accept': 'application/vnd.github+json', 'User-Agent': 'SOMA-RD-Discovery/1.0' }, signal: AbortSignal.timeout(10000) }
+            );
+
+            if (!ghRes.ok) {
+                const err = await ghRes.text();
+                return res.status(502).json({ success: false, error: `GitHub API: ${ghRes.status}`, detail: err.slice(0, 200) });
+            }
+
+            const ghData = await ghRes.json();
+            const repos  = (ghData.items || []).slice(0, 5);
+
+            // Evaluate each repo with lobes (parallel, best-effort)
+            const candidates = await Promise.all(repos.map(async (repo) => {
+                let logosAnalysis     = null;
+                let prometheusImpact  = null;
+                let thalamusRisk      = null;
+
+                const context = `Repository: ${repo.full_name}\nDescription: ${repo.description || 'none'}\nLanguage: ${repo.language}\nStars: ${repo.stargazers_count}\nTopics: ${(repo.topics || []).join(', ')}\nURL: ${repo.html_url}`;
+
+                if (quadBrain?.reason) {
+                    const [logos, prometheus, thalamus] = await Promise.allSettled([
+                        Promise.race([
+                            quadBrain.reason(
+                                `${context}\n\nYou are LOGOS evaluating a GitHub repository for SOMA's R&D discovery system.\nWhat novel pattern or technique does this implement? Could any part benefit SOMA's architecture (message broker, arbiter system, memory, cognition pipeline)? If yes, which component and how? Be specific. 3 sentences max.`,
+                                { lobe: 'logos', complexity: 'medium' }
+                            ),
+                            new Promise((_, r) => setTimeout(() => r(new Error('timeout')), 15000)),
+                        ]),
+                        Promise.race([
+                            quadBrain.reason(
+                                `${context}\n\nYou are PROMETHEUS assessing strategic implementation value.\nIf SOMA were to study or adopt patterns from this repo: what is the implementation effort (low/medium/high), what SOMA component would benefit most, and what's the impact? 2 sentences max.`,
+                                { lobe: 'prometheus', complexity: 'medium' }
+                            ),
+                            new Promise((_, r) => setTimeout(() => r(new Error('timeout')), 15000)),
+                        ]),
+                        Promise.race([
+                            quadBrain.reason(
+                                `${context}\n\nYou are THALAMUS assessing risk.\nWhat dependency, security, or integration risks exist if SOMA were to study this codebase? Rate risk: low / medium / high. 1 sentence.`,
+                                { lobe: 'thalamus', complexity: 'low' }
+                            ),
+                            new Promise((_, r) => setTimeout(() => r(new Error('timeout')), 12000)),
+                        ]),
+                    ]);
+
+                    logosAnalysis    = logos.status    === 'fulfilled' ? logos.value?.response    : null;
+                    prometheusImpact = prometheus.status === 'fulfilled' ? prometheus.value?.response : null;
+                    thalamusRisk     = thalamus.status  === 'fulfilled' ? thalamus.value?.response  : null;
+                }
+
+                // Derive risk level from THALAMUS text
+                const riskText = (thalamusRisk || '').toLowerCase();
+                const riskLevel = riskText.includes('high') ? 'high' : riskText.includes('medium') ? 'medium' : 'low';
+
+                return {
+                    id:               repo.id,
+                    name:             repo.full_name,
+                    description:      repo.description || '',
+                    language:         repo.language || 'unknown',
+                    stars:            repo.stargazers_count,
+                    url:              repo.html_url,
+                    topics:           repo.topics || [],
+                    logosAnalysis,
+                    prometheusImpact,
+                    thalamusRisk,
+                    riskLevel,
+                    discoveredAt:     Date.now(),
+                    topicTag:         topic,
+                    topicLabel:       topicDef.label,
+                };
+            }));
+
+            _rdCache.set(topic, { ts: Date.now(), candidates });
+            res.json({ success: true, candidates, cached: false, topic });
+
+        } catch (e) {
+            res.status(500).json({ success: false, error: e.message });
+        }
+    });
+
+    router.get('/swarm/rd-topics', (req, res) => {
+        res.json({ topics: RD_TOPICS });
+    });
+
+    // Propose an R&D candidate to the engineering swarm goal queue
+    router.post('/swarm/rd-propose', async (req, res) => {
+        try {
+            const { candidate, topic } = req.body || {};
+            if (!candidate?.name) return res.status(400).json({ success: false, error: 'candidate.name required' });
+
+            const note = `R&D Discovery (${topic || 'unknown'}): ${candidate.name} — ${candidate.description || 'no description'}`;
+
+            // Write to mnemonic memory so SOMA can recall it later
+            if (system.mnemonicArbiter?.store) {
+                await system.mnemonicArbiter.store(note, {
+                    type: 'rd_discovery',
+                    repo: candidate.name,
+                    topic,
+                    url: candidate.url,
+                    logosScore: candidate.logos?.score,
+                });
+            }
+
+            // Push to engineering swarm goal queue if available
+            if (system.engineeringSwarm?.addGoal) {
+                system.engineeringSwarm.addGoal({
+                    id: `rd_${Date.now()}`,
+                    description: `Evaluate R&D candidate for integration: ${candidate.name}`,
+                    source: 'rd_discovery',
+                    priority: candidate.logos?.score ?? 0.5,
+                    meta: { candidate, topic },
+                });
+            }
+
+            res.json({ success: true, message: `${candidate.name} proposed to swarm` });
+        } catch (e) {
+            res.status(500).json({ success: false, error: e.message });
+        }
+    });
+
     // Real market data — Puppeteer scrapes CoinGecko, Yahoo Finance, CoinDesk,
+
     // Reuters, and Reddit WSB. Results cached 60s. Frontend polls every 30s.
     router.get('/simulations/market-data', async (req, res) => {
         try {

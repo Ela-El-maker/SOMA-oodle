@@ -252,8 +252,8 @@ ${colors.reset}`);
   );
 
   const backendSupervisor = new Supervisor('BACKEND', () => {
-    log('SYSTEM', 'Starting SOMA Backend Server...', colors.yellow);
-    const proc = spawn('node', [PATHS.BACKEND], {
+    log('SYSTEM', 'Starting SOMA Backend Server (GC Enabled)...', colors.yellow);
+    const proc = spawn('node', ['--expose-gc', PATHS.BACKEND], {
       cwd: PATHS.ROOT,
       shell: true,
       stdio: 'pipe',

@@ -391,21 +391,21 @@ router.post('/execute', async (req, res) => {
  * GET /api/finance/status
  * Get trading service status
  */
-router.get('/status', (req, res) => {
+router.get('/status', async (req, res) => {
     try {
-        const status = alpacaService.getStatus();
+        const alpacaStatus = alpacaService.getStatus();
+        const financeAgent = await getFinanceArbiter();
+        const agentStatus = financeAgent ? financeAgent.getStatus() : { active: false };
+
         res.json({
             success: true,
-            status
+            alpaca: alpacaStatus,
+            agent: agentStatus
         });
     } catch (error) {
-        res.status(500).json({
-            success: false,
-            error: error.message
-        });
+        res.status(500).json({ success: false, error: error.message });
     }
 });
-
 /**
  * GET /api/finance/slippage
  * Get execution quality / slippage statistics

@@ -32,6 +32,25 @@ export class VirtualShell {
         };
     }
 
+    // 2. Chained Command Parsing (&&)
+    const subCommands = command.split('&&').map(s => s.trim());
+    let finalResult = { stdout: '', stderr: '', exitCode: 0, cwd: this.cwd };
+
+    for (const sub of subCommands) {
+        const result = await this._executeSingle(sub, timeout);
+        finalResult.stdout += (finalResult.stdout ? '\n' : '') + result.stdout;
+        finalResult.stderr += (finalResult.stderr ? '\n' : '') + result.stderr;
+        finalResult.exitCode = result.exitCode;
+        finalResult.cwd = result.cwd;
+        
+        // Stop chain on failure
+        if (result.exitCode !== 0) break;
+    }
+
+    return finalResult;
+  }
+
+  async _executeSingle(command, timeout = 10000) {
     return new Promise((resolve) => {
       const start = Date.now();
       let output = '';
@@ -39,8 +58,9 @@ export class VirtualShell {
 
       // Handle 'cd' manually since child_process.spawn doesn't persist cwd changes across calls
       if (command.startsWith('cd ')) {
-        const target = command.substring(3).trim();
+        const target = command.substring(3).trim().replace(/[\\\/]/g, path.sep);
         const newPath = path.resolve(this.cwd, target);
+        console.log(`[VirtualShell] Changing directory: ${this.cwd} -> ${newPath}`);
         this.cwd = newPath;
         this.history.push({ command, output: '', cwd: this.cwd, exitCode: 0 });
         return resolve({ stdout: '', stderr: '', exitCode: 0, cwd: this.cwd });

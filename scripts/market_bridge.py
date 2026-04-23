@@ -246,6 +246,8 @@ def get_wsb():
         }
 
         if is_dd and score > 50:
+            thesis = _extract_dd_thesis(selftext)
+            post_data['thesis'] = thesis
             dd_posts.append(post_data)
         if is_flow:
             flow_posts.append(post_data)
@@ -275,6 +277,135 @@ def get_wsb():
     }))
 
 
+# ── Options Flow ──────────────────────────────────────────────────────────
+
+def get_options(symbol):
+    import yfinance as yf
+    import re as _re
+
+    YF_MAP = {
+        'BTC': 'BTC-USD', 'ETH': 'ETH-USD',
+        'SPY': 'SPY', 'QQQ': 'QQQ', 'IWM': 'IWM',
+        'NVDA': 'NVDA', 'AAPL': 'AAPL', 'MSFT': 'MSFT',
+        'TSLA': 'TSLA', 'AMD': 'AMD', 'META': 'META',
+        'GOOGL': 'GOOGL', 'AMZN': 'AMZN',
+    }
+    yf_sym = YF_MAP.get(symbol.upper(), symbol.upper())
+
+    try:
+        ticker = yf.Ticker(yf_sym)
+        exp_dates = ticker.options
+        if not exp_dates:
+            print(json.dumps({'ok': False, 'error': 'No options data available'}))
+            return
+
+        # Nearest two expiries
+        chain = ticker.option_chain(exp_dates[0])
+        calls = chain.calls.fillna(0)
+        puts  = chain.puts.fillna(0)
+
+        call_vol = int(calls['volume'].sum())
+        put_vol  = int(puts['volume'].sum())
+        call_oi  = int(calls['openInterest'].sum())
+        put_oi   = int(puts['openInterest'].sum())
+
+        pc_ratio_vol = round(put_vol / max(call_vol, 1), 3)
+        pc_ratio_oi  = round(put_oi  / max(call_oi,  1), 3)
+
+        # Unusual activity: volume > 5× mean for that side
+        def unusual(df, side):
+            avg = df['volume'].mean() or 1
+            hot = df[df['volume'] > avg * 5][['strike', 'volume', 'openInterest', 'impliedVolatility']].head(5)
+            rows = []
+            for _, r in hot.iterrows():
+                rows.append({
+                    'strike': safe_float(r['strike']),
+                    'volume': int(r['volume']),
+                    'openInterest': int(r['openInterest']),
+                    'iv': safe_float(r['impliedVolatility']),
+                    'side': side,
+                })
+            return rows
+
+        unusual_activity = unusual(calls, 'call') + unusual(puts, 'put')
+        unusual_activity.sort(key=lambda x: -x['volume'])
+
+        sentiment = 'BEARISH' if pc_ratio_vol > 1.3 else 'BULLISH' if pc_ratio_vol < 0.7 else 'NEUTRAL'
+
+        print(json.dumps({
+            'ok': True,
+            'symbol': symbol,
+            'expiry': exp_dates[0],
+            'putCallRatioVol': pc_ratio_vol,
+            'putCallRatioOI':  pc_ratio_oi,
+            'callVolume': call_vol,
+            'putVolume':  put_vol,
+            'callOI': call_oi,
+            'putOI':  put_oi,
+            'sentiment': sentiment,
+            'unusualActivity': unusual_activity[:8],
+        }))
+
+    except Exception as e:
+        sys.stderr.write(f'[market_bridge] options error for {symbol}: {e}\n')
+        print(json.dumps({'ok': False, 'error': str(e)}))
+
+
+# ── WSB thesis extractor ──────────────────────────────────────────────────
+
+def _extract_dd_thesis(text):
+    """Pull structured intel from a DD post body."""
+    import re as _re
+
+    text = text[:1500]
+
+    # Price targets: "$150 target", "PT $200", "price target: 250"
+    price_targets = []
+    for m in _re.findall(r'(?:pt|price target|target)[:\s]*\$?\s*(\d+(?:\.\d+)?)', text, _re.IGNORECASE):
+        try:
+            price_targets.append(float(m))
+        except:
+            pass
+    for m in _re.findall(r'\$\s*(\d{2,6}(?:\.\d+)?)\s+(?:target|by|eod|eow|eom)', text, _re.IGNORECASE):
+        try:
+            price_targets.append(float(m))
+        except:
+            pass
+
+    # Catalyst type
+    catalysts = []
+    CATALYST_MAP = {
+        'earnings':  ['earnings', 'eps', 'beat', 'revenue'],
+        'fda':       ['fda', 'phase 3', 'approval', 'trial results'],
+        'merger':    ['merger', 'acquisition', 'buyout', 'takeover'],
+        'squeeze':   ['short squeeze', 'gamma squeeze', 'high si', 'short interest'],
+        'macro':     ['fed', 'rate cut', 'cpi', 'inflation', 'fomc'],
+        'technical': ['breakout', 'cup and handle', 'support', 'resistance', 'golden cross'],
+        'insider':   ['insider buying', 'unusual options', 'dark pool', 'block trade'],
+    }
+    lower = text.lower()
+    for cat, keywords in CATALYST_MAP.items():
+        if any(kw in lower for kw in keywords):
+            catalysts.append(cat)
+
+    # Time horizon
+    time_horizon = 'unspecified'
+    if any(w in lower for w in ['today', '0dte', '1dte', 'eod', 'tomorrow']):
+        time_horizon = 'intraday'
+    elif any(w in lower for w in ['this week', 'eow', 'weekly', 'friday']):
+        time_horizon = 'weekly'
+    elif any(w in lower for w in ['this month', 'eom', 'monthly', 'q1', 'q2', 'q3', 'q4']):
+        time_horizon = 'monthly'
+    elif any(w in lower for w in ['this year', 'next year', '2025', '2026', 'long term']):
+        time_horizon = 'long-term'
+
+    return {
+        'priceTargets': list(set(price_targets))[:3],
+        'catalysts': catalysts,
+        'timeHorizon': time_horizon,
+    }
+
+
 # ── Entry point ────────────────────────────────────────────────────────────
 
 if __name__ == '__main__':
@@ -288,6 +419,8 @@ if __name__ == '__main__':
             get_news(sys.argv[2])
         elif cmd == 'wsb':
             get_wsb()
+        elif cmd == 'options' and len(sys.argv) > 2:
+            get_options(sys.argv[2])
         else:
             print(json.dumps({'ok': False, 'error': f'Unknown command: {cmd}'}))
     except Exception as e:

@@ -129,7 +129,10 @@ export class SelfEvolvingGoalEngine {
             await this.synthesizeKnowledge();
         }
 
-        // 5. GitHub discovery scan (every 6 hours — find interesting code)
+        // 5. Nutrient-poor detection (every cycle — ensure cognitive substrate is balanced)
+        await this.checkLibraryNutrients();
+
+        // 6. GitHub discovery scan (every 6 hours — find interesting code)
         if (this._shouldGithubScan()) {
             await this.githubDiscoveryScan();
         }
@@ -619,6 +622,46 @@ TIMEFRAME: <hours|days|weeks>`;
     // ═══════════════════════════════════════════
     // HELPERS
     // ═══════════════════════════════════════════
+
+    async checkLibraryNutrients() {
+        if (!this.goalPlanner) return;
+
+        const lobes = ['logos', 'aurora', 'prometheus', 'thalamus'];
+        const THRESHOLD = 10;
+        const currentRoot = process.cwd();
+
+        for (const lobe of lobes) {
+            try {
+                const dir = path.join(currentRoot, 'knowledge', lobe, 'yumyums');
+                const files = await fs.readdir(dir).catch(() => []);
+                const count = files.filter(f => f.endsWith('.md')).length;
+
+                if (count < THRESHOLD) {
+                    const goalTitle = `Sovereign Synthesis: Enrich ${lobe.toUpperCase()} substrate`;
+                    
+                    // Don't duplicate
+                    if (this._findActiveGoalByKeyword(`Enrich ${lobe.toUpperCase()}`)) continue;
+
+                    console.log(`[${this.name}] 🌱 Lobe ${lobe} is nutrient-poor (${count}/${THRESHOLD}). Spawning synthesis goal.`);
+
+                    await this.goalPlanner.createGoal({
+                        type: 'operational',
+                        category: 'improvement',
+                        title: goalTitle,
+                        description: `The ${lobe.toUpperCase()} cognitive substrate is starving (${count}/${THRESHOLD} nutrients). 
+TASK: Analyze recent system experiences and successful outcomes. Synthesize a new, high-signal "YumYum" nutrient (Markdown) for the ${lobe.toUpperCase()} library.
+Focus on: High-level philosophy, architectural rationale, or strategic principles.
+File the result into: knowledge/${lobe}/yumyums/`,
+                        priority: 75,
+                        confidence: 0.9,
+                        metadata: { source: 'nutrient_monitor', lobe }
+                    }, 'autonomous');
+                }
+            } catch (e) {
+                console.warn(`[${this.name}] Nutrient check failed for ${lobe}:`, e.message);
+            }
+        }
+    }
 
     _findActiveGoalByKeyword(keyword) {
         if (!this.goalPlanner || !keyword) return null;

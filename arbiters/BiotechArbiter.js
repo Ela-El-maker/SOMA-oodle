@@ -96,16 +96,21 @@ export class BiotechArbiter extends EventEmitter {
             await this._metabolicPause();
 
             // PHASE 3: PHYSICS SIMULATION (BIO-PHYSICS)
+            // Extract a candidate molecule name/formula from the discovery text.
+            // Look for SMILES-like tokens, known drug name patterns, or fall back to
+            // the target + strand as the probe identifier.
             this._currentPhase = 'PHYSICS';
             console.log(`🧬 [${this.name}] [3/7] Phase: PHYSICS`);
             const pocketData = TargetLibrary[target] || { name: target };
-            const physicsResult = await this.physics.simulateDocking(this._phaseResults.discovery.substring(0, 30), pocketData);
+            const moleculeProbe = this._extractMoleculeProbe(this._phaseResults.discovery, target, currentStrand);
+            const physicsResult = await this.physics.simulateDocking(moleculeProbe, pocketData);
             if (!physicsResult.passed) {
-                console.warn(`🧬 [${this.name}] ❌ VETO: Physics failure.`);
+                console.warn(`🧬 [${this.name}] ❌ VETO: Physics failure (affinity ${physicsResult.affinity} kcal/mol < threshold).`);
                 this._resetMission();
                 return;
             }
             this._phaseResults.physics = physicsResult;
+            console.log(`🧬 [${this.name}]    Physics: ${physicsResult.affinity} kcal/mol, confidence ${physicsResult.confidence}`);
             await this._metabolicPause();
 
             // PHASE 4: PHARMACOLOGY (SOMA-PHARM)
@@ -139,8 +144,41 @@ export class BiotechArbiter extends EventEmitter {
             const dossier = await this.odin.reasonRecurrent(`${rpxPersona}\nBuild Industrial Dossier. Discovery: ${this._phaseResults.discovery}\nStats: ${this._phaseResults.stats}\nSafety: ${this._phaseResults.pharm}\nIP: ${this._phaseResults.ip}`, 'logos', 'high');
             
             await this._publishDossier(dossier.response);
-            console.log(`🧬 [${this.name}] ✅ Mission Complete. target indexed.`);
 
+            // Persist research summary to SOMA's long-term memory
+            if (this.memory?.remember) {
+                const summary = `[BIOTECH RESEARCH] Target: ${target} (${targetObj.category})\n` +
+                    `Strand: ${currentStrand} | Physics: ${this._phaseResults.physics?.affinity} kcal/mol\n` +
+                    `Discovery: ${this._phaseResults.discovery?.substring(0, 300)}\n` +
+                    `Dossier: ${dossier.response?.substring(0, 500)}`;
+                await this.memory.remember(summary, {
+                    importance: 0.85,
+                    sector: 'BIO',
+                    category: 'research_dossier',
+                    target,
+                    strand: currentStrand,
+                }).catch(() => {});
+            }
+
+            // Record completed experiment in the Map (status route reads this)
+            const expKey = `${target}_${currentStrand}_${Date.now()}`;
+            this.experiments.set(expKey, {
+                target,
+                strand:    currentStrand,
+                category:  targetObj.category,
+                timestamp: Date.now(),
+                integrity: this._phaseResults.integrity || 0.94,
+                affinity:  this._phaseResults.physics?.affinity,
+                confidence:this._phaseResults.physics?.confidence,
+                dossierSummary: dossier.response?.substring(0, 400),
+            });
+            // Keep last 20 experiments
+            if (this.experiments.size > 20) {
+                const oldest = this.experiments.keys().next().value;
+                this.experiments.delete(oldest);
+            }
+
+            console.log(`🧬 [${this.name}] ✅ Mission Complete. Dossier published + stored in memory.`);
             this._resetMission();
             this.currentTargetIndex = (this.currentTargetIndex + 1) % this.targets.length;
 
@@ -179,24 +217,60 @@ export class BiotechArbiter extends EventEmitter {
         console.log(`🧬 [${this.name}] 📄 DOSSIER PUBLISHED: ${filePath}`);
     }
 
+    /** Manual trigger — called by POST /api/soma/biotech/run */
+    _runNext() {
+        if (this._currentPhase !== 'IDLE') return;
+        this.conductRealWorldResearch(this.targets[this.currentTargetIndex]);
+    }
+
     _startResearchPulse() {
-        setTimeout(() => this.conductRealWorldResearch(this.targets[this.currentTargetIndex]), 15000);
-        setInterval(() => {
-            if (this.active && this._currentPhase === 'IDLE') {
-                this.conductRealWorldResearch(this.targets[this.currentTargetIndex]);
-            }
-        }, 14400000).unref();
+        // First run after 15s (let system stabilize)
+        setTimeout(() => this._runNext(), 15000);
+        // Auto-cycle every 4 hours
+        setInterval(() => this._runNext(), 14400000).unref();
     }
 
     getStatus() {
+        const PHASE_ORDER = ['IDLE', 'DISCOVERY', 'STATS', 'PHYSICS', 'PHARM', 'TRIAL', 'IP', 'DOSSIER'];
+        const phaseIndex = PHASE_ORDER.indexOf(this._currentPhase);
+        const progress = phaseIndex <= 0 ? 0 : parseFloat((phaseIndex / (PHASE_ORDER.length - 1)).toFixed(2));
         return {
-            name: this.name,
-            active: this.active,
+            name:         this.name,
+            active:       this.active,
             currentPhase: this._currentPhase,
-            mission: this._currentMission,
-            target: this._currentMission?.target || this.targets[this.currentTargetIndex]?.id,
-            progress: this._currentPhase === 'IDLE' ? 0 : 0.15 // simplified for UI
+            mission:      this._currentMission,
+            target:       this._currentMission?.target || this.targets[this.currentTargetIndex]?.id,
+            progress,
+            physics:      this._phaseResults.physics || null,
+            completedPhases: PHASE_ORDER.slice(1, phaseIndex + 1),
         };
+    }
+
+    /**
+     * Extract a meaningful molecule probe from discovery text for BioPhysicsSimulator.
+     * Priority: known drug-name patterns → SMILES fragment → target+strand fallback.
+     */
+    _extractMoleculeProbe(discoveryText, target, strand) {
+        if (!discoveryText) return `${target}_${strand}`;
+
+        // Look for known inhibitor/compound patterns in the discovery text
+        const patterns = [
+            /\b([A-Z]{2,}-\d+)\b/,           // drug codes like BI-3406, MK-1775
+            /\b(\w+inib)\b/i,                 // kinase inhibitors (imatinib, gefitinib)
+            /\b(\w+umab)\b/i,                 // monoclonal antibodies (pembrolizumab)
+            /\b(\w+mab)\b/i,                  // antibody suffix
+            /\b(\w+stat)\b/i,                 // statins
+            /compound\s+([A-Z0-9]{3,10})/i,  // "compound XYZ"
+            /molecule\s+([A-Z0-9]{3,10})/i,  // "molecule XYZ"
+        ];
+
+        for (const pat of patterns) {
+            const match = discoveryText.match(pat);
+            if (match?.[1]) return match[1];
+        }
+
+        // Fallback: target + strand as molecular probe
+        return `${target}_${strand}_probe`;
     }
 }
 

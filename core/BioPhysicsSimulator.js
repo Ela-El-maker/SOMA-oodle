@@ -33,17 +33,52 @@ export class BioPhysicsSimulator {
 
     /**
      * MOLECULAR FEATURE EXTRACTION
+     *
+     * Accepts three input styles:
+     *   1. SMILES string (e.g. "CCOc1ccc(NC(=O)...)") — count actual atoms
+     *   2. Drug name (e.g. "imatinib", "BI-3406") — use lookup table
+     *   3. target_strand_probe fallback — derive from string hash for determinism
      */
     extractFeatures(molecule) {
-        const features = {
-            donors: (molecule.match(/N|O/g) || []).length,
-            acceptors: (molecule.match(/O|N/g) || []).length,
-            hydrophobicGroups: (molecule.match(/C/g) || []).length,
-            rotatableBonds: Math.floor(molecule.length / 5),
-            aromaticRings: (molecule.match(/c/g) || []).length,
-            molecularWeight: molecule.length * 12
+        // Known drug → approximate feature profiles
+        const DRUG_PROFILES = {
+            imatinib:      { donors: 2, acceptors: 7, hydrophobicGroups: 6, rotatableBonds: 7,  aromaticRings: 3, molecularWeight: 493 },
+            gefitinib:     { donors: 1, acceptors: 7, hydrophobicGroups: 5, rotatableBonds: 6,  aromaticRings: 2, molecularWeight: 446 },
+            erlotinib:     { donors: 1, acceptors: 6, hydrophobicGroups: 5, rotatableBonds: 6,  aromaticRings: 2, molecularWeight: 393 },
+            pembrolizumab: { donors: 4, acceptors: 8, hydrophobicGroups: 3, rotatableBonds: 12, aromaticRings: 0, molecularWeight: 146000 },
+            atorvastatin:  { donors: 2, acceptors: 5, hydrophobicGroups: 4, rotatableBonds: 9,  aromaticRings: 2, molecularWeight: 558 },
         };
-        return features;
+
+        const lc = molecule.toLowerCase().replace(/[-_\s]/g, '');
+        for (const [name, profile] of Object.entries(DRUG_PROFILES)) {
+            if (lc.includes(name)) return profile;
+        }
+
+        // SMILES detection: has lowercase aromatic atoms or = / # bonds
+        const isSmiles = /[a-z]|[=#@\/\\]|\[/.test(molecule);
+        if (isSmiles) {
+            return {
+                donors:           (molecule.match(/[NO]/g) || []).length,
+                acceptors:        (molecule.match(/[NOF]/g) || []).length,
+                hydrophobicGroups:(molecule.match(/C/g) || []).length,
+                rotatableBonds:   Math.floor(molecule.length / 5),
+                aromaticRings:    (molecule.match(/c/g) || []).length,
+                molecularWeight:  molecule.length * 12,
+            };
+        }
+
+        // Deterministic hash for probe strings (target_strand_probe)
+        // Ensures same probe always gets same features (reproducible physics)
+        let hash = 0;
+        for (let i = 0; i < molecule.length; i++) hash = (hash * 31 + molecule.charCodeAt(i)) >>> 0;
+        return {
+            donors:           1 + (hash % 3),
+            acceptors:        1 + ((hash >> 2) % 4),
+            hydrophobicGroups:2 + ((hash >> 4) % 5),
+            rotatableBonds:   2 + ((hash >> 6) % 6),
+            aromaticRings:    (hash >> 8) % 3,
+            molecularWeight:  200 + (hash % 400),
+        };
     }
 
     /**

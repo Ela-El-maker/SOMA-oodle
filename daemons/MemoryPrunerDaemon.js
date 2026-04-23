@@ -239,10 +239,7 @@ class MemoryPrunerDaemon extends BaseDaemon {
                 totalPurged += moved;
                 // Don't advance offset — removed entries shift the window
             } else {
-                if (toPurge.length > 0) {
-                    console.log(`[MemoryPruner] [DRY RUN] Pass 1 would purge ${toPurge.length} entries`);
-                    totalPurged += toPurge.length;
-                }
+                if (toPurge.length > 0) totalPurged += toPurge.length;
                 offset += BATCH; // dry-run or nothing found: always advance
             }
 

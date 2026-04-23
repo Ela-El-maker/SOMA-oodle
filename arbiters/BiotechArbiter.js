@@ -90,7 +90,8 @@ export class BiotechArbiter extends EventEmitter {
             this._currentPhase = 'STATS';
             console.log(`🧬 [${this.name}] [2/7] Phase: STATS`);
             const statsPersona = await this._getPersona('Biostatistician');
-            const statsAudit = await this.odin.reasonRecurrent(`${statsPersona}\nAudit significance for: ${this._phaseResults.discovery}`, 'logos', 'high');
+            // 'standard' — analytical audit doesn't need full recurrence
+            const statsAudit = await this.odin.reasonRecurrent(`${statsPersona}\nAudit significance for: ${this._phaseResults.discovery.substring(0, 1500)}`, 'logos', 'standard');
             this._phaseResults.stats = statsAudit.response;
             this._phaseResults.integrity = 0.94; // Advance to Preclinical
             await this._metabolicPause();
@@ -117,7 +118,7 @@ export class BiotechArbiter extends EventEmitter {
             this._currentPhase = 'PHARM';
             console.log(`🧬 [${this.name}] [4/7] Phase: PHARM`);
             const pharmPersona = await this._getPersona('Pharmacologist');
-            const pharmAudit = await this.odin.reasonRecurrent(`${pharmPersona}\nAudit ADME/Toxicity for: ${this._phaseResults.discovery}`, 'logos', 'high');
+            const pharmAudit = await this.odin.reasonRecurrent(`${pharmPersona}\nAudit ADME/Toxicity for: ${this._phaseResults.discovery.substring(0, 1500)}`, 'logos', 'standard');
             this._phaseResults.pharm = pharmAudit.response;
             await this._metabolicPause();
 
@@ -125,7 +126,7 @@ export class BiotechArbiter extends EventEmitter {
             this._currentPhase = 'TRIAL';
             console.log(`🧬 [${this.name}] [5/7] Phase: TRIAL`);
             const trialPersona = await this._getPersona('Clinical Trial Architect');
-            const trialAudit = await this.odin.reasonRecurrent(`${trialPersona}\nDesign Phase I for: ${this._phaseResults.discovery}`, 'logos', 'high');
+            const trialAudit = await this.odin.reasonRecurrent(`${trialPersona}\nDesign Phase I for: ${this._phaseResults.discovery.substring(0, 1500)}`, 'logos', 'standard');
             this._phaseResults.trial = trialAudit.response;
             await this._metabolicPause();
 
@@ -133,7 +134,7 @@ export class BiotechArbiter extends EventEmitter {
             this._currentPhase = 'IP';
             console.log(`🧬 [${this.name}] [6/7] Phase: IP & REG`);
             const ipPersona = await this._getPersona('Patent Attorney');
-            const ipAudit = await this.odin.reasonRecurrent(`${ipPersona}\nConduct Prior Art Scan for: ${this._phaseResults.discovery}`, 'logos', 'high');
+            const ipAudit = await this.odin.reasonRecurrent(`${ipPersona}\nConduct Prior Art Scan for: ${this._phaseResults.discovery.substring(0, 1500)}`, 'logos', 'standard');
             this._phaseResults.ip = ipAudit.response;
             await this._metabolicPause();
 

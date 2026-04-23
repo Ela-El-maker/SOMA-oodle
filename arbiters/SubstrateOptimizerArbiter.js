@@ -21,6 +21,7 @@
 
 import { BaseArbiterV4, ArbiterRole, ArbiterCapability } from './BaseArbiter.js';
 import os from 'os';
+import messageBroker from '../core/MessageBroker.cjs';
 
 const AUDIT_INTERVAL_MS   = 60_000;  // audit every 60s
 const MIN_SQUEEZE_GAP_MS  = 60_000;  // don't squeeze more than once per minute
@@ -76,14 +77,16 @@ export class SubstrateOptimizerArbiter extends BaseArbiterV4 {
             timestamp:    Date.now(),
         };
 
-        // Emit periodic metrics signal (low priority — AttentionArbiter may suppress under load)
-        this.emitSignal?.('health.metrics', {
-            cpuUsage:  cpuPct,
-            ramUsage:  osMemRatio * 100,
-            heapUsed:  mem.heapUsed,
-            heapTotal: mem.heapTotal,
-            dbSizeGB:  0,
-        }, 'low');
+        // Emit periodic metrics into CNS (low priority)
+        try {
+            messageBroker.publish('health.metrics', {
+                cpuUsage:  cpuPct,
+                ramUsage:  osMemRatio * 100,
+                heapUsed:  mem.heapUsed,
+                heapTotal: mem.heapTotal,
+                dbSizeGB:  0,
+            });
+        } catch { /* ignore */ }
 
         // Check thresholds and squeeze if needed
         const pressures = [];
@@ -131,19 +134,25 @@ export class SubstrateOptimizerArbiter extends BaseArbiterV4 {
             console.log(`🔋 [${this.name}] GC pass complete. Heap: ${(after.heapUsed / 1048576).toFixed(0)}MB (freed ~${freedMB}MB)`);
         }
 
-        // 2. Signal all arbiters to throttle
-        await this.sendMessage?.('all', 'substrate_squeeze_active', {
-            reason,
-            severity:    this._squeezeCount > 3 ? 'critical' : 'warning',
-            targetModel: 'tinyllama',
-            priority:    'continuity',
-        });
+        // 2. Signal all arbiters to throttle via MessageBroker
+        try {
+            messageBroker.publish('substrate_squeeze_active', {
+                reason,
+                severity:    this._squeezeCount > 3 ? 'critical' : 'warning',
+                targetModel: 'tinyllama',
+                priority:    'continuity',
+            });
+        } catch { /* broker may not be ready on early boot */ }
 
-        // 3. Emit health warning into CNS (AttentionArbiter will broadcast)
-        this.emitSignal?.('health.warning', {
-            issue:   'substrate_pressure',
-            details: reason,
-        }, 'high');
+        // 3. Emit health.warning into CNS (AttentionArbiter listens)
+        try {
+            messageBroker.publish('health.warning', {
+                issue:   'substrate_pressure',
+                details: reason,
+                cpuPct:  this.lastAudit?.cpuPct,
+                heapRatio: this.lastAudit?.heapRatio,
+            });
+        } catch { /* ignore */ }
 
         // 4. Log to memory (non-blocking)
         const mnemonic = this.system?.mnemonicArbiter || this.system?.mnemonic;

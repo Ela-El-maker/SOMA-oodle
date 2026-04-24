@@ -1707,6 +1707,15 @@ export async function loadExtendedSystems(system) {
         );
     }
 
+    // 💼 CONCIEVE: Financial Audit & Tax Expertise Pack
+    ext.concieveArbiter = await safeLoad('ConcieveExpertiseArbiter', () =>
+        new ConcieveExpertiseArbiter({ system })
+    );
+    if (ext.concieveArbiter) {
+        system.concieveArbiter = ext.concieveArbiter;
+        console.log('    💼 ConcieveExpertiseArbiter ← FinancialAudit + AuditOrchestrator');
+    }
+
     // ── NemesisArbiter: Fully agentic adversarial code reviewer ──
     // Investigates changes with real tools before scoring — the autonomous gateway
     try {

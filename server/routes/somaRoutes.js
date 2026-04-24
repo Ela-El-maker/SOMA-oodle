@@ -3108,6 +3108,27 @@ ${personaContext}${characterContext}`.trim()
         } catch (e) { res.status(500).json({ success: false, error: e.message }); }
     });
 
+    // ── Concieve: Financial Audit & Tax Expertise Pack ───────────────────────
+    router.get('/concieve/status', (req, res) => {
+        try {
+            const arbiter = system.concieveArbiter;
+            if (!arbiter) return res.status(503).json({ success: false, error: 'ConcieveArbiter not loaded' });
+            res.json({ success: true, status: arbiter.getStatus() });
+        } catch (e) { res.status(500).json({ success: false, error: e.message }); }
+    });
+
+    router.post('/concieve/run', async (req, res) => {
+        try {
+            const arbiter = system.concieveArbiter;
+            if (!arbiter) return res.status(503).json({ success: false, error: 'ConcieveArbiter not loaded' });
+            const { target = 'FullAudit' } = req.body || {};
+            res.json({ success: true, message: `Audit mission started for: ${target}` });
+            arbiter.runMission(target).catch(e =>
+                console.warn('[concieve/run] Mission error:', e.message)
+            );
+        } catch (e) { res.status(500).json({ success: false, error: e.message }); }
+    });
+
     // ── R&D Code Discovery — GitHub search + lobe evaluation ─────────────────
     // Cached per topic (2h). Evaluates with LOGOS + PROMETHEUS + THALAMUS.
     const _rdCache = new Map(); // topic → { ts, candidates }

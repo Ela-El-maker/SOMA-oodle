@@ -159,6 +159,7 @@ import { VirtualShell } from '../../arbiters/VirtualShell.js';
 import { EngineeringSwarmArbiter } from '../../arbiters/EngineeringSwarmArbiter.js';
 import { BiotechArbiter } from '../../arbiters/BiotechArbiter.js';
 import { SubstrateOptimizerArbiter } from '../../arbiters/SubstrateOptimizerArbiter.js';
+import { ConcieveExpertiseArbiter } from '../../arbiters/ConcieveExpertiseArbiter.js';
 import { MaterialsScienceArbiter } from '../../arbiters/MaterialsScienceArbiter.js';
 import { SwarmOptimizer } from '../../arbiters/SwarmOptimizer.js';
 import { DiscoverySwarm } from '../../arbiters/DiscoverySwarm.js';

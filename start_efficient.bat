@@ -16,6 +16,8 @@ echo   [2] Memory Limits: 2048MB Reserved for SOMA Core.
 echo.
 
 echo   [3] Starting SOMA ULTRA (Efficient Core)...
+set HOST=0.0.0.0
+echo       - Network: OPEN (Accessible via your local IP)
 echo       - Medical Lab: ENABLED
 echo       - Engineering Swarm: ENABLED
 echo       - Vision/Heavy: DISABLED

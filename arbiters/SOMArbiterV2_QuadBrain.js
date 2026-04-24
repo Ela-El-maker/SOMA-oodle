@@ -159,8 +159,11 @@ export class SOMArbiterV2_QuadBrain extends BaseArbiterV4 {
     this.auditLogger.info(`[${this.name}] Reasoning Request: "${query.substring(0, 50)}..."`);
 
     try {
-      let response;
+      // 🔱 SOVEREIGN HYBRID GATE: Force Local for internal Industrial tasks
+      const isInternalTask = global.__SOMA_FINANCE_ANALYSIS || global.__SOMA_MEDICAL_MISSION;
+      if (isInternalTask) { context.forceLocal = true; }
 
+      let response;
       // 🔱 ODIN UNIVERSAL GATE: Determine depth based on complexity/intent
       const isComplex = context.deepThinking || this._scoreLobe('LOGOS', query) > 0.5 || query.length > 200;
       const complexity = isComplex ? 'high' : 'simple';

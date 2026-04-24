@@ -69,6 +69,9 @@ export class BiotechArbiter extends EventEmitter {
         const currentStrand = strand || this.strands[target]?.[0] || 'WildType';
         this._currentMission = { target, strand: currentStrand, category: targetObj.category };
 
+        // 🔱 SOVEREIGN GATE: Force Local Lobe for Industrial Science
+        global.__SOMA_MEDICAL_MISSION = true;
+
         try {
             // PHASE 1: DISCOVERY (SOMA-MED)
             this._currentPhase = 'DISCOVERY';
@@ -186,6 +189,8 @@ export class BiotechArbiter extends EventEmitter {
         } catch (e) {
             console.error(`🧬 [${this.name}] Mission Failed at Phase ${this._currentPhase}:`, e.message);
             this._resetMission();
+        } finally {
+            global.__SOMA_MEDICAL_MISSION = false;
         }
     }
 

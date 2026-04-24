@@ -344,50 +344,11 @@ class MnemonicArbiter extends BaseArbiter {
   // ===========================
 
   async _initRedis() {
-    // 1. Use injected cache (Mock or Real)
-    if (this.cache) {
-      this.redis = this.cache;
-      this.log('info', `🔥 Hot tier (Injected: ${this.cache.name}) ready`);
-      return;
-    }
-
-    if (!this.config.redisUrl) {
-      this.log('info', 'Redis URL not configured - hot tier disabled');
-      return;
-    }
-
-    try {
-      this.log('info', 'Initializing Redis (hot tier) - 2s POSEIDON GATE active...');
-
-      // 🔱 POSEIDON GATE: If Redis doesn't connect in 2s, skip it.
-      const timeoutPromise = new Promise((_, reject) => 
-          setTimeout(() => reject(new Error('Redis Connection Timeout')), 2000)
-      );
-
-      const connectPromise = (async () => {
-          const client = createClient({
-              url: this.config.redisUrl,
-              socket: { 
-                connectTimeout: 1500,
-                reconnectStrategy: (retries) => {
-                  if (retries > 3) return new Error('Max retries reached');
-                  return 500;
-                }
-              }
-          });
-          await client.connect();
-          return client;
-      })();
-
-      this.redis = await Promise.race([connectPromise, timeoutPromise]);
-      this.log('info', '✅ Hot tier (Redis) online');
-
-    } catch (err) {
-      this.log('warn', `⚠️ Redis Hot-Tier failed: ${err.message}. Falling back to SQLite.`);
-      this.redis = null; 
-    }
+    // 🔱 SOVEREIGN OVERRIDE: Redis disabled for high-efficiency mode
+    this.log('info', 'Redis hot-tier disabled (Anvil Mode Active)');
+    this.redis = null;
+    return;
   }
-
   // Helper — apply schema to an open Database instance
   _setupDb(db, inMemory = false) {
     if (!inMemory) {

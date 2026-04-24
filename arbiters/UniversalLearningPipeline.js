@@ -283,12 +283,12 @@ export class UniversalLearningPipeline extends EventEmitter {
 
       // Only store important interactions
       if (importance > 0.3) {
-        const memoryContent = JSON.stringify({
-          type: interaction.type,
-          input: interaction.input,
-          output: interaction.output,
-          context: interaction.context
-        });
+        // Build human-readable memory — raw JSON.stringify() creates garbage the pruner has to clean
+        const agentLabel  = interaction.agent  ? `[${interaction.agent}] ` : '';
+        const typeLabel   = interaction.type   ? `Type: ${interaction.type}` : 'Interaction';
+        const inputText   = typeof interaction.input  === 'string' ? interaction.input  : JSON.stringify(interaction.input  ?? '');
+        const outputText  = typeof interaction.output === 'string' ? interaction.output : JSON.stringify(interaction.output ?? '');
+        const memoryContent = `${agentLabel}${typeLabel}\nInput: ${inputText.substring(0, 200)}\nResult: ${outputText.substring(0, 300)}`.trim();
 
         await this.mnemonicArbiter.remember(memoryContent, {
           importance,

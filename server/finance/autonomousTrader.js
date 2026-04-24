@@ -1189,7 +1189,7 @@ class AutonomousTrader {
                 recommendation: this._lastSignal.recommendation,
                 timestamp: this._lastSignal.timestamp
             } : null,
-            guardrailsState: this.guardrails?.getStatus() || null
+            guardrailsState: global.SOMA_TRADING?.guardrails?.getStatus() || null
         };
     }
 

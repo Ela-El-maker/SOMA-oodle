@@ -13,6 +13,7 @@ export class VirtualShell {
   constructor(cwd = process.cwd()) {
     this.cwd = cwd;
     this.history = [];
+    this._maxHistory = 200;
     
     // PRODUCTION HARDENING: Command Blacklist
     this.blacklist = [
@@ -63,6 +64,7 @@ export class VirtualShell {
         console.log(`[VirtualShell] Changing directory: ${this.cwd} -> ${newPath}`);
         this.cwd = newPath;
         this.history.push({ command, output: '', cwd: this.cwd, exitCode: 0 });
+        if (this.history.length > this._maxHistory) this.history.shift();
         return resolve({ stdout: '', stderr: '', exitCode: 0, cwd: this.cwd });
       }
 
@@ -77,6 +79,7 @@ export class VirtualShell {
 
       proc.on('close', (code) => {
         this.history.push({ command, output, error, cwd: this.cwd, exitCode: code });
+        if (this.history.length > this._maxHistory) this.history.shift();
         resolve({
           stdout: output.trim(),
           stderr: error.trim(),

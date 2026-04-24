@@ -1737,6 +1737,56 @@ ${personaContext}${characterContext}`.trim()
         }
     });
 
+    // GET /api/soma/memory/health — stats: total memories, purgatory count, pruner state
+    router.get('/memory/health', async (req, res) => {
+        try {
+            const mnemonic = system.mnemonicArbiter || system.mnemonic;
+            const stats = mnemonic?.getMemoryStats?.() || {};
+            const purgatoryStats = await mnemonic?.getPurgatoryStats?.() || { count: 0, oldestDays: 0 };
+
+            // Pull total cold count from DB directly if available
+            let coldCount = stats.cold?.size ?? 0;
+            if (!coldCount && mnemonic?.db) {
+                try { coldCount = mnemonic.db.prepare('SELECT COUNT(*) as n FROM memories').get()?.n || 0; } catch { /* ok */ }
+            }
+
+            const prunerDaemon = system.daemonManager?.daemons?.get?.('MemoryPrunerDaemon');
+            res.json({
+                success:   true,
+                memories:  coldCount,
+                purgatory: purgatoryStats,
+                tiers:     stats,
+                pruner:    prunerDaemon ? {
+                    lastRun: prunerDaemon.lastRun || null,
+                    stats:   prunerDaemon._cycleStats || null,
+                    active:  prunerDaemon._pruning || false,
+                } : null,
+            });
+        } catch (error) {
+            res.status(500).json({ success: false, error: error.message });
+        }
+    });
+
+    // POST /api/soma/memory/prune — manually trigger the memory pruner
+    router.post('/memory/prune', async (req, res) => {
+        try {
+            const prunerDaemon = system.daemonManager?.daemons?.get?.('MemoryPrunerDaemon');
+            if (!prunerDaemon) {
+                return res.status(503).json({ success: false, error: 'MemoryPrunerDaemon not registered' });
+            }
+            if (prunerDaemon._pruning) {
+                return res.status(409).json({ success: false, error: 'Prune already in progress' });
+            }
+            prunerDaemon._pruning = true;
+            prunerDaemon.tick()
+                .then(() => { prunerDaemon._pruning = false; prunerDaemon.lastRun = Date.now(); })
+                .catch(() => { prunerDaemon._pruning = false; });
+            res.json({ success: true, message: 'Prune cycle started in background' });
+        } catch (error) {
+            res.status(500).json({ success: false, error: error.message });
+        }
+    });
+
     // POST /api/soma/fs/read
     router.post('/fs/read', async (req, res) => {
         try {

@@ -144,6 +144,9 @@ export class WorldModelArbiter extends EventEmitter {
     // Load existing world model
     await this.loadWorldModel();
 
+    // Autosave every 10 minutes — world model accumulates across sessions
+    setInterval(() => this.saveWorldModel().catch(() => {}), 10 * 60 * 1000).unref();
+
     console.log('✅ [WorldModelArbiter] Ready');
     console.log(`   🌍 States modeled: ${this.transitionModel.size}`);
     console.log(`   📊 Prediction accuracy: ${(this.getAccuracy() * 100).toFixed(1)}%`);

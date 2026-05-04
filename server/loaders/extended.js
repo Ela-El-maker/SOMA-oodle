@@ -22,11 +22,19 @@ function checkMemoryFirewall(phaseName) {
     const freeMem = os.freemem();
     const usage = (totalMem - freeMem) / totalMem;
     
-    if (usage > 0.92) {
-        console.warn(`[Firewall] 🚨 CRITICAL MEMORY (${(usage * 100).toFixed(1)}%). Skipping Phase: ${phaseName}`);
-        return false;
+    if (usage > 0.94) {
+        console.warn(`[Firewall] 🚨 CRITICAL MEMORY (${(usage * 100).toFixed(1)}%). Attempting Emergency GC...`);
+        if (global.gc) global.gc();
+        
+        // Re-check after GC
+        const usageAfter = (os.totalmem() - os.freemem()) / os.totalmem();
+        if (usageAfter > 0.94) {
+            console.error(`[Firewall] 🛑 STILL CRITICAL (${(usageAfter * 100).toFixed(1)}%). Skipping Phase: ${phaseName}`);
+            return false;
+        }
+        console.log(`[Firewall] ❇️ GC Recovered memory to ${(usageAfter * 100).toFixed(1)}%. Proceeding.`);
     }
-    if (usage > 0.85) {
+    if (usage > 0.88) {
         console.warn(`[Firewall] ⚠️ High Memory Pressure (${(usage * 100).toFixed(1)}%). Proceeding with caution.`);
     }
     return true;
@@ -149,6 +157,10 @@ import { VirtualShell } from '../../arbiters/VirtualShell.js';
 // ENGINEERING SWARM: Self-modification + Optimization
 // ──────────────────────────────────────────
 import { EngineeringSwarmArbiter } from '../../arbiters/EngineeringSwarmArbiter.js';
+import { BiotechArbiter } from '../../arbiters/BiotechArbiter.js';
+import { SubstrateOptimizerArbiter } from '../../arbiters/SubstrateOptimizerArbiter.js';
+import { ConcieveExpertiseArbiter } from '../../arbiters/ConcieveExpertiseArbiter.js';
+import { MaterialsScienceArbiter } from '../../arbiters/MaterialsScienceArbiter.js';
 import { SwarmOptimizer } from '../../arbiters/SwarmOptimizer.js';
 import { DiscoverySwarm } from '../../arbiters/DiscoverySwarm.js';
 import { ProactiveCouncilArbiter } from '../../arbiters/ProactiveCouncilArbiter.js';
@@ -450,11 +462,13 @@ export async function loadEssentialSystems(system) {
             ext.voyageArbiter = new VoyageArbiter({
                 odyssey: system.odyssey,
                 trident: system.trident,
-                messageBroker: system.messageBroker
+                messageBroker: system.messageBroker || null
             });
-            await ext.voyageArbiter.initialize();
-            system.voyageArbiter = ext.voyageArbiter;
-            
+
+            if (system.messageBroker) {
+                await ext.voyageArbiter.initialize();
+                system.voyageArbiter = ext.voyageArbiter;
+            }
             console.log('    🔱 Poseidon Protocol: Odyssey Navigator & Nautical Notation (ONLINE)');
         } catch (e) {
             console.error('    ❌ Poseidon Protocol init failed:', e.message);
@@ -489,7 +503,34 @@ export async function loadExtendedSystems(system) {
     console.log('\n[Extended] ═══ Activating Remaining Specialist Arbiters ═══');
     const ext = {};
 
-    // ── ComputerControlArbiter + VisionProcessingArbiter (MOVED TO TOP TO AVOID PERSONA DEADLOCK) ──
+    // 🌐 BRAVE SEARCH: SOMA's Eyes for 2026 data (Lightweight HTTP Wrapper)
+    try {
+        const { BraveSearchAdapter } = require('../../cognitive/BraveSearchAdapter.cjs');
+        ext.braveSearch = new BraveSearchAdapter({ maxResults: 5 });
+        system.braveSearch = ext.braveSearch;
+        console.log('    ✅ BraveSearchAdapter (PRIORITY: Live web search ready)');
+    } catch (e) {
+        console.warn(`    ⚠️  BraveSearchAdapter failed to load: ${e.message}`);
+    }
+
+    // 🔱 SOVEREIGN LAB: Biotech research & Oncology synthesis (MOVED TO PRIORITY)
+    ext.biotechArbiter = await safeLoad('BiotechArbiter', () =>
+        new BiotechArbiter({ system })
+    , { timeoutMs: 60000 });
+    if (ext.biotechArbiter) {
+        system.biotechArbiter = ext.biotechArbiter;
+        ext.biotechArbiter.initialize().catch(e =>
+            console.warn('[extended] BiotechArbiter.initialize() failed:', e.message)
+        );
+    }
+
+    // 🔋 SUBSTRATE OPTIMIZER: The Silicon Squeeze (MOVED TO PRIORITY)
+    ext.substrateOptimizer = await safeLoad('SubstrateOptimizerArbiter', () =>
+        new SubstrateOptimizerArbiter({ system })
+    );
+    if (ext.substrateOptimizer) system.substrateOptimizer = ext.substrateOptimizer;
+
+    // ── ComputerControlArbiter + VisionProcessingArbiter ──
     if (!checkMemoryFirewall('Vision')) {
         ext.computerControl = null;
         ext.visionArbiter = null;
@@ -1601,6 +1642,12 @@ export async function loadExtendedSystems(system) {
         ext.visionArbiter = null;
     }
 
+    // 🔱 IMMEDIATE WIRING: Connect Eyes and Hands to the VisionDaemon
+    if (system.visionDaemon && (ext.computerControl || ext.visionArbiter)) {
+        system.visionDaemon.setProviders(ext.computerControl, ext.visionArbiter);
+        console.log('    🔗 VisionDaemon ← ComputerControl + VisionArbiter wired');
+    }
+
     // Wire VisionDaemon with the now-loaded providers
     // cos.js creates VisionDaemon before extended.js runs — providers were null at construction
     if (system.visionDaemon && (ext.computerControl || ext.visionArbiter)) {
@@ -1613,6 +1660,12 @@ export async function loadExtendedSystems(system) {
         if (system.quadBrain) system.visualMemory.setBrain(system.quadBrain);
         if (ext.visionArbiter) system.visualMemory.visionArbiter = ext.visionArbiter;
         console.log('    🔗 VisualMemoryArbiter ← QuadBrain + VisionArbiter wired');
+    }
+
+    // Wire SelfReflectionArbiter with QuadBrain (loaded after cos.js, so must wire here)
+    if (system.reflectionArbiter && system.quadBrain && !system.reflectionArbiter.quadBrain) {
+        system.reflectionArbiter.quadBrain = system.quadBrain;
+        console.log('    🔗 SelfReflectionArbiter ← QuadBrain wired (reflection will work correctly)');
     }
 
     // ── VirtualShell: Persistent shell session ──
@@ -1630,6 +1683,38 @@ export async function loadExtendedSystems(system) {
         new EngineeringSwarmArbiter({ name: 'EngineeringSwarm', quadBrain: system.quadBrain, rootPath, mnemonicArbiter: system.mnemonicArbiter })
     );
     if (ext.engineeringSwarm) system.engineeringSwarm = ext.engineeringSwarm;
+
+    // 🧬 SOVEREIGN LAB: Biotech research & Oncology synthesis
+    ext.biotechArbiter = await safeLoad('BiotechArbiter', () =>
+        new BiotechArbiter({ system })
+    );
+    if (ext.biotechArbiter) {
+        system.biotechArbiter = ext.biotechArbiter;
+        ext.biotechArbiter.initialize().catch(e =>
+            console.warn('[extended] BiotechArbiter.initialize() failed:', e.message)
+        );
+    }
+
+    // 🔱 NEMESIS ARBITER
+    // 🔬 MATERIALS SCIENCE LAB: Multi-domain Poseidon research
+    ext.materialsScienceArbiter = await safeLoad('MaterialsScienceArbiter', () =>
+        new MaterialsScienceArbiter({ system })
+    );
+    if (ext.materialsScienceArbiter) {
+        system.materialsScienceArbiter = ext.materialsScienceArbiter;
+        ext.materialsScienceArbiter.initialize().catch(e =>
+            console.warn('[extended] MaterialsScienceArbiter.initialize() failed:', e.message)
+        );
+    }
+
+    // 💼 CONCIEVE: Financial Audit & Tax Expertise Pack
+    ext.concieveArbiter = await safeLoad('ConcieveExpertiseArbiter', () =>
+        new ConcieveExpertiseArbiter({ system })
+    );
+    if (ext.concieveArbiter) {
+        system.concieveArbiter = ext.concieveArbiter;
+        console.log('    💼 ConcieveExpertiseArbiter ← FinancialAudit + AuditOrchestrator');
+    }
 
     // ── NemesisArbiter: Fully agentic adversarial code reviewer ──
     // Investigates changes with real tools before scoring — the autonomous gateway
@@ -1921,6 +2006,20 @@ export async function loadExtendedSystems(system) {
         sirenKeepalive();
         setInterval(sirenKeepalive, 5 * 60 * 1000).unref();
     }, 6 * 60 * 1000).unref();
+
+    // ── Simulation Evaluator — SOMA's strategy evolution engine ──────────────
+    try {
+        const { SimulationEvaluator } = await import('../scrapers/SimulationEvaluator.js');
+        const evaluator = new SimulationEvaluator({
+            messageBroker: system.messageBroker,
+            knowledgeCurator: system.knowledgeCurator || null,
+        });
+        evaluator.start();
+        system.simulationEvaluator = evaluator;
+        console.log('    ✅ SimulationEvaluator online — strategy evolution engine running');
+    } catch (e) {
+        console.warn('    ⚠️  SimulationEvaluator failed to start:', e.message);
+    }
 
     return ext;
 }

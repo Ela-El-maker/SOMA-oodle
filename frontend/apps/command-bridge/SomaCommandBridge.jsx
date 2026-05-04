@@ -85,6 +85,7 @@ import BootHealthWidget from './components/BootHealthWidget';
 import GoalsPanel from './components/GoalsPanel';
 import CharacterCard from './components/CharacterCard';
 import CharacterGacha from './components/CharacterGacha';
+import SimulationSuite from './components/SimulationSuite';
 
 // ==========================================
 // Command Center Panel (Steve + Perception + Status)
@@ -101,9 +102,13 @@ const CommandCenterPanel = ({
   totalFragments, systemMetrics, analyticsSummary, activityStream,
   isConnected, formatUptime
 }) => {
-  const [steveMessages, setSteveMessages] = React.useState([
-    { role: 'steve', content: "System online. I assume you've broken something already?", ts: Date.now() }
-  ]);
+  const [steveMessages, setSteveMessages] = React.useState(() => {
+    try {
+      const saved = localStorage.getItem('soma_steve_messages');
+      if (saved) return JSON.parse(saved);
+    } catch {}
+    return [{ role: 'steve', content: "System online. I assume you've broken something already?", ts: Date.now() }];
+  });
   const [steveInput, setSteveInput] = React.useState('');
   const [steveThinking, setSteveThinking] = React.useState(false);
   const [steveStatus, setSteveStatus] = React.useState({ online: false, status: 'idle', mood: 'idle', toolCount: 0 });
@@ -111,6 +116,15 @@ const CommandCenterPanel = ({
   const [perceptionData, setPerceptionData] = React.useState({ attention: null, recentSignals: [] });
   const [wittyPhrase, setWittyPhrase] = React.useState('');
   const steveScrollRef = React.useRef(null);
+
+  // Persist Steve chat history across tab switches
+  React.useEffect(() => {
+    try {
+      // Keep last 100 messages to avoid unbounded localStorage growth
+      const toSave = steveMessages.slice(-100);
+      localStorage.setItem('soma_steve_messages', JSON.stringify(toSave));
+    } catch {}
+  }, [steveMessages]);
 
   // Poll Steve status + daemon health every 10s
   // inFlight ref prevents parallel requests if a fetch takes longer than the interval
@@ -120,19 +134,24 @@ const CommandCenterPanel = ({
       if (inFlight.current) return;
       inFlight.current = true;
       try {
-        const [sRes, dRes, pRes] = await Promise.all([
+        const [sRes, dRes, phRes] = await Promise.all([
           fetch('/api/soma/steve/status'),
           fetch('/api/daemon/status'),
           fetch('/api/perception/health')
-        ]);
+          ]);
+
         if (sRes.ok) setSteveStatus(await sRes.json());
         if (dRes.ok) {
           const d = await dRes.json();
           setDaemons(d.daemon?.daemons || []);
         }
-        if (pRes.ok) {
-          const p = await pRes.json();
-          setPerceptionData({ attention: p.attention, recentSignals: p.recentSignals || [] });
+        if (phRes.ok) {
+          const ph = await phRes.json();
+          const att = ph.attention;
+          setPerceptionData({
+            attention: att ? { focus: att.focus, expires: att.focusExpiry, active: att.focusActive } : null,
+            recentSignals: ph.recentSignals || []
+          });
         }
       } catch {}
       finally { inFlight.current = false; }
@@ -1067,18 +1086,13 @@ const SomaCommandBridge = () => {
     return () => somaBackend.off('soma_proactive', onProactiveSpeak);
   }, []);
 
-  // Auto-connect Neural Link on first user click (browser requires gesture before AudioContext)
-  const autoConnectedRef = useRef(false);
+  // --- AUTO-ENGAGEMENT REMOVED (User Directive) ---
+  // Disconnect audio pipeline when navigating away from orb tab — mic should not run in background
   useEffect(() => {
-    const onFirstClick = () => {
-      if (autoConnectedRef.current || isOrbConnected) return;
-      autoConnectedRef.current = true;
-      connectOrb();
-      window.removeEventListener('click', onFirstClick);
-    };
-    window.addEventListener('click', onFirstClick);
-    return () => window.removeEventListener('click', onFirstClick);
-  }, [connectOrb, isOrbConnected]);
+    if (activeModule !== 'orb' && isOrbConnected) {
+      disconnectOrb();
+    }
+  }, [activeModule]);
 
   // Speak queued greeting the moment Neural Link comes up
   useEffect(() => {
@@ -2347,48 +2361,6 @@ const SomaCommandBridge = () => {
                   </button>
                 </div>
 
-                {/* Manual Input Field */}
-                {isOrbConnected && (
-                  <div className="w-full bg-white/5 border border-white/10 rounded-2xl p-2 flex items-center gap-2 focus-within:border-purple-500/50 transition-all">
-                    <input
-                      type="text"
-                      placeholder="Transmit manual command..."
-                      className="flex-1 bg-transparent border-none outline-none px-4 py-2 text-sm text-zinc-200 placeholder-zinc-600"
-                      onKeyDown={(e) => {
-                        if (e.key === 'Enter' && e.target.value.trim()) {
-                          const query = e.target.value.trim();
-                          e.target.value = '';
-                          if (window.somaTextQuery) window.somaTextQuery(query);
-                        }
-                      }}
-                    />
-                    <button
-                      onClick={(e) => {
-                        const input = e.target.closest('div').querySelector('input');
-                        const query = input.value.trim();
-                        if (query) {
-                          input.value = '';
-                          if (window.somaTextQuery) window.somaTextQuery(query);
-                        }
-                      }}
-                      className="p-2 bg-purple-500/20 hover:bg-purple-500/40 text-purple-400 rounded-xl transition-all"
-                    >
-                      <Zap className="w-4 h-4" />
-                    </button>
-                  </div>
-                )}
-                
-                {/* Transcript — shows what was heard while SOMA thinks/responds */}
-                {lastTranscript && (isThinking || isTalking) && (
-                  <div className="max-w-md text-center px-4 py-2 bg-white/5 border border-white/5 rounded-xl">
-                    <p className="text-[10px] text-zinc-500 uppercase tracking-widest mb-1">Heard</p>
-                    <p className="text-sm text-zinc-300 italic">"{lastTranscript}"</p>
-                  </div>
-                )}
-                <p className="text-[9px] text-zinc-600 uppercase tracking-widest">
-                  {isListening ? 'SOMA is listening...' : isThinking ? 'Processing neural patterns...' : isTalking ? 'SOMA is responding...' : 'Neural interface standby'}
-                </p>
-
                 {/* Whisper offline banner */}
                 {isOrbConnected && (orbSystemStatus.whisperServer === 'fallback' || orbSystemStatus.whisperServer === 'error') && (
                   <div className="mt-3 w-full max-w-sm bg-amber-500/10 border border-amber-500/30 rounded-xl px-4 py-2.5 text-center">
@@ -2749,31 +2721,7 @@ const SomaCommandBridge = () => {
         )}
 
         {/* SIMULATION MODULE */}
-        {activeModule === 'simulation' && (
-          <div className="h-full flex flex-col bg-[#09090b] text-zinc-200 font-sans p-6 rounded-xl border border-white/5 relative overflow-hidden">
-            <div className="flex items-center justify-between mb-4">
-              <h2 className="text-2xl font-bold text-white tracking-tight flex items-center">
-                <Box className="w-6 h-6 mr-3 text-orange-400" /> Physics Simulation
-              </h2>
-              <div className="flex items-center space-x-2">
-                <span className="text-[10px] font-mono text-zinc-500 uppercase tracking-widest">LIVE FEED</span>
-                <div className="w-2 h-2 bg-orange-500 rounded-full animate-pulse shadow-[0_0_10px_rgba(249,115,22,0.5)]" />
-              </div>
-            </div>
-            <div className="flex-1 bg-black rounded-xl overflow-hidden border border-white/10 shadow-inner relative">
-              <iframe
-                src="/simulation_viewer.html"
-                className="w-full h-full border-0"
-                title="SOMA Physics Simulation"
-              />
-              {/* Overlay for instructions */}
-              <div className="absolute top-4 left-4 bg-black/60 backdrop-blur-md p-3 rounded-lg border border-white/10 text-xs text-zinc-400 pointer-events-none">
-                <p className="font-bold text-orange-400 mb-1">EMBODIED LEARNING</p>
-                <p>Observe SOMA learning physical manipulation.</p>
-              </div>
-            </div>
-          </div>
-        )}
+        {activeModule === 'simulation' && <SimulationSuite />}
 
 
 

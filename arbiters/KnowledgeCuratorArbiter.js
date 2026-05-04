@@ -93,11 +93,15 @@ export class KnowledgeCuratorArbiter {
     // ── Signal Handler ────────────────────────────────────────────────────────
 
     async _onSignal(signalType, payload) {
-        // Deduplicate rapid-fire signals
+        // Deduplicate rapid-fire signals — key on signalType + unique identifier
+        // so multiple real events of the same type within 5s aren't dropped
         const now = Date.now();
-        const lastAt = this._lastFiled.get(signalType) || 0;
+        const dedupId = payload.filepath || payload.goalId || payload.experimentId
+            || payload.insight?.substring(0, 40) || payload.issue || signalType;
+        const dedupKey = `${signalType}::${dedupId}`;
+        const lastAt = this._lastFiled.get(dedupKey) || 0;
         if (now - lastAt < this._dedupWindowMs) return;
-        this._lastFiled.set(signalType, now);
+        this._lastFiled.set(dedupKey, now);
 
         const route = SIGNAL_ROUTES[signalType];
         if (!route) return;
@@ -303,8 +307,9 @@ export class KnowledgeCuratorArbiter {
         for (const lobe of Object.keys(this._counts)) {
             try {
                 const dir = path.join(KNOWLEDGE_ROOT, lobe);
-                const files = await fs.readdir(dir);
-                this._counts[lobe] = files.filter(f => f.endsWith('.md') && f !== 'README.md').length;
+                // Recurse into subdirectories (e.g. yumyums/) so sprouts are counted
+                const files = await fs.readdir(dir, { recursive: true });
+                this._counts[lobe] = files.filter(f => f.endsWith('.md') && !f.endsWith('README.md')).length;
             } catch {
                 this._counts[lobe] = 0;
             }

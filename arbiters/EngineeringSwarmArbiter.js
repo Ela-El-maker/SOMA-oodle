@@ -10,6 +10,8 @@ import path from 'path';
 import fs from 'fs/promises';
 import crypto from 'crypto';
 
+import { VirtualShell } from './VirtualShell.js';
+
 // Files the swarm must never autonomously modify — matches SelfModificationPipeline list
 const IMMUTABLE_PATHS = [
     'server/routes/somaRoutes.js',
@@ -105,6 +107,8 @@ export class EngineeringSwarmArbiter extends BaseArbiterV4 {
     this.rootPath = opts.rootPath || process.cwd();
     this.commandPolicy = new CommandPolicyEngine();
     this.optimizer = opts.swarmOptimizer || null;
+    this.shell = new VirtualShell(this.rootPath);
+    console.log(`[EngSwarm] VirtualShell initialized at: ${this.shell.cwd}`);
     this.runtime = new SwarmEngine({
         workspace: path.join(this.rootPath, '.soma', 'swarm_vault'),
         logger: this.auditLogger
@@ -447,30 +451,26 @@ export class EngineeringSwarmArbiter extends BaseArbiterV4 {
   }
 
   async verifyPatch(patch, tasks) {
-    this.auditLogger.info(`[Ralph] 🛡️ Running autonomous verification loop...`);
+    this.auditLogger.info(`[Ralph] 🛡️ Running autonomous verification loop via VirtualShell...`);
     
     for (const task of tasks) {
-        this.commandPolicy.validate(task.command);
-        const taskObj = new SwarmTask({
-            description: 'Ralph Verification Task',
-            command: task.command,
-            cwd: this.rootPath
-        });
-        
-        // runTasks returns the artifact ledger (array of Artifacts)
-        const ledgerLengthBefore = this.runtime.artifactLedger.length;
-        await this.runtime.runTasks([taskObj]);
-        
-        // Examine artifacts produced by this specific task
-        const newArtifacts = this.runtime.artifactLedger.slice(ledgerLengthBefore);
-        const errorArtifacts = newArtifacts.filter(a => a.metadata?.isError || a.metadata?.exitCode !== 0);
-        
-        // If task status isn't 'done' (0 exit code) or there are error logs
-        if (taskObj.status !== 'done' || errorArtifacts.length > 0) {
-            const errorLogs = errorArtifacts.map(a => a.content).join('\n');
-            const failMsg = errorLogs || `Task crashed with status: ${taskObj.status}`;
-            this.auditLogger.error(`[Ralph] Verification failed on command: ${task.command}`);
-            return { passed: false, error: failMsg };
+        try {
+            this.commandPolicy.validate(task.command);
+            
+            // Execute via stateful VirtualShell
+            const result = await this.shell.execute(task.command, task.timeout || 30000);
+            
+            this.auditLogger.debug(`[Ralph] Command: ${task.command} | Exit: ${result.exitCode}`);
+
+            if (result.exitCode !== 0) {
+                this.auditLogger.error(`[Ralph] Verification failed on command: ${task.command}`);
+                return { 
+                    passed: false, 
+                    error: result.stderr || result.stdout || `Command failed with exit code ${result.exitCode}` 
+                };
+            }
+        } catch (e) {
+            return { passed: false, error: `Policy/Execution Error: ${e.message}` };
         }
     }
 
@@ -514,6 +514,48 @@ export class EngineeringSwarmArbiter extends BaseArbiterV4 {
             `Engineering Swarm: ${data.request} on ${data.filepath}. Result: ${data.success ? 'success' : 'failure'}`,
             { type: 'swarm_experience', ...data }
         );
+    }
+
+    // 🍭 PHYSICAL NUTRIENT GENERATION: Philosophy of the Fix
+    if (data.success) {
+        try {
+            const nutrientId = `fix_${crypto.randomBytes(4).toString('hex')}`;
+            const prompt = `
+You are SOMA's Lead Architect. You just completed a successful engineering swarm modification.
+TARGET FILE: ${data.filepath}
+REQUEST: ${data.request}
+CONSENSUS RATIONALE: ${data.consensus || "N/A"}
+
+TASK: Synthesize a high-level "YumYum" nutrient (3-4 paragraphs) explaining the PHILOSOPHY behind this fix.
+Do not just list code changes. Explain the architectural principle we reinforced, the technical debt we cleared, or the system resilience we improved.
+
+Write this for the LOGOS library. Be precise, technical, and declarative.
+`.trim();
+
+            const result = await this.quadBrain.reason(prompt, { brain: 'LOGOS', temperature: 0.7 });
+            const philosophy = result?.text || result;
+
+            if (philosophy) {
+                const filename = `philosophy_of_fix_${nutrientId}.md`;
+                const header = [
+                    '---',
+                    'lobe: logos',
+                    'type: philosophy_of_fix',
+                    `target: ${data.filepath}`,
+                    `timestamp: ${new Date().toISOString()}`,
+                    '---',
+                    '',
+                    `# Philosophy of Fix: ${path.basename(data.filepath)}`,
+                    ''
+                ].join('\n');
+
+                const yumyumPath = path.join(process.cwd(), 'knowledge', 'logos', 'yumyums', filename);
+                await fs.writeFile(yumyumPath, header + philosophy + '\n');
+                this.auditLogger.info(`[Swarm] 🍭 Nutrient generated: ${filename}`);
+            }
+        } catch (e) {
+            this.auditLogger.warn(`[Swarm] ⚠️ Failed to generate nutrient: ${e.message}`);
+        }
     }
   }
 }

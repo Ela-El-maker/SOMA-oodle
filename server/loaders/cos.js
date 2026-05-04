@@ -16,6 +16,7 @@ import HealthDaemon from '../../daemons/HealthDaemon.js';
 import OptimizationDaemon from '../../daemons/OptimizationDaemon.js';
 import DiscoveryDaemon from '../../daemons/DiscoveryDaemon.js';
 import MemoryPrunerDaemon from '../../daemons/MemoryPrunerDaemon.js';
+import MemoryDistillerDaemon from '../../daemons/MemoryDistillerDaemon.js';
 import CuriosityDaemon from '../../daemons/CuriosityDaemon.js';
 import SocialImpulseDaemon from '../../daemons/SocialImpulseDaemon.js';
 import DaemonManager from '../../core/DaemonManager.js';
@@ -23,6 +24,7 @@ import CapabilityDiscoveryDaemon from '../../daemons/CapabilityDiscoveryDaemon.j
 import WebPerceptionDaemon from '../../daemons/WebPerceptionDaemon.js';
 import VisionDaemon from '../../daemons/VisionDaemon.js';
 import ProactivePerceptionArbiter from '../../arbiters/ProactivePerceptionArbiter.js';
+import SelfReflectionArbiter from '../../arbiters/SelfReflectionArbiter.js';
 import { VisualMemoryArbiter } from '../../arbiters/VisualMemoryArbiter.js';
 import KnowledgeCuratorArbiter from '../../arbiters/KnowledgeCuratorArbiter.js';
 
@@ -123,7 +125,14 @@ export async function loadCOSSystems(system) {
         // Metabolism: Prune memory every 12 hours
         daemonManager.register(new MemoryPrunerDaemon({ 
             mnemonic: system.mnemonic || system.mnemonicArbiter,
+            quadBrain: system.quadBrain,
             intervalMs: 43200000 
+        }));
+
+        // Dreaming: Distill memories into wisdom daily
+        daemonManager.register(new MemoryDistillerDaemon({
+            system,
+            intervalMs: 86400000 
         }));
 
         // Daydream: Generate hypotheses every 2 hours
@@ -207,6 +216,22 @@ export async function loadCOSSystems(system) {
         });
         system.proactivePerception = proactivePerception;
 
+        // 7. Initialize Self-Reflection (The Wisdom Layer)
+        const reflectionArbiter = new SelfReflectionArbiter({
+            messageBroker: system.messageBroker,
+            quadBrain: system.quadBrain
+        });
+        await reflectionArbiter.initialize();
+        system.messageBroker.registerArbiter('SelfReflectionArbiter', {
+            instance: reflectionArbiter,
+            role: 'analyst',
+            lobe: 'prefrontal',
+            classification: 'wisdom'
+        });
+        system.reflectionArbiter = reflectionArbiter;
+        if (system.arbiters) system.arbiters.set('reflectionArbiter', reflectionArbiter);
+        console.log('      ✅ Self-Reflection motive active (Daily wisdom synthesis)');
+
         // ── Knowledge Curator — auto-files signals into lobe MD libraries ──
         const knowledgeCurator = new KnowledgeCuratorArbiter({
             messageBroker: system.messageBroker,
@@ -229,7 +254,8 @@ export async function loadCOSSystems(system) {
             visionDaemon,
             proactivePerception,
             attentionArbiter,
-            knowledgeCurator
+            knowledgeCurator,
+            reflectionArbiter
         };
 
         await daemonManager.startAll();
@@ -398,7 +424,10 @@ export async function loadCOSSystems(system) {
             swarmOptimizer,
             discoverySwarm,
             curiosityReactor,
-            proactivePerception
+            proactivePerception,
+            reflectionArbiter,
+            knowledgeCurator,
+            visionDaemon
         };
 
     } catch (err) {

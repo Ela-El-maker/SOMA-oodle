@@ -494,11 +494,11 @@ Make the questions specific and the answers rich, drawing on your actual knowled
         scriptPath,
         '--data', dataPath,
         '--output', outputDir,
-        '--model', 'google/gemma-3-1b-it', // 1b fits in 4GB VRAM; switch to gemma-3-4b-it on RTX 5070
+        '--model', 'google/gemma-3-4b-it', // RTX 5070 (12GB) — fits comfortably in 4-bit
         '--epochs', '3',
-        '--batch-size', '1',       // 1 for 4GB VRAM; raise to 4 on RTX 5070
+        '--batch-size', '2',       // 2 for 12GB VRAM
         '--max-samples', '2000',
-        '--max-seq-len', '512',    // 512 for 4GB VRAM; raise to 2048 on RTX 5070
+        '--max-seq-len', '2048',   // 2048 for 12GB VRAM
       ];
 
       if (process.env.HF_TOKEN) {
@@ -622,10 +622,10 @@ Make the questions specific and the answers rich, drawing on your actual knowled
   async executeLoraTraining(lobe) {
     const lobeDir = path.join(process.cwd(), 'knowledge', lobe);
     const lobeModels = {
-      logos:      'google/gemma-3-1b-it',
-      aurora:     'google/gemma-3-1b-it',
-      prometheus: 'google/gemma-3-1b-it',
-      thalamus:   'google/gemma-3-1b-it',
+      logos:      'google/gemma-3-4b-it',
+      aurora:     'google/gemma-3-4b-it',
+      prometheus: 'google/gemma-3-4b-it',
+      thalamus:   'google/gemma-3-4b-it',
     };
 
     console.log(`\n[${this.name}] 🚀 LOBE LoRA TRAINING: ${lobe.toUpperCase()}`);
@@ -649,11 +649,11 @@ Make the questions specific and the answers rich, drawing on your actual knowled
         scriptPath,
         '--data', dataPath,
         '--output', outputDir,
-        '--model', lobeModels[lobe] || 'google/gemma-3-1b-it',
+        '--model', lobeModels[lobe] || 'google/gemma-3-4b-it',
         '--epochs', '3',
-        '--batch-size', '1',
+        '--batch-size', '2',
         '--max-samples', '2000',
-        '--max-seq-len', '512',
+        '--max-seq-len', '2048',
         '--lobe', lobe,       // train-soma-llama.py uses this to set lobe-specific system prompt
       ].concat(process.env.HF_TOKEN ? ['--hf-token', process.env.HF_TOKEN] : []), {
         cwd: process.cwd(),
@@ -701,6 +701,25 @@ Make the questions specific and the answers rich, drawing on your actual knowled
       console.log(`[${this.name}] ✅ QuadBrain ${lobe.toUpperCase()} lobe → ${modelName} (hot-swapped)`);
     }
 
+    // 💾 Physical Persistence: Write to config/api-keys.env
+    try {
+        const envPath = path.join(process.cwd(), 'config', 'api-keys.env');
+        let content = await fs.readFile(envPath, 'utf8').catch(() => '');
+        
+        // Regex to find and replace or append
+        const regex = new RegExp(`^${envKey}=.*`, 'm');
+        if (regex.test(content)) {
+            content = content.replace(regex, `${envKey}=${modelName}`);
+        } else {
+            content += `\n${envKey}=${modelName}`;
+        }
+        
+        await fs.writeFile(envPath, content.trim() + '\n', 'utf8');
+        console.log(`[${this.name}] 💾 ${lobe.toUpperCase()} model physically persisted to api-keys.env`);
+    } catch (e) {
+        console.error(`[${this.name}] ❌ Failed to persist ${lobe.toUpperCase()} model:`, e.message);
+    }
+
     console.log(`\n[${this.name}] 🎉 ${lobe.toUpperCase()} LoRA PROMOTED AUTONOMOUSLY`);
     console.log(`[${this.name}]    Model: ${modelName}`);
     if (evalResult) {
@@ -718,8 +737,9 @@ Make the questions specific and the answers rich, drawing on your actual knowled
    */
   async _mdLibraryToJsonl(lobeDir, lobe) {
     try {
-      const files = await fs.readdir(lobeDir);
-      const mdFiles = files.filter(f => f.endsWith('.md') && f !== 'README.md');
+      // Recurse into subdirectories (yumyums/, sprouts, etc.)
+      const files = await fs.readdir(lobeDir, { recursive: true });
+      const mdFiles = files.filter(f => f.endsWith('.md') && !f.endsWith('README.md'));
       if (!mdFiles.length) return null;
 
       const systemPrompts = {
@@ -736,7 +756,10 @@ Make the questions specific and the answers rich, drawing on your actual knowled
       const lines = [];
       for (const file of mdFiles) {
         try {
-          const raw = await fs.readFile(path.join(lobeDir, file), 'utf8');
+          const raw = await fs.readFile(path.join(lobeDir, file), 'utf8');  // file may include subdir e.g. yumyums/sprout.md
+          // Skip meta training decision entries — they'd teach the model to be
+          // suspicious of its own training, creating a feedback loop
+          if (raw.includes('type: meta_training_decision') || raw.includes('type: model_promotion_decision')) continue;
           // Strip frontmatter
           const body = raw.replace(/^---[\s\S]*?---\n/, '').trim();
           if (body.length < 20) continue;

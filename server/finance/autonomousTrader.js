@@ -17,7 +17,10 @@ import notificationService from '../services/NotificationService.js';
 import { signalLibrary } from './SignalLibrary.js';
 import { vwapExecutor } from './VWAPExecutor.js';
 import { altDataService } from './AltDataService.js';
-import { flushPerformanceSummaryCache } from './performanceRoutes.js';
+// Flush hook wired by routes.js after both modules load (avoids circular import)
+// autonomousTrader → performanceRoutes → scalpingEngine was a potential cycle
+let flushPerformanceSummaryCache = () => {};
+export function _setPerformanceCacheFlush(fn) { flushPerformanceSummaryCache = fn; }
 
 class AutonomousTrader {
     constructor() {
@@ -1186,7 +1189,7 @@ class AutonomousTrader {
                 recommendation: this._lastSignal.recommendation,
                 timestamp: this._lastSignal.timestamp
             } : null,
-            guardrailsState: this.guardrails?.getStatus() || null
+            guardrailsState: global.SOMA_TRADING?.guardrails?.getStatus() || null
         };
     }
 

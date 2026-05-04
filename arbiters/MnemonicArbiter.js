@@ -180,7 +180,7 @@ class MnemonicArbiter extends BaseArbiter {
     this.config = {
       ...this.config,
       // Redis (Hot Tier)
-      redisUrl: opts.redisUrl || 'redis://localhost:6379',
+      redisUrl: opts.redisUrl || null, // Default to disabled
       redisCluster: opts.redisCluster || false,
       redisPoolSize: opts.redisPoolSize || 10,
       redisRetries: opts.redisRetries || 3,
@@ -344,77 +344,12 @@ class MnemonicArbiter extends BaseArbiter {
   // ===========================
 
   async _initRedis() {
-    // 1. Use injected cache (Mock or Real)
-    if (this.cache) {
-      this.redis = this.cache;
-      this.log('info', `ðŸ”¥ Hot tier (Injected: ${this.cache.name}) ready`);
-      return;
-    }
-
-    if (!this.config.redisUrl) {
-      this.log('info', 'Redis URL not configured - hot tier disabled');
-      return;
-    }
-    try {
-      this.log('info', 'Initializing Redis (hot tier)...');
-
-      if (this.config.redisCluster) {
-        // Real cluster mode with failover
-        this.redis = createClient({
-          url: this.config.redisUrl,
-          socket: {
-            reconnectStrategy: (retries) => {
-              if (retries > this.config.redisRetries) return new Error('Redis reconnection failed');
-              return Math.min(retries * 50, this.config.redisRetryDelay);
-            },
-            connectTimeout: 5000,
-            keepAlive: 30000
-          },
-          maxRetriesPerRequest: 3,
-          enableReadyCheck: true,
-          enableOfflineQueue: true
-        });
-      } else {
-        // Single instance with connection pooling
-        this.redis = createClient({
-          url: this.config.redisUrl,
-          socket: {
-            reconnectStrategy: (retries) => {
-              if (retries > this.config.redisRetries) return new Error('Redis reconnection failed');
-              return Math.min(retries * 50, this.config.redisRetryDelay);
-            }
-          }
-        });
-      }
-
-      // Handle Redis errors gracefully
-      this.redis.on('error', (err) => {
-        this.log('warn', 'Redis error', { error: err.message });
-        // Continue operation without hot tier
-      });
-
-      this.redis.on('connect', () => {
-        this.log('info', 'Redis connected (hot tier active)');
-      });
-
-      // NON-BLOCKING CONNECT
-      this.redis.connect().then(async () => {
-          // Test connection
-          const ping = await this.redis.ping();
-          if (ping === 'PONG') {
-              this.log('info', 'ðŸ”¥ Hot tier (Redis) ready');
-          }
-      }).catch(err => {
-          this.log('warn', 'Redis connection failed - hot tier disabled', { error: err.message });
-          this.redis = null;
-      });
-    } catch (error) {
-      this.log('warn', 'Redis initialization failed - hot tier disabled', { error: error.message });
-      this.redis = null;
-    }
+    // 🔱 SOVEREIGN OVERRIDE: Redis disabled for high-efficiency mode
+    this.log('info', 'Redis hot-tier disabled (Anvil Mode Active)');
+    this.redis = null;
+    return;
   }
-
-  // Helper â€” apply schema to an open Database instance
+  // Helper — apply schema to an open Database instance
   _setupDb(db, inMemory = false) {
     if (!inMemory) {
       db.pragma('journal_mode = WAL');
@@ -465,8 +400,18 @@ class MnemonicArbiter extends BaseArbiter {
         FOREIGN KEY(memory_id) REFERENCES memories(id)
       );
       CREATE INDEX IF NOT EXISTS idx_episodic_timestamp ON episodic_buffer(timestamp DESC);
-    `);
 
+      CREATE TABLE IF NOT EXISTS purgatory (
+        id TEXT PRIMARY KEY,
+        content TEXT NOT NULL,
+        metadata TEXT,
+        substance_score REAL,
+        pruned_reason TEXT,
+        created_at INTEGER NOT NULL,
+        pruned_at INTEGER NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS idx_purgatory_pruned_at ON purgatory(pruned_at DESC);
+      `);
     db.exec('ANALYZE;');
   }
 
@@ -653,18 +598,14 @@ class MnemonicArbiter extends BaseArbiter {
       return { success: false, error: 'Database not ready' };
     }
 
-    // SAFETY GUARD: Prevent massive blobs from bloating the DB and hanging reasoning
-    if (content && content.length > 100000) {
-      this.log('warn', `âš ï¸ Skipping memory storage: Content too large (${Math.round(content.length/1024)}KB). Probable state dump.`);
-      return { success: false, error: 'Content exceeds memory size limit' };
+    // SAFETY GUARD: Reject content that does not belong in semantic memory
+    const rejectReason = MnemonicArbiter._rejectReason(content);
+    if (rejectReason) {
+      this.log('warn', `[remember] Skipping: ${rejectReason}`);
+      return { success: false, error: rejectReason };
     }
 
-    if (content && (content.includes('"experiences":') || content.includes('"state":'))) {
-      this.log('warn', 'âš ï¸ Skipping memory storage: State dump detected.');
-      return { success: false, error: 'State dumps should not be stored in semantic memory' };
-    }
-
-    const id = this._generateId(content);
+        const id = this._generateId(content);
     const now = Date.now();
     const sector = metadata.sector || 'GEN'; // Anchor to Sovereign Archipelago
 
@@ -1288,6 +1229,72 @@ class MnemonicArbiter extends BaseArbiter {
     return crypto.createHash('sha256').update(content).digest('hex').substring(0, 16);
   }
 
+  // ── Memory gate: returns rejection reason string, or null if OK to store ──
+  static _rejectReason(content) {
+    if (!content) return 'empty content';
+    const c = content.toString();
+
+    // Too large
+    if (c.length > 80000) return `content too large (${Math.round(c.length / 1024)}KB)`;
+
+    // Detect raw JSON objects / file dumps
+    const trimmed = c.trimStart();
+    if (trimmed.startsWith('{') || trimmed.startsWith('[')) {
+      // Allow short JSON snippets (tool results, small objects) — block large blobs
+      if (c.length > 2000) return 'large JSON blob (probable state dump or file content)';
+      // Block known junk keys regardless of size
+      const JUNK_KEYS = ['"lockfileVersion"', '"requires":true', '"portfolio":', '"positions":', '"fingerprint":', '"experiences":', '"snapshot":', '"risk_state"'];
+      for (const key of JUNK_KEYS) {
+        if (c.includes(key)) return `JSON contains junk key: ${key}`;
+      }
+    }
+
+    // Block known state-dump patterns
+    const STATE_PATTERNS = [
+      /^C:\\[\w\\]+\.json/,       // raw Windows file path as content
+      /"lockfileVersion"\s*:/,
+      /"experiences"\s*:\s*\[/,
+      /"state"\s*:\s*\{.*"snapshot"/s,
+    ];
+    for (const pat of STATE_PATTERNS) {
+      if (pat.test(c)) return 'state dump pattern detected';
+    }
+
+    return null; // OK to store
+  }
+
+  // ── Digest a group of raw memories into a compact summary via LLM ─────────
+  // Called by MemoryPrunerDaemon._pass3SessionCompress()
+  async digestSession(entries, brain) {
+    if (!brain || !entries.length) return null;
+    const combined = entries
+      .map(e => e.content.substring(0, 400))
+      .join('\n---\n')
+      .substring(0, 8000);
+
+    const prompt = `You are SOMA's memory consolidation engine.
+Below are ${entries.length} raw memory entries from a single session window.
+Extract 3-5 key facts, insights, or decisions that are worth remembering long-term.
+Format: one bullet per insight, max 2 sentences each. Be specific. Skip pleasantries.
+
+RAW ENTRIES:
+${combined}
+
+KEY INSIGHTS:`;
+
+    try {
+      const result = await Promise.race([
+        brain.reason(prompt, { activeLobe: 'LOGOS', temperature: 0.2, maxTokens: 400 }),
+        new Promise((_, r) => setTimeout(() => r(new Error('digest timeout')), 20000))
+      ]);
+      const text = result?.text?.trim();
+      if (!text || text.length < 20) return null;
+      return text;
+    } catch {
+      return null;
+    }
+  }
+
   async _saveVectorStore() {
     try {
       const vectors = {};
@@ -1626,6 +1633,129 @@ class MnemonicArbiter extends BaseArbiter {
   async _handleOptimize(envelope) {
     const result = await this._optimize();
     await this.sendMessage(envelope.from, 'optimize_response', result);
+  }
+
+  // ── Purgatory & Pruning Management ─────────────────────────────────────
+
+  /**
+   * Scan cold storage for potential pruning candidates
+   */
+  async scanMemoriesForPruning(limit = 100, offset = 0) {
+    if (!this.db) return [];
+    try {
+      return this.db.prepare(`
+        SELECT id, content, created_at 
+        FROM memories 
+        ORDER BY created_at ASC 
+        LIMIT ? OFFSET ?
+      `).all(limit, offset);
+    } catch (e) {
+      return [];
+    }
+  }
+
+  /**
+   * Move a batch of memories to purgatory
+   * @param {Array} entries - [{id, substanceScore, reason}]
+   */
+  async purgeBatch(entries) {
+    if (!this.db || !entries.length) return 0;
+    
+    const moveStmt = this.db.prepare(`
+      INSERT INTO purgatory (id, content, metadata, substance_score, pruned_reason, created_at, pruned_at)
+      SELECT id, content, metadata, ?, ?, created_at, ?
+      FROM memories WHERE id = ?
+    `);
+
+    const deleteStmt = this.db.prepare(`DELETE FROM memories WHERE id = ?`);
+    const now = Date.now();
+
+    const transaction = this.db.transaction((batch) => {
+      let count = 0;
+      for (const entry of batch) {
+        const result = moveStmt.run(entry.substanceScore, entry.reason, now, entry.id);
+        if (result.changes > 0) {
+          deleteStmt.run(entry.id);
+          count++;
+        }
+      }
+      return count;
+    });
+
+    try {
+      const moved = transaction(entries);
+      this.log('info', `🧪 Purgatory: Moved ${moved} entries to shadow storage.`);
+      return moved;
+    } catch (err) {
+      this.log('error', `Purgatory batch move failed: ${err.message}`);
+      return 0;
+    }
+  }
+
+  /**
+   * Resurrect a memory from purgatory back to active status
+   */
+  async resurrectFromPurgatory(id) {
+    if (!this.db) return false;
+    
+    const moveStmt = this.db.prepare(`
+      INSERT INTO memories (id, content, metadata, created_at, accessed_at, importance, tier)
+      SELECT id, content, metadata, created_at, ?, 0.6, 'cold'
+      FROM purgatory WHERE id = ?
+    `);
+
+    const deleteStmt = this.db.prepare(`DELETE FROM purgatory WHERE id = ?`);
+    const now = Date.now();
+
+    const transaction = this.db.transaction((memId) => {
+      const result = moveStmt.run(now, memId);
+      if (result.changes > 0) {
+        deleteStmt.run(memId);
+        return true;
+      }
+      return false;
+    });
+
+    try {
+      const success = transaction(id);
+      if (success) this.log('info', `✨ Memory Resurrected: ${id}`);
+      return success;
+    } catch (err) {
+      return false;
+    }
+  }
+
+  /**
+   * Permanently delete old purgatory entries
+   */
+  async expirePurgatory(days = 30) {
+    if (!this.db) return 0;
+    try {
+      const cutoff = Date.now() - (days * 24 * 60 * 60 * 1000);
+      const result = this.db.prepare(`DELETE FROM purgatory WHERE pruned_at < ?`).run(cutoff);
+      return result.changes;
+    } catch (e) {
+      return 0;
+    }
+  }
+
+  async getPurgatoryStats() {
+    if (!this.db) return { count: 0 };
+    try {
+      const row = this.db.prepare(`
+        SELECT 
+          count(*) as count, 
+          MIN(pruned_at) as oldest 
+        FROM purgatory
+      `).get();
+      
+      return {
+        count: row.count,
+        oldestDays: row.oldest ? Math.floor((Date.now() - row.oldest) / (1000 * 60 * 60 * 24)) : 0
+      };
+    } catch (e) {
+      return { count: 0 };
+    }
   }
 
   getMemoryStats() {

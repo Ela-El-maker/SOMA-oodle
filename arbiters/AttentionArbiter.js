@@ -50,6 +50,37 @@ export class AttentionArbiter extends BaseArbiterV4 {
     }
 
     /**
+     * Analyze intent and recommend a cognitive lobe for the task.
+     * Maps user query to: LOGOS | AURORA | PROMETHEUS | THALAMUS
+     */
+    recommendLobe(query = '') {
+        const text = query.toLowerCase();
+        
+        // 1. THALAMUS (Security, Risk, Policy)
+        if (/\b(security|risk|policy|safe|threat|anomal|audit|govern|permission|block|deny)\b/i.test(text)) {
+            return 'THALAMUS';
+        }
+        
+        // 2. LOGOS (Logic, Code, Architecture)
+        if (/\b(code|bug|error|refactor|debug|architect|system|logic|math|api|file|module|implementation)\b/i.test(text)) {
+            return 'LOGOS';
+        }
+        
+        // 3. AURORA (Creativity, Soul, Identity, City Vibe)
+        if (/\b(feel|vibe|soul|identity|creat|poem|story|narrative|beautiful|aesthetic|emotion|personality|city|dream)\b/i.test(text)) {
+            return 'AURORA';
+        }
+        
+        // 4. PROMETHEUS (Strategy, Goals, Outcomes)
+        if (/\b(goal|plan|strategy|roadmap|decision|priority|outcome|milestone|business|market|growth|tradeoff)\b/i.test(text)) {
+            return 'PROMETHEUS';
+        }
+        
+        // Default to LOGOS for analytical/general reasoning
+        return 'LOGOS';
+    }
+
+    /**
      * The Amygdala Gate: Decide if a signal should be noticed by decision arbiters.
      * Logic:
      * 1. 'emergency' or 'high' priority always pass.

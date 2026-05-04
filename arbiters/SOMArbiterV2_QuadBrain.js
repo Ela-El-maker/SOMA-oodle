@@ -19,6 +19,7 @@ import fs from 'fs/promises';
 import path from 'path';
 import toolRegistry from '../core/ToolRegistry.js';
 import { SOMA_VALUES_PROMPT } from '../core/SomaValues.js';
+import { OdinOrchestrator } from '../core/OdinOrchestrator.js';
 
 // Constants for performance monitoring
 const CIRCUIT_BREAKER_WINDOW = 10;
@@ -98,6 +99,9 @@ export class SOMArbiterV2_QuadBrain extends BaseArbiterV4 {
     // Model Rate Limiting (Cooldowns)
     this._modelRateLimitedUntil = new Map();
 
+    // 🌀 ODIN Engine (Universal)
+    this.odin = new OdinOrchestrator({ system: this });
+
     this.auditLogger.info(`[${this.name}] 🧠 Quad-Brain Engine Ready`, {
         brains: Array.from(this.activeLobes),
         localModel: this.ollamaModel
@@ -146,8 +150,7 @@ export class SOMArbiterV2_QuadBrain extends BaseArbiterV4 {
 
   /**
    * Main reasoning entry point — routes through selective lobe activation.
-   * If context.activeLobe is set (e.g., from V3.callBrain), bypasses routing
-   * and calls the provider cascade directly (avoids double-routing).
+   * UPGRADED: Now uses the ODIN Protocol for universal recursive reasoning.
    */
   async reason(query, context = {}) {
     const sessionId = context.sessionId || 'default';
@@ -156,7 +159,14 @@ export class SOMArbiterV2_QuadBrain extends BaseArbiterV4 {
     this.auditLogger.info(`[${this.name}] Reasoning Request: "${query.substring(0, 50)}..."`);
 
     try {
+      // 🔱 SOVEREIGN HYBRID GATE: Force Local for internal Industrial tasks
+      const isInternalTask = global.__SOMA_FINANCE_ANALYSIS || global.__SOMA_MEDICAL_MISSION;
+      if (isInternalTask) { context.forceLocal = true; }
+
       let response;
+      // 🔱 ODIN UNIVERSAL GATE: Determine depth based on complexity/intent
+      const isComplex = context.deepThinking || this._scoreLobe('LOGOS', query) > 0.5 || query.length > 200;
+      const complexity = isComplex ? 'high' : 'simple';
 
       if (context.activeLobe) {
         // Lobe already chosen upstream (callBrain) — go direct to provider
@@ -172,13 +182,33 @@ export class SOMArbiterV2_QuadBrain extends BaseArbiterV4 {
           activeLobes = [activeLobes[0]]; // top scorer only
         }
 
-        this.auditLogger.info(`[${this.name}] Active lobes: ${activeLobes.map(([l]) => l).join(', ')}${!context.deepThinking ? ' (single-lobe fast path)' : ' (deep multi-lobe)'}`);
+        this.auditLogger.info(`[${this.name}] Active lobes: ${activeLobes.map(([l]) => l).join(', ')} | Mode: ODIN-${complexity.toUpperCase()}`);
 
-        const lobeResults = await Promise.all(
-          activeLobes.map(([lobeName]) => this._runLobe(lobeName, query, context))
-        );
+        if (complexity === 'high') {
+          // 🌀 ODIN RECURRENCE: multi-pass refinement for complex queries
+          const odinResult = await this.odin.reasonRecurrent(query, activeLobes[0][0], complexity);
 
-        response = await this._synthesizeLobes(lobeResults, query, context);
+          if (odinResult.stability === 'stable' || odinResult.depth > 1) {
+              response = {
+                  text: odinResult.response,
+                  brain: activeLobes.map(([l]) => l).join('+'),
+                  provider: 'deepseek',
+                  depth: odinResult.depth,
+                  stability: odinResult.stability
+              };
+          } else {
+              const lobeResults = await Promise.all(
+                activeLobes.map(([lobeName]) => this._runLobe(lobeName, query, context))
+              );
+              response = await this._synthesizeLobes(lobeResults, query, context);
+          }
+        } else {
+          // Simple queries: standard single-lobe fast path, no ODIN overhead
+          const lobeResults = await Promise.all(
+            activeLobes.map(([lobeName]) => this._runLobe(lobeName, query, context))
+          );
+          response = await this._synthesizeLobes(lobeResults, query, context);
+        }
       }
 
       const duration = Date.now() - startTime;

@@ -200,6 +200,16 @@ class MnemonicArbiter extends BaseArbiter {
         CREATE INDEX IF NOT EXISTS idx_accessed_at ON memories(accessed_at);
         CREATE INDEX IF NOT EXISTS idx_importance ON memories(importance);
         CREATE INDEX IF NOT EXISTS idx_embedding_id ON memories(embedding_id);
+
+        CREATE TABLE IF NOT EXISTS purgatory (
+          id TEXT PRIMARY KEY,
+          content TEXT NOT NULL,
+          metadata TEXT,
+          original_importance REAL DEFAULT 0.5,
+          substance_score REAL DEFAULT 0.0,
+          prune_reason TEXT,
+          purgatory_at INTEGER NOT NULL
+        );
       `);
 
       this.log('info', 'Cold tier (SQLite) initialized');
@@ -606,10 +616,15 @@ class MnemonicArbiter extends BaseArbiter {
       const result = await new Promise((resolve) => {
         setImmediate(() => {
           const res = this.db.prepare(`
-            DELETE FROM memories 
-            WHERE length(content) > 100000 
+            DELETE FROM memories
+            WHERE length(content) > 100000
                OR content LIKE '%"experiences":%'
                OR content LIKE '%[MessageBroker] Arbiter not found%'
+               OR content LIKE '%[MessageBroker]%unknown signal%'
+               OR content LIKE '%missingArbiter%'
+               OR content LIKE '%"state":{%'
+               OR content LIKE '%"snapshot":{%'
+               OR (length(content) < 20 AND unicode(content) < 32)
           `).run();
           resolve(res);
         });
@@ -635,6 +650,119 @@ class MnemonicArbiter extends BaseArbiter {
       this.log('error', `Deep cleanup failed: ${error.message}`);
       return { success: false, error: error.message };
     }
+  }
+
+  /**
+   * Scan a batch of memories for the pruner to inspect — does NOT modify anything.
+   * Returns raw rows: { id, content, metadata, importance, access_count, created_at }
+   */
+  async scanMemoriesForPruning(limit = 200, offset = 0) {
+    if (!this.db) return [];
+    return new Promise(resolve => {
+      setImmediate(() => {
+        try {
+          const rows = this.db.prepare(`
+            SELECT id, content, metadata, importance, access_count, created_at
+            FROM memories
+            ORDER BY created_at ASC
+            LIMIT ? OFFSET ?
+          `).all(limit, offset);
+          resolve(rows);
+        } catch { resolve([]); }
+      });
+    });
+  }
+
+  /**
+   * Move a batch of memory IDs to purgatory (non-destructive first step).
+   * They are removed from active recall but can be resurrected.
+   */
+  async purgeBatch(entries) {
+    // entries: [{ id, substanceScore, reason }]
+    if (!this.db || !entries.length) return 0;
+    return new Promise(resolve => {
+      setImmediate(() => {
+        try {
+          const insertStmt = this.db.prepare(`
+            INSERT OR IGNORE INTO purgatory (id, content, metadata, original_importance, substance_score, prune_reason, purgatory_at)
+            SELECT id, content, metadata, importance, ?, ?, ?
+            FROM memories WHERE id = ?
+          `);
+          const deleteStmt = this.db.prepare('DELETE FROM memories WHERE id = ?');
+          const tx = this.db.transaction(() => {
+            let moved = 0;
+            for (const e of entries) {
+              insertStmt.run(e.substanceScore ?? 0, e.reason ?? 'pruned', Date.now(), e.id);
+              deleteStmt.run(e.id);
+              moved++;
+              // Clean warm tier too
+              for (const [vecId, vec] of this.vectorStore.entries()) {
+                if (vec.memoryId === e.id) this.vectorStore.delete(vecId);
+              }
+            }
+            return moved;
+          });
+          resolve(tx());
+        } catch (err) {
+          this.log('error', `purgeBatch failed: ${err.message}`);
+          resolve(0);
+        }
+      });
+    });
+  }
+
+  /**
+   * Restore a memory from purgatory back into active recall.
+   */
+  async resurrectFromPurgatory(id) {
+    if (!this.db) return false;
+    return new Promise(resolve => {
+      setImmediate(() => {
+        try {
+          const row = this.db.prepare('SELECT * FROM purgatory WHERE id = ?').get(id);
+          if (!row) return resolve(false);
+          const now = Date.now();
+          this.db.prepare(`
+            INSERT OR IGNORE INTO memories (id, content, metadata, created_at, accessed_at, access_count, importance)
+            VALUES (?, ?, ?, ?, ?, 0, ?)
+          `).run(row.id, row.content, row.metadata, row.purgatory_at, now, row.original_importance);
+          this.db.prepare('DELETE FROM purgatory WHERE id = ?').run(id);
+          resolve(true);
+        } catch { resolve(false); }
+      });
+    });
+  }
+
+  /**
+   * Permanently delete purgatory entries older than `olderThanDays` (default 30).
+   */
+  async expirePurgatory(olderThanDays = 30) {
+    if (!this.db) return 0;
+    const cutoff = Date.now() - (olderThanDays * 86400000);
+    return new Promise(resolve => {
+      setImmediate(() => {
+        try {
+          const res = this.db.prepare('DELETE FROM purgatory WHERE purgatory_at < ?').run(cutoff);
+          resolve(res.changes);
+        } catch { resolve(0); }
+      });
+    });
+  }
+
+  /** Stats for the pruner dashboard */
+  async getPurgatoryStats() {
+    if (!this.db) return { count: 0, oldestDays: null };
+    return new Promise(resolve => {
+      setImmediate(() => {
+        try {
+          const row = this.db.prepare('SELECT COUNT(*) as count, MIN(purgatory_at) as oldest FROM purgatory').get();
+          resolve({
+            count: row.count,
+            oldestDays: row.oldest ? Math.floor((Date.now() - row.oldest) / 86400000) : null
+          });
+        } catch { resolve({ count: 0 }); }
+      });
+    });
   }
 
   // ===========================

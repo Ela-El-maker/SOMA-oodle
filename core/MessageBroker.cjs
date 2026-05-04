@@ -475,7 +475,11 @@ class MessageBroker extends EventEmitter {
     };
 
     // CNS: Impulse Compression
-    const swallowed = this.compressor ? this.compressor.process(signal) : false;
+    let swallowed = false;
+    if (this.compressor && typeof this.compressor.process === 'function') {
+      swallowed = this.compressor.process(signal);
+    }
+
     if (!swallowed) {
       this._deliverSignal(signal);
     }

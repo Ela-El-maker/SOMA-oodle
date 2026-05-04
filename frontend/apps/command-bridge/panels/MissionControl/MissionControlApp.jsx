@@ -16,6 +16,7 @@ import CustomMarketView from './CustomMarketView/CustomMarketView.jsx';
 import DebateArena from './components/DebateArena.jsx';
 import { BacktestPanel } from './components/BacktestPanel.jsx';
 import { AlertsPanel } from './components/AlertsPanel.jsx';
+import { SimIntelPanel } from './components/SimIntelPanel.jsx';
 import { TradeMode, AssetType } from './types.js';
 
 import { INITIAL_TICKERS, STRATEGY_PRESETS } from './constants.js';
@@ -171,23 +172,47 @@ const MissionControlApp = ({ somaBackend, isConnected }) => {
         }
     };
 
-    // Hydrate ticker prices from Binance on mount (replaces hardcoded $64,000 stale defaults)
+    // Hydrate ticker prices — try yfinance first (stocks + futures + crypto), Binance as crypto fallback
     useEffect(() => {
-        const cryptoSymbols = INITIAL_TICKERS
-            .filter(t => t.type === 'crypto')
-            .map(t => t.symbol)
-            .slice(0, 15)
-            .join(',');
-        fetch(`/api/binance/prices?symbols=${cryptoSymbols}`)
+        // Primary: yfinance market data (same source as Simulation Suite)
+        fetch('/api/soma/simulations/market-data')
             .then(r => r.ok ? r.json() : null)
             .then(data => {
-                if (!data?.prices || !Object.keys(data.prices).length) return;
+                if (!data) throw new Error('no data');
+                const priceMap = {};
+                // Crypto: yf uses BTC not BTC-USD
+                for (const [id, info] of Object.entries(data.crypto || {})) {
+                    if (info?.price) { priceMap[id] = info.price; priceMap[`${id}-USD`] = info.price; }
+                }
+                // Stocks
+                for (const [id, info] of Object.entries(data.stocks || {})) {
+                    if (info?.price) priceMap[id] = info.price;
+                }
+                // Futures: yf ES=F → MC uses ES1!
+                const FUTURES_MAP = { ES: 'ES1!', NQ: 'NQ1!', CL: 'CL1!', GC: 'GC1!', SI: 'SI1!', ZB: 'ZB1!' };
+                for (const [id, info] of Object.entries(data.futures || {})) {
+                    if (info?.price) { priceMap[id] = info.price; if (FUTURES_MAP[id]) priceMap[FUTURES_MAP[id]] = info.price; }
+                }
+                if (!Object.keys(priceMap).length) throw new Error('empty');
                 setTickers(prev => prev.map(t => {
-                    const realPrice = data.prices[t.symbol];
-                    return realPrice ? { ...t, price: realPrice } : t;
+                    const p = priceMap[t.symbol];
+                    return p ? { ...t, price: p } : t;
                 }));
             })
-            .catch(() => {}); // non-fatal — falls back to INITIAL_TICKERS defaults
+            .catch(() => {
+                // Fallback: Binance for crypto only
+                const cryptoSymbols = INITIAL_TICKERS.filter(t => t.type === 'crypto').map(t => t.symbol).slice(0, 15).join(',');
+                fetch(`/api/binance/prices?symbols=${cryptoSymbols}`)
+                    .then(r => r.ok ? r.json() : null)
+                    .then(data => {
+                        if (!data?.prices) return;
+                        setTickers(prev => prev.map(t => {
+                            const p = data.prices[t.symbol];
+                            return p ? { ...t, price: p } : t;
+                        }));
+                    })
+                    .catch(() => {});
+            });
     }, []);
 
     // Sync tradingActive with backend state on mount — engine may already be running
@@ -1151,11 +1176,12 @@ const MissionControlApp = ({ somaBackend, isConnected }) => {
                             /* Collapsed: icon rail only */
                             <div className="flex flex-col items-center pt-2 gap-1 w-full">
                                 {[
-                                    { id: 'agents',   icon: Bot,       title: 'Agents',   activeClass: 'bg-indigo-500/20 text-indigo-300'  },
-                                    { id: 'learning', icon: BookOpen,  title: 'Learning', activeClass: 'bg-emerald-500/20 text-emerald-300' },
-                                    { id: 'debate',   icon: Swords,    title: 'Debate',   activeClass: 'bg-amber-500/20 text-amber-300'    },
-                                    { id: 'backtest', icon: BarChart2, title: 'Backtest', activeClass: 'bg-violet-500/20 text-violet-300'  },
-                                    { id: 'alerts',   icon: Bell,      title: 'Alerts',   activeClass: 'bg-orange-500/20 text-orange-300'  },
+                                    { id: 'agents',   icon: Bot,          title: 'Agents',    activeClass: 'bg-indigo-500/20 text-indigo-300'   },
+                                    { id: 'learning', icon: BookOpen,     title: 'Learning',  activeClass: 'bg-emerald-500/20 text-emerald-300'  },
+                                    { id: 'debate',   icon: Swords,       title: 'Debate',    activeClass: 'bg-amber-500/20 text-amber-300'      },
+                                    { id: 'backtest', icon: BarChart2,    title: 'Backtest',  activeClass: 'bg-violet-500/20 text-violet-300'    },
+                                    { id: 'alerts',   icon: Bell,         title: 'Alerts',    activeClass: 'bg-orange-500/20 text-orange-300'    },
+                                    { id: 'sim',      icon: FlaskConical, title: 'Sim Intel', activeClass: 'bg-fuchsia-500/20 text-fuchsia-300'  },
                                 ].map(({ id, icon: Icon, title, activeClass }) => (
                                     <button key={id} title={title}
                                         onClick={() => { setSidebarTab(id); setSidebarCollapsed(false); }}
@@ -1169,14 +1195,15 @@ const MissionControlApp = ({ somaBackend, isConnected }) => {
                         <>
                         {/* Strategy Brain / Learning Dashboard / Debate Arena tabs */}
                         <div className="flex-1 overflow-hidden min-h-0 flex flex-col">
-                            {/* Toggle Tabs — icon + label, fits all 5 without cutoff */}
-                            <div className="flex border-b border-white/5 bg-black/20">
+                            {/* Toggle Tabs */}
+                            <div className="flex flex-wrap border-b border-white/5 bg-black/20">
                                 {[
-                                    { id: 'agents',   icon: Bot,       label: 'Agents',   activeClass: 'bg-indigo-500/20 text-indigo-300 border-b-2 border-indigo-500'   },
-                                    { id: 'learning', icon: BookOpen,  label: 'Learn',    activeClass: 'bg-emerald-500/20 text-emerald-300 border-b-2 border-emerald-500' },
-                                    { id: 'debate',   icon: Swords,    label: 'Debate',   activeClass: 'bg-amber-500/20 text-amber-300 border-b-2 border-amber-500'       },
-                                    { id: 'backtest', icon: BarChart2, label: 'Backtest', activeClass: 'bg-violet-500/20 text-violet-300 border-b-2 border-violet-500'    },
-                                    { id: 'alerts',   icon: Bell,      label: 'Alerts',   activeClass: 'bg-orange-500/20 text-orange-300 border-b-2 border-orange-500'    },
+                                    { id: 'agents',   icon: Bot,          label: 'Agents',   activeClass: 'bg-indigo-500/20 text-indigo-300 border-b-2 border-indigo-500'     },
+                                    { id: 'learning', icon: BookOpen,     label: 'Learn',    activeClass: 'bg-emerald-500/20 text-emerald-300 border-b-2 border-emerald-500'   },
+                                    { id: 'debate',   icon: Swords,       label: 'Debate',   activeClass: 'bg-amber-500/20 text-amber-300 border-b-2 border-amber-500'         },
+                                    { id: 'backtest', icon: BarChart2,    label: 'Backtest', activeClass: 'bg-violet-500/20 text-violet-300 border-b-2 border-violet-500'      },
+                                    { id: 'alerts',   icon: Bell,         label: 'Alerts',   activeClass: 'bg-orange-500/20 text-orange-300 border-b-2 border-orange-500'      },
+                                    { id: 'sim',      icon: FlaskConical, label: 'Sim',      activeClass: 'bg-fuchsia-500/20 text-fuchsia-300 border-b-2 border-fuchsia-500'   },
                                 ].map(({ id, icon: Icon, label, activeClass }) => (
                                     <button key={id}
                                         onClick={() => setSidebarTab(id)}
@@ -1212,6 +1239,13 @@ const MissionControlApp = ({ somaBackend, isConnected }) => {
                                             somaBackend={somaBackend}
                                             onAlertTriggered={(alert) => addToast(`ALERT: ${alert.label || alert.symbol} triggered @ $${alert.triggeredPrice?.toFixed(2)}`, 'warning')}
                                         />
+                                    </div>
+                                ) : sidebarTab === 'sim' ? (
+                                    <div className="h-full overflow-hidden">
+                                        <SimIntelPanel onDeployStrategies={(strategies) => {
+                                            setActiveStrategies(strategies);
+                                            addToast(`Loaded ${strategies.length} trained strategies from SOMA playbook`, 'success');
+                                        }} />
                                     </div>
                                 ) : (
                                     <StrategyBrain strategies={activeStrategies} />

@@ -1,0 +1,12 @@
+
+fastapi>=0.115.0
+uvicorn>=0.30.0
+websockets>=13.0
+numpy>=2.1.0
+torch>=2.4.0
+pydantic>=2.9.0
+python-multipart>=0.0.12
+baize>=0.23.0
+kui>=1.6.0
+ormsgpack
+loguru

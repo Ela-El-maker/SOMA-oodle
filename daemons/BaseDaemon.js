@@ -15,7 +15,8 @@ export class BaseDaemon extends EventEmitter {
         this.name = config.name || this.constructor.name;
         this.active = false;
 
-        this.interval = config.interval || 1000; // default tick interval
+        // Support both interval and intervalMs
+        this.interval = config.intervalMs || config.interval || 1000; 
         this.logger = config.logger || console;
 
         this._loopHandle = null;

@@ -134,6 +134,19 @@ export async function loadRoutes(app, system) {
         });
     });
 
+    app.get('/api/perception-debug', (req, res) => {
+        const vision = global.SOMA_COS?.visionDaemon;
+        res.json({
+            success: true,
+            vision: {
+                active: !!vision?.active,
+                channel: vision?.channel || 'desktop',
+                lastPerception: vision?.lastPerception || null
+            },
+            cos: !!global.SOMA_COS
+        });
+    });
+
     app.get('/api/daemon/status', (req, res) => {
         const manager = system.daemonManager;
         res.json({
@@ -146,22 +159,8 @@ export async function loadRoutes(app, system) {
         });
     });
 
-    app.get('/api/perception/health', (req, res) => {
-        const manager = system.daemonManager;
-        const broker = system.messageBroker;
-        const attention = broker?.attentionEngine;
-        res.json({
-            success: true,
-            daemons: manager ? manager.health() : [],
-            attention: attention ? {
-                focus: attention.focusTopic || 'general',
-                expires: attention.focusExpiry || null
-            } : null,
-            recentSignals: broker?._recentPublishes?.slice(-10).reverse() || []
-        });
-    });
-
     app.get('/api/memory/status', (req, res) => {
+
         const mnemonic = system.mnemonic || system.mnemonicArbiter;
         const stats = mnemonic?.getMemoryStats ? mnemonic.getMemoryStats() : null;
         res.json({
@@ -475,16 +474,21 @@ export async function loadRoutes(app, system) {
             }
             const cmd = 'powershell -NoProfile -Command "Get-NetAdapterStatistics | Select-Object Name, ReceivedBytes, SentBytes | ConvertTo-Json"';
             exec(cmd, { timeout: 8000, maxBuffer: 1024 * 1024 }, (err, stdout) => {
-                if (err) return res.status(500).json({ success: false, error: err.message });
-                const data = JSON.parse(stdout || '[]');
-                const list = Array.isArray(data) ? data : [data];
-                const adapters = list.map(a => ({
-                    name: a.Name,
-                    receivedBytes: Number(a.ReceivedBytes || 0),
-                    sentBytes: Number(a.SentBytes || 0)
-                }));
-                res.json({ success: true, adapters });
+                if (err) return res.json({ success: false, error: 'Network probe timed out' });
+                try {
+                    const data = JSON.parse(stdout || '[]');
+                    const list = Array.isArray(data) ? data : [data];
+                    const adapters = list.map(a => ({
+                        name: a.Name,
+                        receivedBytes: Number(a.ReceivedBytes || 0),
+                        sentBytes: Number(a.SentBytes || 0)
+                    }));
+                    res.json({ success: true, adapters });
+                } catch (parseErr) {
+                    res.json({ success: false, error: 'Failed to parse network data' });
+                }
             });
+
         } catch (e) {
             res.status(500).json({ success: false, error: e.message });
         }

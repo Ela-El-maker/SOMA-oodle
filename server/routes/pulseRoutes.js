@@ -2,11 +2,19 @@ import express from 'express';
 import fs from 'fs';
 import path from 'path';
 import { exec } from 'child_process';
+import { VirtualShell } from '../../arbiters/VirtualShell.js';
 
 // Convert module.exports = function(context) { ... } to export default function(context) { ... }
+
 export default function (context) {
   const router = express.Router();
   const { quadBrain, goalPlanner, pulseArbiter, contextManager } = context;
+
+  // Initialize persistent VirtualShell for this session
+  if (!context.virtualShell) {
+      context.virtualShell = new VirtualShell();
+  }
+  const shell = context.virtualShell;
 
   // Middleware to ensure components are ready
   const ensureReady = (component, name) => (req, res, next) => {
@@ -211,26 +219,17 @@ Return ONLY valid JSON in this format:
 
   router.post('/shell/execute', async (req, res) => {
     try {
-      const { command, cwd } = req.body;
-      const execOptions = {
-        cwd: cwd ? safeResolve(cwd) : process.cwd(),
-        timeout: 10000,
-        maxBuffer: 1024 * 1024 // 1MB
-      };
-
-      // Simple safety check (blacklist)
-      const lowerCmd = command.toLowerCase();
-      if (lowerCmd.includes('rm -rf /') || lowerCmd.includes(':(){:|:&};:')) {
-        return res.status(400).json({ success: false, error: 'Command blocked by safety filter' });
-      }
-
-      exec(command, execOptions, (error, stdout, stderr) => {
-        res.json({
-          success: !error,
-          output: stdout || stderr, // Combine for terminal view
-          error: error ? error.message : null,
-          code: error ? error.code : 0
-        });
+      const { command, timeout } = req.body;
+      
+      console.log(`[PulseShell] Executing: "${command}" (CWD: ${shell.cwd})`);
+      const result = await shell.execute(command, timeout || 15000);
+      
+      res.json({
+        success: result.exitCode === 0,
+        output: result.stdout || result.stderr,
+        error: result.stderr || null,
+        code: result.exitCode,
+        cwd: result.cwd
       });
     } catch (error) {
       res.status(500).json({ success: false, error: error.message });

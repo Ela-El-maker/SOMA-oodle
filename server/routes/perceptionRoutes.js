@@ -52,6 +52,9 @@ const HEALTH_TTL = 10000;
  */
 router.get('/health', (req, res) => {
     try {
+        // --- FORCE CACHE CLEAR FOR DIAGNOSTICS ---
+        _healthCache = null;
+
         const now = Date.now();
         if (_healthCache && (now - _healthCacheTs) < HEALTH_TTL) {
             return res.json(_healthCache);
@@ -211,6 +214,47 @@ router.get('/vision/last', (req, res) => {
             ghostCursor: vision.ghostCursor,
             timestamp: Date.now()
         });
+    } catch (err) {
+        res.status(500).json({ success: false, error: err.message });
+    }
+});
+
+/**
+ * POST /api/perception/garden/sprout
+ * Trigger the Sprout Loop (SelfReflectionArbiter)
+ */
+router.post('/garden/sprout', async (req, res) => {
+    try {
+        const reflection = global.SOMA_COS?.reflectionArbiter;
+        if (!reflection || !reflection.sprout) {
+            return res.status(503).json({ success: false, error: 'SelfReflectionArbiter not loaded or missing sprout method' });
+        }
+        await reflection.sprout();
+        res.json({ success: true, message: 'Sprout initiated' });
+    } catch (err) {
+        res.status(500).json({ success: false, error: err.message });
+    }
+});
+
+/**
+ * POST /api/perception/garden/audit
+ * Trigger Nutrient Check (SelfEvolvingGoalEngine)
+ */
+router.post('/garden/audit', async (req, res) => {
+    try {
+        const sys = global.__SOMA_SYSTEM || {};
+        console.log('[Debug] System Keys:', Object.keys(sys));
+        
+        const engine = sys.selfEvolvingGoalEngine;
+        if (!engine || !engine.checkLibraryNutrients) {
+            return res.status(503).json({ 
+                success: false, 
+                error: 'SelfEvolvingGoalEngine not loaded or missing checkLibraryNutrients',
+                available: Object.keys(sys)
+            });
+        }
+        await engine.checkLibraryNutrients();
+        res.json({ success: true, message: 'Nutrient audit initiated' });
     } catch (err) {
         res.status(500).json({ success: false, error: err.message });
     }
